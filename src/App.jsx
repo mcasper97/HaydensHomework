@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Award,
@@ -29,6 +29,13 @@ import {
 
 /* ============================== Local Storage ============================== */
 const LS_KEY = "haydens_homework_app_v6";
+
+const DEVICE_ID = (() => {
+  const key = "haydens_homework_device_id";
+  let id = localStorage.getItem(key);
+  if (!id) { id = Math.random().toString(36).slice(2, 10); localStorage.setItem(key, id); }
+  return id;
+})();
 
 /* ============================== Default Data ============================== */
 const DEFAULT_SIGHT_DECK = [
@@ -214,6 +221,29 @@ const shuffle = (array) => {
   return arr;
 };
 
+/* ============================== Adventure Sentence Generator ============================== */
+const FALLBACK_WORDS = ["cat","dog","run","big","happy","jump","fast","blue","sun","play"];
+const SENTENCE_TEMPLATES = [
+  w => `The ${w} is so cool!`,
+  w => `Hayden can ${w} very fast.`,
+  w => `I see a big ${w} here.`,
+  w => `Look at the ${w} over there!`,
+  w => `A ${w} was waiting for us.`,
+  w => `The brave hero found a ${w}.`,
+  w => `Can you find the ${w}?`,
+];
+
+const generateAdventureSentence = (spellingWords = [], sightWords = [], vocabWords = []) => {
+  const pool = [
+    ...spellingWords,
+    ...sightWords,
+    ...vocabWords.map(v => v?.word),
+  ].filter(w => w && w.length > 1);
+  const targetWord = shuffle(pool.length ? pool : [...FALLBACK_WORDS])[0];
+  const sentence = shuffle([...SENTENCE_TEMPLATES])[0](targetWord);
+  return { sentence, targetWord };
+};
+
 // Minimal CSV parser with quote support
 const parseCSV = (text) => {
   const rows = [];
@@ -372,6 +402,230 @@ const IconPill = ({ icon: Icon, label, className = "" }) => (
     <span className="font-extrabold text-gray-900">{label}</span>
   </div>
 );
+
+/* ============================== Spelling Swamp Game ============================== */
+const SpellingSwampGame = ({
+  spellingWords = [],
+  wordsPerSession = 5,
+  setPoints,
+  onBack,
+  onComplete,
+  onEvent,
+  recordAttempt,
+}) => {
+  const [roundWords, setRoundWords] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [userInput, setUserInput] = useState("");
+  const [feedback, setFeedback] = useState(null); // "correct" | "wrong" | null
+  const [gameOver, setGameOver] = useState(false);
+  const [score, setScore] = useState(0);
+  const [correctCount, setCorrectCount] = useState(0);
+
+  const buildRound = () => {
+    const words = spellingWords.filter(w => w && w.trim().length > 0);
+    const count = Math.min(wordsPerSession || 5, words.length);
+    const picked = shuffle(words).slice(0, count);
+    setRoundWords(picked);
+    setCurrentIndex(0);
+    setUserInput("");
+    setFeedback(null);
+    setGameOver(false);
+    setScore(0);
+    setCorrectCount(0);
+  };
+
+  useEffect(() => {
+    buildRound();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const currentWord = roundWords[currentIndex];
+
+  // Auto-speak each word
+  useEffect(() => {
+    if (currentWord && !gameOver) {
+      const t = setTimeout(() => speak(currentWord), 300);
+      return () => clearTimeout(t);
+    }
+  }, [currentIndex, currentWord, gameOver]);
+
+  const advance = () => {
+    setUserInput("");
+    setFeedback(null);
+    if (currentIndex + 1 >= roundWords.length) {
+      setGameOver(true);
+      if (onEvent) onEvent({ type: "complete", domain: "spelling" });
+    } else {
+      setCurrentIndex(i => i + 1);
+    }
+  };
+
+  const handleSubmit = () => {
+    if (!currentWord || feedback) return;
+    const isCorrect = userInput.trim().toLowerCase() === currentWord.toLowerCase();
+    if (isCorrect) {
+      setScore(s => s + 10);
+      setCorrectCount(c => c + 1);
+      setPoints(p => p + 10);
+      if (recordAttempt) recordAttempt("spelling", currentWord, true);
+    } else {
+      setScore(s => s + 1);
+      setPoints(p => p + 1);
+      if (recordAttempt) recordAttempt("spelling", currentWord, false);
+    }
+    setFeedback(isCorrect ? "correct" : "wrong");
+    setTimeout(advance, 900);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") handleSubmit();
+  };
+
+  if (spellingWords.length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-900 to-emerald-800 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="text-6xl mb-4">🐸</div>
+          <h2 className="text-2xl font-extrabold text-gray-900 mb-3">Spelling Swamp</h2>
+          <p className="text-gray-600 mb-6">Ask a parent to add spelling words!</p>
+          <button onClick={onBack} className="w-full bg-gray-900 hover:opacity-90 text-white font-extrabold py-4 rounded-2xl">
+            Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameOver) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-900 to-emerald-800 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="text-6xl mb-4">🐸</div>
+          <h2 className="text-3xl font-extrabold text-gray-900 mb-2">Swamp Cleared!</h2>
+          <p className="text-xl text-gray-700 mb-2">{correctCount} / {roundWords.length} correct</p>
+          <p className="text-2xl font-extrabold text-green-700 mb-6">+{score} points</p>
+          <div className="flex gap-3">
+            <button onClick={buildRound} className="flex-1 bg-emerald-600 hover:opacity-90 text-white font-extrabold py-4 rounded-2xl">
+              Play Again
+            </button>
+            <button onClick={onComplete} className="flex-1 bg-gradient-to-r from-pink-500 to-purple-500 hover:opacity-90 text-white font-extrabold py-4 rounded-2xl">
+              Done!
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-green-900 to-emerald-800 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="flex items-center justify-between mb-6">
+          <button onClick={onBack} className="text-green-200 hover:text-white font-semibold flex items-center gap-2">
+            <ArrowLeft size={18} /> Back
+          </button>
+          <div className="text-green-200 font-extrabold">
+            {currentIndex + 1} / {roundWords.length}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-3xl p-8 shadow-2xl text-center">
+          <div className="text-5xl mb-4">🐸</div>
+          <h2 className="text-2xl font-extrabold text-gray-900 mb-1">Spelling Swamp</h2>
+          <p className="text-gray-500 mb-6">Listen and spell the word!</p>
+
+          <button
+            onClick={() => speak(currentWord)}
+            className="w-full bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-extrabold py-3 rounded-2xl mb-6 flex items-center justify-center gap-2"
+          >
+            <Volume2 size={20} /> Hear Again
+          </button>
+
+          <input
+            type="text"
+            value={userInput}
+            onChange={e => setUserInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type the word..."
+            autoFocus
+            disabled={!!feedback}
+            className="w-full border-2 border-gray-300 rounded-2xl px-4 py-3 text-xl text-center font-bold focus:outline-none focus:border-emerald-500 mb-4"
+          />
+
+          <button
+            onClick={handleSubmit}
+            disabled={!userInput.trim() || !!feedback}
+            className="w-full bg-gradient-to-r from-emerald-600 to-green-700 hover:opacity-90 disabled:opacity-50 text-white font-extrabold py-4 rounded-2xl"
+          >
+            Submit
+          </button>
+
+          {feedback && (
+            <div className={`mt-4 p-3 rounded-2xl font-extrabold text-lg ${feedback === "correct" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+              {feedback === "correct" ? "✓ Correct! +10 pts" : `✗ The word was "${currentWord}"`}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ============================== World Map Screen ============================== */
+const WorldMapScreen = ({ onBack, onLaunchZone, worldProgress = {} }) => {
+  const zones = [
+    { id: "sight",    name: "Sight Word City",  emoji: "🏙️", gradient: "from-blue-500 to-indigo-600",    desc: "Master sight words in the city!" },
+    { id: "phonics",  name: "Phonics Forest",   emoji: "🌲", gradient: "from-green-500 to-emerald-600",  desc: "Jump through phonics patterns!" },
+    { id: "math",     name: "Math Mountain",    emoji: "⛰️", gradient: "from-orange-500 to-red-600",     desc: "Climb to the top with math!" },
+    { id: "spelling", name: "Spelling Swamp",   emoji: "🐸", gradient: "from-teal-500 to-green-900",     desc: "Spell your way through the swamp!" },
+  ];
+
+  const totalStars = zones.reduce((sum, z) => sum + (worldProgress[z.id] || 0), 0);
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <button onClick={onBack} className="text-purple-800 hover:text-purple-900 font-semibold flex items-center gap-2">
+          <ArrowLeft size={18} /> Back
+        </button>
+        <div className="bg-yellow-100 border border-yellow-300 text-yellow-800 font-extrabold px-4 py-2 rounded-full shadow-sm">
+          ⭐ {totalStars} / 12
+        </div>
+      </div>
+
+      <div className="text-center mb-6">
+        <h1 className="text-4xl font-extrabold text-gray-900">🗺️ Adventure World</h1>
+        <p className="text-gray-600 mt-1">Explore zones, defeat bosses, and earn stars!</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        {zones.map(zone => {
+          const stars = worldProgress[zone.id] || 0;
+          return (
+            <div key={zone.id} className={`bg-gradient-to-br ${zone.gradient} rounded-3xl p-5 text-white shadow-lg flex flex-col`}>
+              <div className="text-4xl mb-2">{zone.emoji}</div>
+              <div className="font-extrabold text-lg leading-tight mb-1">{zone.name}</div>
+              <p className="text-white/80 text-sm mb-3 flex-1">{zone.desc}</p>
+
+              <div className="flex gap-1 mb-3">
+                {[0,1,2].map(i => (
+                  <Star key={i} size={18} className={i < stars ? "fill-yellow-400 text-yellow-400" : "text-white/40"} />
+                ))}
+              </div>
+
+              <button
+                onClick={() => onLaunchZone(zone.id)}
+                className="w-full bg-white/20 hover:bg-white/30 text-white font-extrabold py-2 rounded-2xl text-sm transition"
+              >
+                Enter Zone
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 /* ============================== Sound Jumper Game ============================== */
 const SoundJumperGame = ({
@@ -1777,6 +2031,129 @@ const SightWordObbyGame = ({ onBack, onComplete, setPoints, onEvent, customSight
   );
 };
 
+/* ============================== Boss Fight Modal ============================== */
+const BossFightModal = ({ zoneId, sentence, targetWord, onVictory, onDismiss }) => {
+  const [userInput, setUserInput] = useState("");
+  const [wrongCount, setWrongCount] = useState(0);
+  const [stage, setStage] = useState("fight"); // "fight" | "win" | "miss"
+
+  const BOSS_EMOJIS = { sight: "🤖", phonics: "🦉", math: "🐉", spelling: "🐊" };
+  const bossEmoji = BOSS_EMOJIS[zoneId] || "👾";
+
+  useEffect(() => {
+    const t = setTimeout(() => speak(sentence), 400);
+    return () => clearTimeout(t);
+  }, [sentence]);
+
+  const renderSentence = () => {
+    const parts = sentence.split(new RegExp(`(${targetWord})`, "i"));
+    return parts.map((part, i) =>
+      part.toLowerCase() === targetWord.toLowerCase()
+        ? <strong key={i} className="text-purple-800 underline">{part}</strong>
+        : <span key={i}>{part}</span>
+    );
+  };
+
+  const handleSubmit = () => {
+    if (userInput.trim().toLowerCase() === targetWord.toLowerCase()) {
+      setStage("win");
+    } else {
+      const next = wrongCount + 1;
+      setWrongCount(next);
+      if (next >= 2) {
+        setStage("miss");
+      } else {
+        setUserInput("");
+      }
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl text-center">
+        <div className="text-6xl mb-3">{bossEmoji}</div>
+
+        {stage === "fight" && (
+          <>
+            <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Boss Fight!</h2>
+            <p className="text-gray-600 mb-4">Type the highlighted word to defeat the boss!</p>
+
+            <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 mb-6 text-lg text-gray-800 leading-relaxed">
+              {renderSentence()}
+            </div>
+
+            <button
+              onClick={() => speak(sentence)}
+              className="w-full bg-purple-100 hover:bg-purple-200 text-purple-800 font-extrabold py-2 rounded-xl mb-4 flex items-center justify-center gap-2"
+            >
+              <Volume2 size={18} /> Hear Again
+            </button>
+
+            <input
+              type="text"
+              value={userInput}
+              onChange={e => setUserInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleSubmit()}
+              placeholder="Type the bold word..."
+              autoFocus
+              className="w-full border-2 border-gray-300 rounded-2xl px-4 py-3 text-xl text-center font-bold focus:outline-none focus:border-purple-500 mb-4"
+            />
+
+            {wrongCount > 0 && (
+              <p className="text-red-600 font-bold text-sm mb-3">Wrong! {2 - wrongCount} attempt{2 - wrongCount === 1 ? "" : "s"} left.</p>
+            )}
+
+            <button
+              onClick={handleSubmit}
+              disabled={!userInput.trim()}
+              className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-90 disabled:opacity-50 text-white font-extrabold py-4 rounded-2xl mb-3"
+            >
+              Attack! ⚔️
+            </button>
+
+            <button onClick={onDismiss} className="text-sm text-gray-400 hover:text-gray-600 underline">
+              Retreat (skip)
+            </button>
+          </>
+        )}
+
+        {stage === "win" && (
+          <>
+            <h2 className="text-3xl font-extrabold text-green-700 mb-2">Victory! 🎉</h2>
+            <p className="text-gray-700 mb-4 text-lg">You defeated the boss!</p>
+            <div className="bg-yellow-100 border border-yellow-300 rounded-2xl p-4 mb-6">
+              <p className="text-2xl font-extrabold text-yellow-800">⭐ +1 Star!</p>
+              <p className="text-xl font-bold text-yellow-700">+25 Points!</p>
+            </div>
+            <button
+              onClick={onVictory}
+              className="w-full bg-gradient-to-r from-yellow-400 to-orange-500 hover:opacity-90 text-white font-extrabold py-4 rounded-2xl"
+            >
+              Claim Reward!
+            </button>
+          </>
+        )}
+
+        {stage === "miss" && (
+          <>
+            <h2 className="text-3xl font-extrabold text-red-700 mb-2">Boss Escaped! 😤</h2>
+            <p className="text-gray-600 mb-3">The word was:</p>
+            <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-6">
+              <p className="text-2xl font-extrabold text-red-800">{targetWord}</p>
+            </div>
+            <button
+              onClick={onDismiss}
+              className="w-full bg-gray-700 hover:opacity-90 text-white font-extrabold py-4 rounded-2xl"
+            >
+              Try Again Next Time
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 /* ============================== Chest Opening Modal ============================== */
 const ChestOpeningModal = ({ chestType, onClose, onRewardReceived }) => {
   const [stage, setStage] = useState("opening"); // opening | revealed
@@ -1877,6 +2254,16 @@ const HomeworkGamesApp = () => {
   const [selectedChest, setSelectedChest] = useState(null);
   const [completedGamesThisSession, setCompletedGamesThisSession] = useState([]);
 
+  const [worldProgress, setWorldProgress] = useState({ sight: 0, phonics: 0, math: 0, spelling: 0 });
+  const [syncCode, setSyncCode] = useState("");
+  const [activeChildId, setActiveChildId] = useState("hayden");
+  const [syncStatus, setSyncStatus] = useState("disconnected");
+  const [syncCodeInput, setSyncCodeInput] = useState("");
+  const [activeChildInput, setActiveChildInput] = useState("hayden");
+  const [gameSource, setGameSource] = useState("home"); // "home" | "worldmap"
+  const [pendingBossFight, setPendingBossFight] = useState(null); // {zoneId, sentence, targetWord} | null
+  const [activeBossZone, setActiveBossZone] = useState(null);
+
   const [flashcardMode, setFlashcardMode] = useState(null); // sight | spelling | vocab
   const [currentFlashcard, setCurrentFlashcard] = useState(0);
   const [showFlashcardAnswer, setShowFlashcardAnswer] = useState(false);
@@ -1909,46 +2296,46 @@ const HomeworkGamesApp = () => {
   const [lastImportSummary, setLastImportSummary] = useState(null);
 
   /* ----------------------------- Load / Save ----------------------------- */
+  const applyData = useCallback((data) => {
+    if (typeof data.points === "number") setPoints(data.points);
+    if (typeof data.keys === "number") setKeys(data.keys);
+    if (Array.isArray(data.inventory)) setInventory(data.inventory);
+    if (Array.isArray(data.customSightWords)) setCustomSightWords(data.customSightWords);
+    if (Array.isArray(data.customSpellingWords)) setCustomSpellingWords(data.customSpellingWords);
+    if (Array.isArray(data.customVocabWords)) setCustomVocabWords(data.customVocabWords);
+    if (Array.isArray(data.customPhonicsWords)) setCustomPhonicsWords(data.customPhonicsWords);
+    if (Array.isArray(data.upcomingTests)) setUpcomingTests(data.upcomingTests);
+    if (data.weeklyGames && typeof data.weeklyGames === "object") setWeeklyGames({ ...DEFAULT_WEEKLY_GAMES, ...data.weeklyGames });
+    if (typeof data.teacherNotes === "string") setTeacherNotes(data.teacherNotes);
+    if (data.progress && typeof data.progress === "object") setProgress({ ...DEFAULT_PROGRESS, ...data.progress });
+    if (data.worldProgress) setWorldProgress({ sight: 0, phonics: 0, math: 0, spelling: 0, ...data.worldProgress });
+    if (data.drafts && typeof data.drafts === "object") {
+      const d = data.drafts;
+      if (typeof d.newSightWord === "string") setNewSightWord(d.newSightWord);
+      if (typeof d.newSpellingWord === "string") setNewSpellingWord(d.newSpellingWord);
+      if (typeof d.newVocabWord === "string") setNewVocabWord(d.newVocabWord);
+      if (typeof d.newVocabDef === "string") setNewVocabDef(d.newVocabDef);
+      if (typeof d.newPhonicsWord === "string") setNewPhonicsWord(d.newPhonicsWord);
+      if (typeof d.newPhonicsPattern === "string") setNewPhonicsPattern(d.newPhonicsPattern);
+      if (typeof d.newTestName === "string") setNewTestName(d.newTestName);
+      if (typeof d.newTestSubject === "string") setNewTestSubject(d.newTestSubject);
+      if (typeof d.newTestDate === "string") setNewTestDate(d.newTestDate);
+    }
+  }, []); // state setters are stable refs
+
   useEffect(() => {
     try {
+      const sc = localStorage.getItem("haydens_homework_sync_code");
+      const cid = localStorage.getItem("haydens_homework_child_id");
+      if (sc) { setSyncCode(sc); setSyncCodeInput(sc); }
+      if (cid) { setActiveChildId(cid); setActiveChildInput(cid); }
       const raw = localStorage.getItem(LS_KEY);
       if (!raw) return;
-      const data = JSON.parse(raw);
-
-      if (typeof data.points === "number") setPoints(data.points);
-      if (typeof data.keys === "number") setKeys(data.keys);
-      if (Array.isArray(data.inventory)) setInventory(data.inventory);
-
-      if (Array.isArray(data.customSightWords)) setCustomSightWords(data.customSightWords);
-      if (Array.isArray(data.customSpellingWords)) setCustomSpellingWords(data.customSpellingWords);
-      if (Array.isArray(data.customVocabWords)) setCustomVocabWords(data.customVocabWords);
-      if (Array.isArray(data.customPhonicsWords)) setCustomPhonicsWords(data.customPhonicsWords);
-
-      if (Array.isArray(data.upcomingTests)) setUpcomingTests(data.upcomingTests);
-
-      if (data.weeklyGames && typeof data.weeklyGames === "object") {
-        setWeeklyGames({ ...DEFAULT_WEEKLY_GAMES, ...data.weeklyGames });
-      }
-
-      if (typeof data.teacherNotes === "string") setTeacherNotes(data.teacherNotes);
-      if (data.progress && typeof data.progress === "object") setProgress({ ...DEFAULT_PROGRESS, ...data.progress });
-
-      if (data.drafts && typeof data.drafts === "object") {
-        const d = data.drafts;
-        if (typeof d.newSightWord === "string") setNewSightWord(d.newSightWord);
-        if (typeof d.newSpellingWord === "string") setNewSpellingWord(d.newSpellingWord);
-        if (typeof d.newVocabWord === "string") setNewVocabWord(d.newVocabWord);
-        if (typeof d.newVocabDef === "string") setNewVocabDef(d.newVocabDef);
-        if (typeof d.newPhonicsWord === "string") setNewPhonicsWord(d.newPhonicsWord);
-        if (typeof d.newPhonicsPattern === "string") setNewPhonicsPattern(d.newPhonicsPattern);
-        if (typeof d.newTestName === "string") setNewTestName(d.newTestName);
-        if (typeof d.newTestSubject === "string") setNewTestSubject(d.newTestSubject);
-        if (typeof d.newTestDate === "string") setNewTestDate(d.newTestDate);
-      }
+      applyData(JSON.parse(raw));
     } catch {
       // ignore
     }
-  }, []);
+  }, [applyData]);
 
   useEffect(() => {
     const payload = {
@@ -1963,6 +2350,7 @@ const HomeworkGamesApp = () => {
       weeklyGames,
       teacherNotes,
       progress,
+      worldProgress,
       drafts: {
         newSightWord,
         newSpellingWord,
@@ -1997,6 +2385,7 @@ const HomeworkGamesApp = () => {
     weeklyGames,
     teacherNotes,
     progress,
+    worldProgress,
     newSightWord,
     newSpellingWord,
     newVocabWord,
@@ -2007,6 +2396,66 @@ const HomeworkGamesApp = () => {
     newTestSubject,
     newTestDate,
   ]);
+
+  /* ----------------------------- Firestore Sync (lazy-loaded) ----------------------------- */
+  const firestoreRef = useRef(null); // { db, doc, onSnapshot, setDoc, serverTimestamp }
+
+  const getFirestore = useCallback(async () => {
+    if (firestoreRef.current) return firestoreRef.current;
+    const [{ db }, firestoreMod] = await Promise.all([
+      import("./Firebase.js"),
+      import("firebase/firestore"),
+    ]);
+    firestoreRef.current = { db, ...firestoreMod };
+    return firestoreRef.current;
+  }, []);
+
+  useEffect(() => {
+    if (!syncCode) { setSyncStatus("disconnected"); return; }
+    let unsub = null;
+    setSyncStatus("connecting");
+    getFirestore().then(({ db, doc, onSnapshot }) => {
+      if (!db) { setSyncStatus("error"); return; }
+      const ref = doc(db, "families", syncCode, "children", activeChildId);
+      unsub = onSnapshot(ref, (snap) => {
+        setSyncStatus("connected");
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (data._deviceId === DEVICE_ID) return;
+        applyData(data);
+      }, () => setSyncStatus("error"));
+    }).catch(() => setSyncStatus("error"));
+    return () => { if (unsub) unsub(); };
+  }, [syncCode, activeChildId, applyData, getFirestore]);
+
+  useEffect(() => {
+    if (!syncCode) return;
+    localStorage.setItem("haydens_homework_sync_code", syncCode);
+    localStorage.setItem("haydens_homework_child_id", activeChildId);
+    const payload = {
+      points, keys, inventory, customSightWords, customSpellingWords,
+      customVocabWords, customPhonicsWords, upcomingTests, weeklyGames,
+      teacherNotes, progress, worldProgress,
+      drafts: { newSightWord, newSpellingWord, newVocabWord, newVocabDef,
+                newPhonicsWord, newPhonicsPattern, newTestName, newTestSubject, newTestDate },
+      _deviceId: DEVICE_ID,
+    };
+    const t = setTimeout(async () => {
+      try {
+        const { db, doc, setDoc, serverTimestamp } = await getFirestore();
+        if (!db) return;
+        await setDoc(doc(db, "families", syncCode, "children", activeChildId),
+          { ...payload, _updatedAt: serverTimestamp() });
+        setSyncStatus("connected");
+      } catch {
+        setSyncStatus("error");
+      }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [syncCode, activeChildId, points, keys, inventory, customSightWords, customSpellingWords,
+      customVocabWords, customPhonicsWords, upcomingTests, weeklyGames, teacherNotes, progress, worldProgress,
+      newSightWord, newSpellingWord, newVocabWord, newVocabDef, newPhonicsWord, newPhonicsPattern,
+      newTestName, newTestSubject, newTestDate, getFirestore]);
 
   /* ---------------------- Tests helpers ---------------------- */
   const getUpcomingReminders = () => {
@@ -2103,6 +2552,35 @@ const HomeworkGamesApp = () => {
         return prev;
       });
     }
+  };
+
+  const handleZoneLaunch = (zoneId) => {
+    setActiveBossZone(zoneId);
+    setGameSource("worldmap");
+    const MAP = { sight: "Sight Word Obby", phonics: "Sound Jumper", math: "Math Race", spelling: "Spelling Swamp" };
+    setSelectedGame(MAP[zoneId]);
+    setCurrentView("game");
+  };
+
+  const handleWorldGameComplete = () => {
+    const { sentence, targetWord } = generateAdventureSentence(customSpellingWords, customSightWords, customVocabWords);
+    setPendingBossFight({ zoneId: activeBossZone, sentence, targetWord });
+    setCurrentView("worldmap");
+  };
+
+  const handleBossVictory = () => {
+    setWorldProgress(prev => ({ ...prev, [pendingBossFight.zoneId]: Math.min(3, (prev[pendingBossFight.zoneId] || 0) + 1) }));
+    setPoints(p => p + 25);
+    setPendingBossFight(null);
+    setActiveBossZone(null);
+    setGameSource("home");
+  };
+
+  const handleBossDismiss = () => {
+    setPendingBossFight(null);
+    setActiveBossZone(null);
+    setGameSource("home");
+    setCurrentView("worldmap");
   };
 
   const openChest = (chestType) => {
@@ -2890,6 +3368,56 @@ const HomeworkGamesApp = () => {
 
         <h1 className="text-4xl font-extrabold text-gray-900 mb-6 text-center">Parents Page</h1>
 
+        {/* Cloud Sync */}
+        <div className="bg-white rounded-3xl shadow-md p-6 border border-indigo-200 mb-6">
+          <h2 className="text-2xl font-extrabold text-gray-900 mb-1">☁️ Cloud Sync</h2>
+          <p className="text-gray-600 mb-4">Enter the same sync code on every device to keep Hayden's data in sync automatically.</p>
+
+          <div className="flex items-center gap-2 mb-4">
+            <span className={`w-3 h-3 rounded-full flex-shrink-0 ${syncStatus === "connected" ? "bg-green-500" : syncStatus === "connecting" ? "bg-yellow-400" : syncStatus === "error" ? "bg-red-500" : "bg-gray-300"}`} />
+            <span className="font-semibold text-gray-700 capitalize">{syncStatus}</span>
+            {syncCode && <span className="ml-2 text-gray-500 text-sm">Code: <strong className="font-mono">{syncCode}</strong> · Child: <strong>{activeChildId}</strong></span>}
+          </div>
+
+          <div className="flex gap-2 mb-3">
+            <input
+              value={syncCodeInput}
+              onChange={e => setSyncCodeInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+              onKeyDown={e => e.key === "Enter" && syncCodeInput.length >= 4 && (setSyncCode(syncCodeInput), setActiveChildId(activeChildInput || "hayden"))}
+              placeholder="e.g. HAY123"
+              maxLength={8}
+              className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 font-mono text-lg font-bold focus:outline-none focus:border-indigo-500"
+            />
+            <button
+              onClick={() => { if (syncCodeInput.length >= 4) { setSyncCode(syncCodeInput); setActiveChildId(activeChildInput || "hayden"); } }}
+              disabled={syncCodeInput.length < 4}
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-extrabold px-6 py-2 rounded-2xl"
+            >
+              Connect
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 mb-3">
+            <label className="text-sm font-bold text-gray-700 whitespace-nowrap">Child name/ID:</label>
+            <input
+              value={activeChildInput}
+              onChange={e => setActiveChildInput(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))}
+              placeholder="hayden"
+              className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:border-indigo-500"
+            />
+            <span className="text-xs text-gray-400">(for siblings, use different IDs)</span>
+          </div>
+
+          {syncCode && (
+            <button
+              onClick={() => { setSyncCode(""); setSyncCodeInput(""); setSyncStatus("disconnected"); }}
+              className="text-sm text-red-500 hover:text-red-700 underline"
+            >
+              Disconnect
+            </button>
+          )}
+        </div>
+
         <div className="grid lg:grid-cols-2 gap-6">
           {/* CSV Import */}
           <div className="bg-white rounded-3xl shadow-md p-6 border border-gray-200">
@@ -3408,6 +3936,14 @@ const HomeworkGamesApp = () => {
     );
   };
 
+  const renderWorldMap = () => (
+    <WorldMapScreen
+      onBack={() => setCurrentView("home")}
+      onLaunchZone={handleZoneLaunch}
+      worldProgress={worldProgress}
+    />
+  );
+
   const renderHome = () => (
     <div className="max-w-6xl mx-auto">
       <div className="flex items-center justify-between gap-3 mb-6">
@@ -3424,15 +3960,39 @@ const HomeworkGamesApp = () => {
         </button>
       </div>
 
-      <div className="mb-6 flex gap-3 flex-wrap">
+      <div className="mb-6 flex gap-3 flex-wrap items-center">
         <IconPill icon={Star} label={`${points} Stars`} className="text-yellow-700" />
         <IconPill icon={Key} label={`${keys} Keys`} className="text-yellow-700" />
+        {syncCode && (
+          <span className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-extrabold border ${
+            syncStatus === "connected" ? "bg-green-50 border-green-200 text-green-800"
+            : syncStatus === "error" ? "bg-red-50 border-red-200 text-red-800"
+            : "bg-gray-100 border-gray-200 text-gray-600"
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${syncStatus === "connected" ? "bg-green-500" : syncStatus === "error" ? "bg-red-500" : "bg-yellow-400"}`} />
+            {syncStatus === "connected" ? "Synced" : syncStatus === "error" ? "Sync Error" : "Syncing..."}
+          </span>
+        )}
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-1">{renderStudentPlanner()}</div>
 
         <div className="lg:col-span-2 space-y-6">
+          <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-3xl p-6 text-white shadow-md">
+            <div className="flex items-center gap-3 mb-2">
+              <span className="text-3xl">🗺️</span>
+              <div className="text-2xl font-extrabold">Adventure World</div>
+            </div>
+            <p className="text-indigo-100 mb-4">Explore 4 zones, defeat bosses, earn stars!</p>
+            <button
+              onClick={() => { setGameSource("home"); setCurrentView("worldmap"); }}
+              className="w-full bg-white hover:bg-indigo-50 text-indigo-800 font-extrabold py-4 rounded-2xl"
+            >
+              🗺️ Enter World
+            </button>
+          </div>
+
           <div className="bg-white rounded-3xl border border-gray-200 shadow-md p-6">
             <div className="flex items-center gap-3 mb-2">
               <Check className="text-purple-800" />
@@ -3512,7 +4072,7 @@ const HomeworkGamesApp = () => {
                 { name: "Math Race", icon: Trophy },
                 { name: "Sound Jumper", icon: Zap },
                 { name: "Sight Word Obby", icon: Shield },
-                { name: "Coming Soon", icon: Sparkles },
+                { name: "Spelling Swamp", icon: Sparkles },
               ].map((game) => (
                 <button
                   key={game.name}
@@ -3537,6 +4097,23 @@ const HomeworkGamesApp = () => {
 
   /* ---------------------------------- Game --------------------------------- */
   const renderGame = () => {
+    const backDest = gameSource === "worldmap" ? "worldmap" : "home";
+    const completeFn = gameSource === "worldmap" ? handleWorldGameComplete : () => setCurrentView("today");
+
+    if (selectedGame === "Spelling Swamp") {
+      return (
+        <SpellingSwampGame
+          spellingWords={customSpellingWords}
+          wordsPerSession={weeklyGames.spellingPerDay}
+          setPoints={setPoints}
+          onBack={() => setCurrentView(backDest)}
+          onComplete={completeFn}
+          onEvent={handleGameEvent}
+          recordAttempt={recordAttempt}
+        />
+      );
+    }
+
     if (selectedGame === "Sound Jumper") {
       return (
         <SoundJumperGame
@@ -3544,8 +4121,8 @@ const HomeworkGamesApp = () => {
           wordsPerSession={weeklyGames.phonicsPerDay}
           smartMode={!!weeklyGames.smartPhonicsMode}
           setPoints={setPoints}
-          onBack={() => setCurrentView("today")}
-          onComplete={() => setCurrentView("today")}
+          onBack={() => setCurrentView(backDest)}
+          onComplete={completeFn}
           onEvent={handleGameEvent}
         />
       );
@@ -3554,8 +4131,8 @@ const HomeworkGamesApp = () => {
     if (selectedGame === "Math Race") {
       return (
         <MathRaceGame
-          onBack={() => setCurrentView("home")}
-          onDone={() => setCurrentView("today")}
+          onBack={() => setCurrentView(backDest)}
+          onDone={completeFn}
           setPoints={setPoints}
           initialTopicId={weeklyGames.mathTopic}
           numProblems={weeklyGames.mathProblemsPerDay}
@@ -3568,8 +4145,8 @@ const HomeworkGamesApp = () => {
     if (selectedGame === "Sight Word Obby") {
       return (
         <SightWordObbyGame
-          onBack={() => setCurrentView("home")}
-          onComplete={() => setCurrentView("home")}
+          onBack={() => setCurrentView(backDest)}
+          onComplete={completeFn}
           setPoints={setPoints}
           onEvent={handleGameEvent}
           customSightWords={customSightWords}
@@ -3595,11 +4172,22 @@ const HomeworkGamesApp = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-pink-200 via-purple-200 to-pink-300 p-4 md:p-8">
       {currentView === "home" && renderHome()}
+      {currentView === "worldmap" && renderWorldMap()}
       {currentView === "parents" && renderParentsPage()}
       {currentView === "flashcards" && renderFlashcards()}
       {currentView === "today" && renderTodaysGames()}
       {currentView === "game" && renderGame()}
       {currentView === "loot" && renderMyLoot()}
+
+      {pendingBossFight && (
+        <BossFightModal
+          zoneId={pendingBossFight.zoneId}
+          sentence={pendingBossFight.sentence}
+          targetWord={pendingBossFight.targetWord}
+          onVictory={handleBossVictory}
+          onDismiss={handleBossDismiss}
+        />
+      )}
 
       {showChestModal && selectedChest && (
         <ChestOpeningModal
