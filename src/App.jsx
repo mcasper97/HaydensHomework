@@ -571,11 +571,326 @@ const SpellingSwampGame = ({
   );
 };
 
+/* ============================== Phonics is Falling ============================== */
+const PhonicsIsFallingGame = ({
+  customPhonicsWords = [],
+  wordsPerSession = 5,
+  setPoints,
+  onBack,
+  onComplete,
+  onEvent,
+  recordAttempt,
+}) => {
+  const EMOJI_WORDS = [
+    { word: "cat", emoji: "🐱" }, { word: "dog", emoji: "🐶" },
+    { word: "sun", emoji: "☀️" }, { word: "hat", emoji: "🎩" },
+    { word: "cup", emoji: "☕" }, { word: "bug", emoji: "🐛" },
+    { word: "pen", emoji: "✏️" }, { word: "bed", emoji: "🛏️" },
+    { word: "fox", emoji: "🦊" }, { word: "pig", emoji: "🐷" },
+    { word: "hen", emoji: "🐔" }, { word: "jet", emoji: "✈️" },
+    { word: "map", emoji: "🗺️" }, { word: "log", emoji: "🪵" },
+    { word: "net", emoji: "🥅" }, { word: "fan", emoji: "🌀" },
+    { word: "ant", emoji: "🐜" }, { word: "owl", emoji: "🦉" },
+  ];
+
+  const mode = customPhonicsWords.length > 0 ? "pattern" : "picture";
+
+  const buildQueue = () => {
+    if (mode === "pattern") {
+      const items = customPhonicsWords
+        .map(entry => {
+          const parts = (entry || "").split(";");
+          return { word: parts[0].trim().toLowerCase(), pattern: parts[1]?.trim() || "" };
+        })
+        .filter(e => e.word.length > 0);
+      return shuffle(items).slice(0, wordsPerSession);
+    }
+    return shuffle([...EMOJI_WORDS]).slice(0, wordsPerSession);
+  };
+
+  const [phase, setPhase] = useState("playing");
+  const [wordQueue] = useState(() => buildQueue());
+  const [wordIndex, setWordIndex] = useState(0);
+  const [slots, setSlots] = useState([]);
+  const [tiles, setTiles] = useState([]);
+  const [lives, setLives] = useState(3);
+  const [score, setScore] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(30);
+  const [shakeSlots, setShakeSlots] = useState(false);
+  const [wordFeedback, setWordFeedback] = useState(null);
+  const [wordsCorrect, setWordsCorrect] = useState(0);
+  const [flashTile, setFlashTile] = useState(null);
+
+  const nextSlotRef = useRef(0);
+  const wordRef = useRef("");
+  const spawnRef = useRef(null);
+  const timerRef = useRef(null);
+  const tileIdRef = useRef(0);
+  const wordStartRef = useRef(Date.now());
+  const streakRef = useRef(0);
+
+  // CSS keyframe injection
+  useEffect(() => {
+    const styleId = "phonics-falling-styles";
+    if (document.getElementById(styleId)) return;
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = `
+      @keyframes tilefall {
+        from { top: -60px; }
+        to   { top: 110%;  }
+      }
+      @keyframes slotshake {
+        0%,100% { transform: translateX(0); }
+        20% { transform: translateX(-6px); }
+        40% { transform: translateX(6px); }
+        60% { transform: translateX(-4px); }
+        80% { transform: translateX(4px); }
+      }
+      @keyframes correctpop {
+        0%   { transform: scale(1);   }
+        50%  { transform: scale(1.2); }
+        100% { transform: scale(1);   }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => document.getElementById("phonics-falling-styles")?.remove();
+  }, []);
+
+  const initWord = useCallback((entry) => {
+    wordRef.current = entry.word.toLowerCase();
+    nextSlotRef.current = 0;
+    setSlots(entry.word.split("").map(l => ({ letter: l, filled: false })));
+    setTiles([]);
+    setTimeLeft(30);
+    wordStartRef.current = Date.now();
+    setWordFeedback(null);
+    setFlashTile(null);
+  }, []);
+
+  useEffect(() => {
+    if (wordQueue[wordIndex]) initWord(wordQueue[wordIndex]);
+  }, [wordIndex, wordQueue, initWord]);
+
+  const advanceWord = useCallback((wasCorrect) => {
+    clearInterval(spawnRef.current);
+    clearInterval(timerRef.current);
+    setTiles([]);
+    if (wasCorrect) {
+      const elapsed = (Date.now() - wordStartRef.current) / 1000;
+      const speedBonus = Math.max(0, Math.floor((30 - elapsed) * 2));
+      const newStreak = streakRef.current + 1;
+      streakRef.current = newStreak;
+      const streakBonus = newStreak % 5 === 0 ? 50 : 0;
+      const pts = 20 + speedBonus + streakBonus;
+      setScore(s => s + pts);
+      setPoints(p => p + Math.floor(pts / 5));
+      setWordsCorrect(c => c + 1);
+      setStreak(newStreak);
+      setWordFeedback("correct");
+    } else {
+      streakRef.current = 0;
+      setStreak(0);
+      setWordFeedback("timeout");
+    }
+    setTimeout(() => {
+      setWordIndex(i => {
+        if (i + 1 >= wordQueue.length) { setPhase("done"); return i; }
+        return i + 1;
+      });
+    }, 1400);
+  }, [wordQueue, setPoints]);
+
+  const handleTileClick = useCallback((tileId, letter) => {
+    if (wordFeedback) return;
+    const word = wordRef.current;
+    const nextIdx = nextSlotRef.current;
+    if (nextIdx >= word.length) return;
+    if (letter === word[nextIdx]) {
+      const newNextIdx = nextIdx + 1;
+      nextSlotRef.current = newNextIdx;
+      setSlots(prev => prev.map((s, i) => i === nextIdx ? { ...s, filled: true } : s));
+      setTiles(prev => prev.filter(t => t.id !== tileId));
+      if (newNextIdx >= word.length) advanceWord(true);
+    } else {
+      setFlashTile(tileId);
+      setTimeout(() => setFlashTile(null), 500);
+      setShakeSlots(true);
+      setTimeout(() => setShakeSlots(false), 500);
+      setLives(l => {
+        if (l <= 1) { advanceWord(false); return 0; }
+        return l - 1;
+      });
+    }
+  }, [wordFeedback, advanceWord]);
+
+  const spawnTile = useCallback(() => {
+    const word = wordRef.current;
+    if (!word || nextSlotRef.current >= word.length) return;
+    let letter;
+    if (Math.random() < 0.55) {
+      letter = word[Math.floor(Math.random() * word.length)];
+    } else {
+      const alpha = "abcdefghijklmnopqrstuvwxyz";
+      do { letter = alpha[Math.floor(Math.random() * 26)]; } while (word.includes(letter));
+    }
+    const x = 5 + Math.random() * 80;
+    const duration = 2.5 + Math.random() * 2;
+    const id = ++tileIdRef.current;
+    setTiles(prev => [...prev.slice(-20), { id, letter, x, duration }]);
+    setTimeout(() => setTiles(prev => prev.filter(t => t.id !== id)), (duration + 0.3) * 1000);
+  }, []);
+
+  useEffect(() => {
+    if (phase !== "playing") return;
+    spawnRef.current = setInterval(spawnTile, 700);
+    return () => clearInterval(spawnRef.current);
+  }, [phase, wordIndex, spawnTile]);
+
+  useEffect(() => {
+    if (phase !== "playing") return;
+    timerRef.current = setInterval(() => {
+      setTimeLeft(t => {
+        if (t <= 1) { clearInterval(timerRef.current); advanceWord(false); return 0; }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timerRef.current);
+  }, [phase, wordIndex, advanceWord]);
+
+  const currentEntry = wordQueue[wordIndex];
+  const hint = mode === "picture" ? currentEntry?.emoji : currentEntry?.pattern;
+  const currentWordDisplay = currentEntry?.word || "";
+
+  if (phase === "done") {
+    return (
+      <div className="max-w-md mx-auto text-center">
+        <BackButton onClick={onBack} label="Back" className="mb-6" />
+        <div className="bg-white rounded-3xl shadow-lg p-8 border border-green-200">
+          <div className="text-6xl mb-4">🎉</div>
+          <h2 className="text-3xl font-extrabold text-gray-900 mb-2">Nice Work!</h2>
+          <p className="text-gray-600 mb-4">{wordsCorrect} / {wordQueue.length} words built</p>
+          <div className="text-4xl font-extrabold text-green-600 mb-6">{score} pts</div>
+          <button
+            onClick={onComplete}
+            className="w-full bg-green-500 hover:bg-green-600 text-white font-extrabold py-3 rounded-2xl text-lg transition"
+          >
+            Continue →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      <BackButton onClick={onBack} label="Back" className="mb-4" />
+
+      {/* Header */}
+      <div className="flex justify-between items-center mb-3">
+        <div className="flex gap-1">
+          {[0, 1, 2].map(i => (
+            <span key={i} className={`text-2xl ${i < lives ? "" : "opacity-20"}`}>❤️</span>
+          ))}
+        </div>
+        <div className={`text-2xl font-extrabold ${timeLeft <= 10 ? "text-red-600" : "text-gray-700"}`}>
+          ⏱ {timeLeft}s
+        </div>
+        <div className="text-xl font-extrabold text-purple-700">{score} pts</div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="flex gap-1 mb-4">
+        {wordQueue.map((_, i) => (
+          <div key={i} className={`h-2 flex-1 rounded-full ${i < wordIndex ? "bg-green-400" : i === wordIndex ? "bg-purple-500" : "bg-gray-200"}`} />
+        ))}
+      </div>
+
+      {/* Hint */}
+      <div className="text-center mb-3">
+        {mode === "picture" ? (
+          <div className="text-7xl mb-1">{hint}</div>
+        ) : (
+          <div className="bg-indigo-100 text-indigo-800 font-extrabold text-2xl px-6 py-2 rounded-2xl inline-block mb-1">
+            Pattern: {hint}
+          </div>
+        )}
+        <p className="text-gray-500 text-sm">Click the falling letters to spell the word!</p>
+      </div>
+
+      {/* Word slots */}
+      <div
+        className="flex justify-center gap-2 mb-3"
+        style={shakeSlots ? { animation: "slotshake 0.5s ease-in-out" } : {}}
+      >
+        {slots.map((slot, i) => (
+          <div
+            key={i}
+            className={`w-12 h-14 rounded-xl border-4 flex items-center justify-center text-2xl font-extrabold transition-all duration-200
+              ${slot.filled
+                ? "bg-green-100 border-green-400 text-green-800"
+                : "bg-white border-gray-300 text-gray-300"}`}
+            style={slot.filled ? { animation: "correctpop 0.3s ease" } : {}}
+          >
+            {slot.filled ? slot.letter.toUpperCase() : "_"}
+          </div>
+        ))}
+      </div>
+
+      {/* Word feedback */}
+      {wordFeedback && (
+        <div className={`text-center text-2xl font-extrabold mb-2 ${wordFeedback === "correct" ? "text-green-600" : "text-red-500"}`}>
+          {wordFeedback === "correct" ? "🌟 Correct!" : `Time's up! It was: ${currentWordDisplay.toUpperCase()}`}
+        </div>
+      )}
+
+      {/* Falling sky area */}
+      <div
+        className="relative bg-gradient-to-b from-sky-300 to-sky-100 rounded-3xl overflow-hidden border-2 border-sky-300"
+        style={{ height: 260 }}
+      >
+        <div className="absolute top-2 left-4 text-3xl opacity-30 select-none">☁️</div>
+        <div className="absolute top-4 right-8 text-3xl opacity-20 select-none">☁️</div>
+        <div className="absolute top-10 left-1/3 text-2xl opacity-15 select-none">☁️</div>
+
+        {tiles.map(tile => (
+          <button
+            key={tile.id}
+            onClick={() => handleTileClick(tile.id, tile.letter)}
+            className={`absolute w-12 h-12 rounded-xl shadow-lg font-extrabold text-2xl flex items-center justify-center border-4 select-none
+              ${flashTile === tile.id
+                ? "bg-red-400 border-red-600 text-white"
+                : "bg-yellow-300 border-yellow-500 text-gray-900 hover:bg-yellow-200 active:scale-95"}`}
+            style={{
+              left: `${tile.x}%`,
+              top: "-60px",
+              animation: `tilefall ${tile.duration}s linear forwards`,
+              cursor: "pointer",
+            }}
+          >
+            {tile.letter.toUpperCase()}
+          </button>
+        ))}
+
+        <div className="absolute bottom-0 left-0 right-0 h-5 bg-green-500/50 rounded-b-3xl" />
+      </div>
+
+      {/* Streak badge */}
+      {streak >= 3 && (
+        <div className="text-center mt-2 text-orange-500 font-extrabold text-lg">
+          🔥 {streak} in a row!
+        </div>
+      )}
+    </div>
+  );
+};
+
 /* ============================== World Map Screen ============================== */
 const WorldMapScreen = ({ onBack, onLaunchZone, worldProgress = {} }) => {
   const zones = [
     { id: "sight",    name: "Sight Word City",  emoji: "🏙️", gradient: "from-blue-500 to-indigo-600",    desc: "Master sight words in the city!" },
-    { id: "phonics",  name: "Phonics Forest",   emoji: "🌲", gradient: "from-green-500 to-emerald-600",  desc: "Jump through phonics patterns!" },
+    { id: "phonics",  name: "Phonics Forest",   emoji: "🌲", gradient: "from-green-500 to-emerald-600",  desc: "Catch falling letters to build words!" },
     { id: "math",     name: "Math Mountain",    emoji: "⛰️", gradient: "from-orange-500 to-red-600",     desc: "Climb to the top with math!" },
     { id: "spelling", name: "Spelling Swamp",   emoji: "🐸", gradient: "from-teal-500 to-green-900",     desc: "Spell your way through the swamp!" },
   ];
@@ -2557,7 +2872,7 @@ const HomeworkGamesApp = () => {
   const handleZoneLaunch = (zoneId) => {
     setActiveBossZone(zoneId);
     setGameSource("worldmap");
-    const MAP = { sight: "Sight Word Obby", phonics: "Sound Jumper", math: "Math Race", spelling: "Spelling Swamp" };
+    const MAP = { sight: "Sight Word Obby", phonics: "Phonics is Falling", math: "Math Race", spelling: "Spelling Swamp" };
     setSelectedGame(MAP[zoneId]);
     setCurrentView("game");
   };
@@ -2956,7 +3271,7 @@ const HomeworkGamesApp = () => {
     if (gameKey === "sight") return "Sight Word Sprint";
     if (gameKey === "spelling") return "Spelling Challenge";
     if (gameKey === "vocab") return "Vocabulary Builder";
-    if (gameKey === "phonics") return "Sound Jumper";
+    if (gameKey === "phonics") return "Phonics is Falling";
     if (gameKey === "math") return "Math Race";
     return "Game";
   };
@@ -4070,7 +4385,7 @@ const HomeworkGamesApp = () => {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
                 { name: "Math Race", icon: Trophy },
-                { name: "Sound Jumper", icon: Zap },
+                { name: "Phonics is Falling", icon: Zap },
                 { name: "Sight Word Obby", icon: Shield },
                 { name: "Spelling Swamp", icon: Sparkles },
               ].map((game) => (
@@ -4124,6 +4439,20 @@ const HomeworkGamesApp = () => {
           onBack={() => setCurrentView(backDest)}
           onComplete={completeFn}
           onEvent={handleGameEvent}
+        />
+      );
+    }
+
+    if (selectedGame === "Phonics is Falling") {
+      return (
+        <PhonicsIsFallingGame
+          customPhonicsWords={customPhonicsWords}
+          wordsPerSession={weeklyGames.phonicsPerDay}
+          setPoints={setPoints}
+          onBack={() => setCurrentView(backDest)}
+          onComplete={completeFn}
+          onEvent={handleGameEvent}
+          recordAttempt={recordAttempt}
         />
       );
     }
