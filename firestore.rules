@@ -1,6 +1,42 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Auth-based: each parent can only access their own data
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // --- Unattended wall-tablet board (?board=1) ---
+    // FLAGGED FOR REVIEW — not deployed yet (only takes effect after
+    // `firebase deploy --only firestore:rules`).
+    //
+    // The board route never signs in, so it can't satisfy request.auth
+    // above. It only ever touches ONE account (yours), so this scopes the
+    // unauthenticated allowance to that exact UID instead of opening things
+    // up broadly:
+    //   - users/{your uid}: read + write, so the board can save/edit
+    //     family events and chores.
+    //   - users/{your uid}/children/{childId}: read-only, so the board can
+    //     show live points/keys without being able to alter a child's
+    //     homework data.
+    //
+    // Trade-off to be aware of: anyone who obtains this UID (it's baked
+    // into the client bundle via VITE_FAMILY_UID, so it's not truly
+    // secret) could read or write your family's events/chores without
+    // logging in. If that's more than you're comfortable with, options
+    // include making this read-only, or fronting it with a Cloud Function
+    // that checks a shared secret instead of opening Firestore directly.
+    match /users/O1b10rk4P9Sz8vUtSNr8Ucrp3ni1 {
+      allow read, write: if true;
+    }
+    match /users/O1b10rk4P9Sz8vUtSNr8Ucrp3ni1/children/{childId} {
+      allow read: if true;
+    }
+
+    // Legacy sync-code access (kept for backwards compatibility)
     match /families/{syncCode}/children/{childId} {
       allow read, write: if true;
     }
