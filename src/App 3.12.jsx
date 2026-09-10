@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 
 /* ============================== Local Storage ============================== */
-const DEFAULT_LS_KEY = "haydens_homework_app_v6";
+const LS_KEY = "haydens_homework_app_v6";
 
 const DEVICE_ID = (() => {
   const key = "haydens_homework_device_id";
@@ -225,7 +225,7 @@ const shuffle = (array) => {
 const FALLBACK_WORDS = ["cat","dog","run","big","happy","jump","fast","blue","sun","play"];
 const SENTENCE_TEMPLATES = [
   w => `The ${w} is so cool!`,
-  w => `CG3 can ${w} very fast.`,
+  w => `Hayden can ${w} very fast.`,
   w => `I see a big ${w} here.`,
   w => `Look at the ${w} over there!`,
   w => `A ${w} was waiting for us.`,
@@ -389,7 +389,7 @@ const inferPhonicsPatterns = (word) => {
 const BackButton = ({ onClick, label = "Back", className = "" }) => (
   <button
     onClick={onClick}
-    className={`text-crestly-purple hover:opacity-80 font-semibold inline-flex items-center gap-2 ${className}`}
+    className={`text-purple-800 hover:text-purple-900 font-semibold inline-flex items-center gap-2 ${className}`}
   >
     <ArrowLeft size={18} />
     <span>{label}</span>
@@ -403,7 +403,7 @@ const IconPill = ({ icon: Icon, label, className = "" }) => (
   </div>
 );
 
-/* ============================== Spelling Swamp Game (Frogger — bottom to top) ============================== */
+/* ============================== Spelling Swamp Game ============================== */
 const SpellingSwampGame = ({
   spellingWords = [],
   wordsPerSession = 5,
@@ -413,534 +413,158 @@ const SpellingSwampGame = ({
   onEvent,
   recordAttempt,
 }) => {
-  // Layout (bottom → top):
-  //   START (playerRow 0)
-  //   Letter row 0 (playerRow 1)  ← rowData[0]
-  //   Obstacle row 0 (playerRow 2) ← rowData[1]
-  //   Letter row 1 (playerRow 3)  ← rowData[2]
-  //   Obstacle row 1 (playerRow 4) ← rowData[3]
-  //   ...
-  //   Letter row N-1 (playerRow 2N-1) ← rowData[2N-2]
-  //   FINISH (playerRow 2N)
-  //
-  // Collision ONLY in obstacle rows (even playerRow, 2..2*(N-1)).
-  // Tile check ONLY when hopping into a letter row (odd playerRow).
-  // resetToStart() has no blockRef guard — called from within hop setTimeout.
-  // doHit() guards on blockRef/invRef — called from game loop.
-
-  const GW = 500, GH = 600;
-  const PW = 28, PH = 44;
-  const TILE_W = 52, TILE_H = 46;
-
-  const hatColor = useRef(["#FF4757","#2ED573","#1E90FF","#FFA502","#FF6B81"][Math.floor(Math.random()*5)]).current;
-
   const [roundWords, setRoundWords] = useState([]);
-  const [wordIdx, setWordIdx] = useState(0);
-  const [letterIdx, setLetterIdx] = useState(0);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [userInput, setUserInput] = useState("");
+  const [feedback, setFeedback] = useState(null); // "correct" | "wrong" | null
+  const [gameOver, setGameOver] = useState(false);
   const [score, setScore] = useState(0);
   const [correctCount, setCorrectCount] = useState(0);
-  const [lives, setLives] = useState(3);
-  const [phase, setPhase] = useState("playing");
-  const [feedback, setFeedback] = useState(null);
-  const [playerRow, setPlayerRow] = useState(0);
-  const [playerX, setPlayerX] = useState(GW / 2 - PW / 2);
-  const [isInvincible, setIsInvincible] = useState(false);
-  const [walkFrame, setWalkFrame] = useState(0);
-  const [hopAnim, setHopAnim] = useState(false);
-  // rowData[i]: even i → { type:"letter", tiles:[{letter,isCorrect,x}] }
-  //             odd  i → { type:"obstacle", obstacles:[{id,x,speed,type,emoji,w}] }
-  const [rowData, setRowData] = useState([]);
-
-  const livesRef = useRef(3);
-  const invRef = useRef(false);
-  const blockRef = useRef(false);
-  const playerRowRef = useRef(0);
-  const playerXRef = useRef(GW / 2 - PW / 2);
-  const letterIdxRef = useRef(0);
-  const phaseRef = useRef("playing");
-  const wordIdxRef = useRef(0);
-  const roundWordsRef = useRef([]);
-  const rowDataRef = useRef([]);
-  const numRowsRef = useRef(0); // N = word length
-  const rowHRef = useRef(70);
-  const frameRef = useRef(0);
-  const keysRef = useRef({});
-
-  const OBS_TYPES = [
-    { type:"tornado",   emoji:"🌪️", w:38 },
-    { type:"fireball",  emoji:"🔥", w:34 },
-    { type:"boulder",   emoji:"🪨", w:38 },
-    { type:"lightning", emoji:"⚡", w:30 },
-    { type:"ghost",     emoji:"👻", w:36 },
-    { type:"skull",     emoji:"💀", w:34 },
-  ];
-
-  const makeRows = (word) => {
-    const W = word.toUpperCase();
-    const N = W.length;
-    // totalDisplayRows = 2*N + 1 (START + 2N-1 swamp rows + FINISH)
-    const rowH = Math.max(44, Math.floor(GH / (2 * N + 1)));
-    rowHRef.current = rowH;
-    numRowsRef.current = N;
-    const rows = [];
-    for (let k = 0; k < N; k++) {
-      // Letter row k → rowData[2k]
-      const correctLetter = W[k];
-      const numTiles = Math.min(4, Math.max(3, Math.floor(GW / 115)));
-      const wrongPool = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").filter(l => l !== correctLetter);
-      const tileLetters = shuffle([correctLetter, ...shuffle(wrongPool).slice(0, numTiles - 1)]);
-      const spacing = GW / numTiles;
-      const tiles = tileLetters.map((letter, idx) => ({
-        letter, isCorrect: letter === correctLetter,
-        x: spacing * idx + (spacing - TILE_W) / 2,
-      }));
-      rows.push({ type: "letter", tiles });
-
-      if (k < N - 1) {
-        // Obstacle row k → rowData[2k+1]
-        const dir = k % 2 === 0 ? 1 : -1;
-        const baseSpeed = 1.2 + k * 0.18;
-        const numObs = 2 + Math.floor(Math.random() * 2);
-        const obstacles = Array.from({ length: numObs }, (_, i) => {
-          const ot = OBS_TYPES[Math.floor(Math.random() * OBS_TYPES.length)];
-          const gap = GW / numObs;
-          const startX = dir > 0
-            ? -(ot.w + gap * i + Math.random() * 80)
-            : GW + gap * i + Math.random() * 80;
-          return { id:`o${k}-${i}-${Date.now()}`, x:startX, speed:(baseSpeed + Math.random()*0.5)*dir, ...ot };
-        });
-        rows.push({ type: "obstacle", obstacles });
-      }
-    }
-    return rows; // length = 2N - 1
-  };
-
-  const startWord = (word) => {
-    const rows = makeRows(word);
-    rowDataRef.current = rows;
-    setRowData(rows);
-    const initX = GW / 2 - PW / 2;
-    setPlayerRow(0); playerRowRef.current = 0;
-    setPlayerX(initX); playerXRef.current = initX;
-    setLetterIdx(0); letterIdxRef.current = 0;
-    blockRef.current = false;
-    phaseRef.current = "playing"; setPhase("playing");
-    setFeedback(null);
-    setTimeout(() => speak(word), 300);
-  };
 
   const buildRound = () => {
-    const words = spellingWords.filter(w => w?.trim());
+    const words = spellingWords.filter(w => w && w.trim().length > 0);
     const count = Math.min(wordsPerSession || 5, words.length);
     const picked = shuffle(words).slice(0, count);
-    roundWordsRef.current = picked;
     setRoundWords(picked);
-    wordIdxRef.current = 0; setWordIdx(0);
-    setScore(0); setCorrectCount(0);
-    setLives(3); livesRef.current = 3;
-    invRef.current = false; setIsInvincible(false);
-    if (picked.length > 0) startWord(picked[0]);
+    setCurrentIndex(0);
+    setUserInput("");
+    setFeedback(null);
+    setGameOver(false);
+    setScore(0);
+    setCorrectCount(0);
   };
 
-  useEffect(() => { buildRound(); }, []);
-
   useEffect(() => {
-    const id = "swamp4-styles";
-    if (document.getElementById(id)) return;
-    const s = document.createElement("style");
-    s.id = id;
-    s.textContent = `
-      @keyframes sw4Flash{0%,100%{opacity:1}50%{opacity:0.1}}
-      @keyframes sw4HopUp{0%,100%{transform:translateY(0)}40%{transform:translateY(-18px)}}
-      @keyframes sw4Spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-      @keyframes sw4Pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.25)}}
-      @keyframes sw4Shake{0%,100%{transform:translateX(0)}30%{transform:translateX(-3px)}70%{transform:translateX(3px)}}
-    `;
-    document.head.appendChild(s);
-    return () => { document.getElementById(id)?.remove(); };
+    buildRound();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Called from within hop setTimeout (blockRef already true) — no guard needed
-  const resetToStart = (msg) => {
-    invRef.current = true; setIsInvincible(true);
-    const nl = livesRef.current - 1;
-    livesRef.current = nl; setLives(nl);
-    speak("Oops!");
-    if (nl <= 0) {
-      phaseRef.current = "gameOver"; setPhase("gameOver");
-      blockRef.current = false;
-      return;
-    }
-    setFeedback({ msg });
-    setPlayerRow(0); playerRowRef.current = 0;
-    setPlayerX(GW / 2 - PW / 2); playerXRef.current = GW / 2 - PW / 2;
-    setLetterIdx(0); letterIdxRef.current = 0;
-    setTimeout(() => { setFeedback(null); invRef.current = false; blockRef.current = false; setIsInvincible(false); }, 1400);
-  };
+  const currentWord = roundWords[currentIndex];
 
-  // Called from game loop — guards on blockRef/invRef
-  const doHit = (msg) => {
-    if (invRef.current || blockRef.current) return;
-    blockRef.current = true;
-    resetToStart(msg);
-  };
-
-  // Game loop
+  // Auto-speak each word
   useEffect(() => {
-    if (phase !== "playing") return;
-    const loop = setInterval(() => {
-      frameRef.current++;
-      if (frameRef.current % 10 === 0) setWalkFrame(f => f === 0 ? 1 : 0);
-
-      // Move obstacles — only in obstacle rows
-      setRowData(prev => {
-        const next = prev.map(row => {
-          if (row.type !== "obstacle") return row;
-          return {
-            ...row,
-            obstacles: row.obstacles.map(o => {
-              let nx = o.x + o.speed;
-              if (o.speed > 0 && nx > GW + 10) nx = -(o.w + Math.random() * 200 + 80);
-              if (o.speed < 0 && nx < -(o.w + 10)) nx = GW + Math.random() * 200 + 80;
-              return { ...o, x: nx };
-            }),
-          };
-        });
-        rowDataRef.current = next;
-        return next;
-      });
-
-      // Smooth L/R movement from held keys
-      if (!blockRef.current) {
-        const k = keysRef.current;
-        if (k["ArrowLeft"] || k["a"]) {
-          const nx = Math.max(0, playerXRef.current - 3.5);
-          setPlayerX(nx); playerXRef.current = nx;
-        }
-        if (k["ArrowRight"] || k["d"]) {
-          const nx = Math.min(GW - PW, playerXRef.current + 3.5);
-          setPlayerX(nx); playerXRef.current = nx;
-        }
-      }
-
-      // Collision — ONLY in obstacle rows (even playerRow, 2..2*(N-1))
-      if (!invRef.current && !blockRef.current) {
-        const pr = playerRowRef.current;
-        const N = numRowsRef.current;
-        if (pr % 2 === 0 && pr >= 2 && pr <= 2 * (N - 1)) {
-          const row = rowDataRef.current[pr - 1]; // rowData index = pr-1 (odd = obstacle)
-          if (row && row.type === "obstacle") {
-            const px = playerXRef.current;
-            for (const obs of row.obstacles) {
-              if (px + PW - 4 > obs.x + 4 && px + 4 < obs.x + obs.w - 4) {
-                doHit(`${obs.emoji} Watch out!`); break;
-              }
-            }
-          }
-        }
-      }
-    }, 1000 / 60);
-    return () => clearInterval(loop);
-  }, [phase]);
-
-  const doHopUp = () => {
-    if (blockRef.current || phaseRef.current !== "playing") return;
-    const pr = playerRowRef.current;
-    const N = numRowsRef.current;
-    const finishRow = 2 * N;
-    if (pr >= finishRow) return;
-    const nextRow = pr + 1;
-    blockRef.current = true;
-    setHopAnim(true);
-
-    if (nextRow === finishRow) {
-      // Word complete!
-      setTimeout(() => {
-        setHopAnim(false);
-        setPlayerRow(nextRow); playerRowRef.current = nextRow;
-        blockRef.current = false;
-        phaseRef.current = "wordWin"; setPhase("wordWin");
-        setScore(s => s + 20); setPoints(p => p + 10); setCorrectCount(c => c + 1);
-        if (recordAttempt) recordAttempt("spelling", roundWordsRef.current[wordIdxRef.current], true);
-        if (onEvent) onEvent({ type:"correct", domain:"spelling" });
-        speak("Amazing!");
-      }, 220);
-      return;
+    if (currentWord && !gameOver) {
+      const t = setTimeout(() => speak(currentWord), 300);
+      return () => clearTimeout(t);
     }
+  }, [currentIndex, currentWord, gameOver]);
 
-    // Even nextRow = obstacle row → just hop in, unblock immediately
-    if (nextRow % 2 === 0) {
-      setTimeout(() => {
-        setHopAnim(false);
-        setPlayerRow(nextRow); playerRowRef.current = nextRow;
-        blockRef.current = false;
-      }, 220);
-      return;
-    }
-
-    // Odd nextRow = letter row → check tile alignment
-    const rowInfo = rowDataRef.current[nextRow - 1];
-    const px = playerXRef.current;
-    const hitTile = rowInfo?.tiles.find(t => px + PW / 2 > t.x && px + PW / 2 < t.x + TILE_W);
-
-    setTimeout(() => {
-      setHopAnim(false);
-      if (!hitTile) { resetToStart("🌊 Missed!"); return; }
-      const snapX = hitTile.x + TILE_W / 2 - PW / 2;
-      setPlayerRow(nextRow); playerRowRef.current = nextRow;
-      setPlayerX(snapX); playerXRef.current = snapX;
-      if (hitTile.isCorrect) {
-        const w = (roundWordsRef.current[wordIdxRef.current] || "").toUpperCase();
-        speak(w[letterIdxRef.current]);
-        letterIdxRef.current++; setLetterIdx(l => l + 1);
-        setTimeout(() => { blockRef.current = false; }, 180);
-      } else {
-        resetToStart("❌ Wrong letter!");
-      }
-    }, 220);
-  };
-
-  const doHopDown = () => {
-    if (blockRef.current || playerRowRef.current <= 0) return;
-    const nr = playerRowRef.current - 1;
-    setPlayerRow(nr); playerRowRef.current = nr;
-    if (nr === 0) { setPlayerX(GW / 2 - PW / 2); playerXRef.current = GW / 2 - PW / 2; }
-  };
-
-  useEffect(() => {
-    const onDown = (e) => {
-      keysRef.current[e.key] = true;
-      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault();
-      if (e.key === "ArrowUp" || e.key === " " || e.key === "w") doHopUp();
-      if (e.key === "ArrowDown" || e.key === "s") doHopDown();
-    };
-    const onUp = (e) => { keysRef.current[e.key] = false; };
-    window.addEventListener("keydown", onDown);
-    window.addEventListener("keyup", onUp);
-    return () => { window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp); };
-  }, []);
-
-  const nextWord = () => {
-    const ni = wordIdxRef.current + 1;
-    if (ni >= roundWordsRef.current.length) {
-      phaseRef.current = "complete"; setPhase("complete");
-      if (onEvent) onEvent({ type:"complete", domain:"spelling" });
+  const advance = () => {
+    setUserInput("");
+    setFeedback(null);
+    if (currentIndex + 1 >= roundWords.length) {
+      setGameOver(true);
+      if (onEvent) onEvent({ type: "complete", domain: "spelling" });
     } else {
-      wordIdxRef.current = ni; setWordIdx(ni);
-      startWord(roundWordsRef.current[ni]);
+      setCurrentIndex(i => i + 1);
     }
   };
 
-  // Layout
-  const word = (roundWords[wordIdx] || "").toUpperCase();
-  const N = word.length;
-  const totalDisplayRows = 2 * N + 1;
-  const rowH = N > 0 ? Math.max(44, Math.floor(GH / totalDisplayRows)) : 70;
-  const getRowTopY = r => GH - (r + 1) * rowH;
-  const playerTopY = getRowTopY(playerRow) + (rowH - PH) / 2;
+  const handleSubmit = () => {
+    if (!currentWord || feedback) return;
+    const isCorrect = userInput.trim().toLowerCase() === currentWord.toLowerCase();
+    if (isCorrect) {
+      setScore(s => s + 10);
+      setCorrectCount(c => c + 1);
+      setPoints(p => p + 10);
+      if (recordAttempt) recordAttempt("spelling", currentWord, true);
+    } else {
+      setScore(s => s + 1);
+      setPoints(p => p + 1);
+      if (recordAttempt) recordAttempt("spelling", currentWord, false);
+    }
+    setFeedback(isCorrect ? "correct" : "wrong");
+    setTimeout(advance, 900);
+  };
 
-  const obsAnim = (type) => ({
-    tornado:   "sw4Spin 0.5s linear infinite",
-    fireball:  "sw4Pulse 0.35s ease-in-out infinite",
-    lightning: "sw4Shake 0.3s linear infinite",
-    ghost:     "sw4Pulse 0.8s ease-in-out infinite",
-    skull:     "sw4Shake 0.5s linear infinite",
-    boulder:   "none",
-  })[type] || "none";
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") handleSubmit();
+  };
 
-  const renderHero = (x, y) => (
-    <div style={{ position:"absolute", left:x, top:y, width:PW, height:PH, zIndex:20, pointerEvents:"none",
-      animation: isInvincible ? "sw4Flash 0.15s linear infinite" : hopAnim ? "sw4HopUp 0.28s ease-out" : "none" }}>
-      <div style={{ position:"absolute", left:2, top:-6, width:24, height:7, background:hatColor, borderRadius:"3px 3px 0 0" }}/>
-      <div style={{ position:"absolute", left:2, top:0, width:24, height:22, background:"linear-gradient(135deg,#FFDE7A,#F0C040)", borderRadius:4, border:"2px solid #C8971E" }}>
-        <div style={{ position:"absolute", left:3, top:3, width:5, height:5, borderRadius:"50%", background:"rgba(255,255,255,0.55)" }}/>
-        <div style={{ position:"absolute", left:4, top:8, width:4, height:4, borderRadius:"50%", background:"#111" }}/>
-        <div style={{ position:"absolute", left:13, top:8, width:4, height:4, borderRadius:"50%", background:"#111" }}/>
-        <div style={{ position:"absolute", left:6, top:16, width:9, height:2, background:"#111", borderRadius:"0 0 4px 4px" }}/>
-      </div>
-      <div style={{ position:"absolute", left:4, top:22, width:20, height:14, background:"linear-gradient(to bottom,#3B7AFF,#1E4FCC)", border:"2px solid #1230A0", borderRadius:2 }}/>
-      <div style={{ position:"absolute", left:0, top:23, width:4, height:13, background:"linear-gradient(to bottom,#FFDE7A,#F0C040)", border:"2px solid #C8971E", borderRadius:2, transform:walkFrame===1?"rotate(-15deg)":"rotate(15deg)", transformOrigin:"top center" }}/>
-      <div style={{ position:"absolute", left:24, top:23, width:4, height:13, background:"linear-gradient(to bottom,#FFDE7A,#F0C040)", border:"2px solid #C8971E", borderRadius:2, transform:walkFrame===1?"rotate(15deg)":"rotate(-15deg)", transformOrigin:"top center" }}/>
-      <div style={{ position:"absolute", left:5, top:30, width:7, height:12, background:"linear-gradient(to bottom,#3A7A3A,#1E5A1E)", border:"2px solid #0E3A0E", borderRadius:2, transform:walkFrame===0?"rotate(-10deg)":"rotate(10deg)", transformOrigin:"top center" }}/>
-      <div style={{ position:"absolute", left:16, top:30, width:7, height:12, background:"linear-gradient(to bottom,#3A7A3A,#1E5A1E)", border:"2px solid #0E3A0E", borderRadius:2, transform:walkFrame===0?"rotate(10deg)":"rotate(-10deg)", transformOrigin:"top center" }}/>
-    </div>
-  );
-
-  const btn = { background:"rgba(255,255,255,0.18)", color:"white", border:"2px solid rgba(255,255,255,0.3)", borderRadius:12, padding:"12px 18px", fontWeight:900, fontSize:18, cursor:"pointer", minWidth:52, touchAction:"none" };
-
-  if (spellingWords.length === 0) return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#0a3d0a,#1a5c2a)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-      <div style={{ background:"white", borderRadius:24, padding:32, maxWidth:360, width:"100%", textAlign:"center" }}>
-        <div style={{ fontSize:60, marginBottom:12 }}>🐸</div>
-        <h2 style={{ fontWeight:900, fontSize:24, marginBottom:12 }}>Spelling Swamp</h2>
-        <p style={{ color:"#666", marginBottom:24 }}>Ask a parent to add spelling words!</p>
-        <button onClick={onBack} style={{ width:"100%", background:"#1a1a1a", color:"white", fontWeight:900, padding:16, borderRadius:16, border:"none", cursor:"pointer" }}>Back</button>
-      </div>
-    </div>
-  );
-
-  if (phase === "complete") return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#0a3d0a,#1a5c2a)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-      <div style={{ background:"white", borderRadius:24, padding:32, maxWidth:360, width:"100%", textAlign:"center" }}>
-        <div style={{ fontSize:60, marginBottom:12 }}>🏆</div>
-        <h2 style={{ fontWeight:900, fontSize:28, marginBottom:8 }}>Swamp Cleared!</h2>
-        <p style={{ fontSize:18, color:"#555", marginBottom:4 }}>{correctCount} / {roundWords.length} words</p>
-        <p style={{ fontSize:24, fontWeight:900, color:"#16a34a", marginBottom:24 }}>+{score} points</p>
-        <div style={{ display:"flex", gap:12 }}>
-          <button onClick={buildRound} style={{ flex:1, background:"#16a34a", color:"white", fontWeight:900, padding:16, borderRadius:16, border:"none", cursor:"pointer" }}>Play Again</button>
-          <button onClick={onComplete} style={{ flex:1, background:"linear-gradient(to right,#FF5F1F,#5B2D8E)", color:"white", fontWeight:900, padding:16, borderRadius:16, border:"none", cursor:"pointer" }}>Done!</button>
+  if (spellingWords.length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-900 to-emerald-800 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="text-6xl mb-4">🐸</div>
+          <h2 className="text-2xl font-extrabold text-gray-900 mb-3">Spelling Swamp</h2>
+          <p className="text-gray-600 mb-6">Ask a parent to add spelling words!</p>
+          <button onClick={onBack} className="w-full bg-gray-900 hover:opacity-90 text-white font-extrabold py-4 rounded-2xl">
+            Back
+          </button>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
 
-  if (phase === "gameOver") return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#0a3d0a,#1a5c2a)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-      <div style={{ background:"white", borderRadius:24, padding:32, maxWidth:360, width:"100%", textAlign:"center" }}>
-        <div style={{ fontSize:60, marginBottom:12 }}>💀</div>
-        <h2 style={{ fontWeight:900, fontSize:28, marginBottom:8 }}>Game Over!</h2>
-        <p style={{ color:"#555", marginBottom:24 }}>Score: {score} pts</p>
-        <div style={{ display:"flex", gap:12 }}>
-          <button onClick={buildRound} style={{ flex:1, background:"#7C3AED", color:"white", fontWeight:900, padding:16, borderRadius:16, border:"none", cursor:"pointer" }}>Try Again</button>
-          <button onClick={onComplete} style={{ flex:1, background:"#f3f4f6", color:"#111", fontWeight:900, padding:16, borderRadius:16, border:"none", cursor:"pointer" }}>Exit</button>
-        </div>
-      </div>
-    </div>
-  );
-
-  return (
-    <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#0a3d0a,#1a5c2a)", display:"flex", flexDirection:"column", alignItems:"center", padding:"10px 8px" }}>
-      {/* HUD */}
-      <div style={{ width:"100%", maxWidth:GW, display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-        <button onClick={onBack} style={{ background:"rgba(255,255,255,0.15)", color:"white", border:"none", borderRadius:10, padding:"7px 14px", fontWeight:700, cursor:"pointer", fontSize:14 }}>← Back</button>
-        <div style={{ display:"flex", gap:4, fontSize:20 }}>{[1,2,3].map(i=><span key={i} style={{ opacity:i<=lives?1:0.2, transition:"opacity 0.3s" }}>❤️</span>)}</div>
-        <div style={{ background:"rgba(255,255,255,0.15)", color:"white", borderRadius:10, padding:"7px 14px", fontWeight:900, fontSize:14 }}>⭐ {score}</div>
-      </div>
-
-      {/* Word progress */}
-      <div style={{ marginBottom:8, textAlign:"center" }}>
-        <div style={{ display:"flex", gap:5, justifyContent:"center", marginBottom:5 }}>
-          {word.split("").map((letter, i) => (
-            <div key={i} style={{ width:36, height:40, display:"flex", alignItems:"center", justifyContent:"center", borderRadius:8, fontWeight:900, fontSize:20,
-              background: i < letterIdx ? "#22c55e" : i === letterIdx ? "#fbbf24" : "rgba(255,255,255,0.15)",
-              color: i < letterIdx ? "white" : i === letterIdx ? "#1a1a1a" : "rgba(255,255,255,0.45)",
-              border: i === letterIdx ? "2px solid #f59e0b" : "2px solid transparent",
-              boxShadow: i === letterIdx ? "0 0 12px rgba(251,191,36,0.7)" : "none",
-              transition:"all 0.3s" }}>
-              {i < letterIdx ? "✓" : letter}
-            </div>
-          ))}
-        </div>
-        <div style={{ display:"flex", gap:8, justifyContent:"center", alignItems:"center" }}>
-          <button onClick={() => speak(roundWords[wordIdx])} style={{ background:"rgba(255,255,255,0.15)", color:"white", border:"none", borderRadius:20, padding:"4px 14px", fontSize:12, cursor:"pointer", fontWeight:600 }}>🔊 Hear</button>
-          <span style={{ color:"rgba(255,255,255,0.55)", fontSize:12 }}>Word {wordIdx+1}/{roundWords.length}</span>
-        </div>
-      </div>
-
-      {/* Game area */}
-      <div style={{ position:"relative", width:GW, height:GH, borderRadius:16, overflow:"hidden",
-        border:"3px solid rgba(255,255,255,0.15)", boxShadow:"0 20px 60px rgba(0,0,0,0.5)", background:"#071f0e" }}>
-
-        {/* FINISH zone */}
-        <div style={{ position:"absolute", left:0, right:0, top:0, height:rowH,
-          background:"linear-gradient(to bottom,#FFD700,#FFA500)",
-          display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-          <span style={{ fontSize:18 }}>🏁</span>
-          <span style={{ fontWeight:900, color:"#7A3D00", fontSize:14 }}>FINISH — HOP HERE!</span>
-        </div>
-
-        {/* Swamp rows — rowData[i] = playerRow i+1 */}
-        {rowData.map((row, ri) => {
-          const rowNum = ri + 1;
-          const rowTopY = getRowTopY(rowNum);
-          const isLetterRow = row.type === "letter";
-          // Letter row k = rowData[2k], so k = ri/2. Past when letterIdx > k.
-          const isPastLetter = isLetterRow && (ri / 2) < letterIdx;
-          return (
-            <div key={ri} style={{ position:"absolute", left:0, right:0, top:rowTopY, height:rowH,
-              background: isLetterRow ? "rgba(0,65,22,0.92)" : "rgba(110,35,0,0.78)",
-              borderTop:"1px solid rgba(255,255,255,0.06)", borderBottom:"1px solid rgba(255,255,255,0.06)" }}>
-
-              {isLetterRow ? (
-                <>
-                  <div style={{ position:"absolute", left:6, top:"50%", transform:"translateY(-50%)",
-                    color:"rgba(255,255,255,0.22)", fontSize:11, fontWeight:700 }}>
-                    {`#${Math.floor(ri/2)+1}`}
-                  </div>
-                  {row.tiles.map((tile, ti) => (
-                    <div key={ti} style={{ position:"absolute", left:tile.x, top:(rowH-TILE_H)/2,
-                      width:TILE_W, height:TILE_H, borderRadius:10, zIndex:5,
-                      background: isPastLetter && tile.isCorrect ? "#22c55e" : "linear-gradient(135deg,#8B5E3C,#5c3a18)",
-                      border:`2px solid ${isPastLetter && tile.isCorrect ? "#15803d" : "rgba(255,255,255,0.2)"}`,
-                      boxShadow:"0 3px 12px rgba(0,0,0,0.5)",
-                      display:"flex", alignItems:"center", justifyContent:"center" }}>
-                      <span style={{ fontSize:22, fontWeight:900, color:"white", textShadow:"1px 1px 0 rgba(0,0,0,0.6)" }}>
-                        {isPastLetter && tile.isCorrect ? "✓" : tile.letter}
-                      </span>
-                    </div>
-                  ))}
-                </>
-              ) : (
-                <>
-                  <div style={{ position:"absolute", right:6, top:"50%", transform:"translateY(-50%)",
-                    color:"rgba(255,160,0,0.45)", fontSize:13, fontWeight:900 }}>
-                    {row.obstacles[0]?.speed > 0 ? "→" : "←"}
-                  </div>
-                  {row.obstacles.map(obs => (
-                    <div key={obs.id} style={{ position:"absolute", left:obs.x, top:(rowH-obs.w)/2,
-                      width:obs.w, height:obs.w, zIndex:6,
-                      display:"flex", alignItems:"center", justifyContent:"center",
-                      fontSize: obs.w * 0.72,
-                      filter:"drop-shadow(0 2px 10px rgba(255,80,0,0.85))",
-                      animation: obsAnim(obs.type) }}>
-                      {obs.emoji}
-                    </div>
-                  ))}
-                </>
-              )}
-            </div>
-          );
-        })}
-
-        {/* START zone */}
-        <div style={{ position:"absolute", left:0, right:0, bottom:0, height:rowH,
-          background:"linear-gradient(to top,#2d7a40,#1a5c2a)", borderTop:"3px solid #3a8a2a",
-          display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <span style={{ color:"rgba(255,255,255,0.5)", fontSize:11, fontWeight:700 }}>START — ALIGN WITH CORRECT LETTER THEN HOP ▲</span>
-        </div>
-
-        {/* Player */}
-        {renderHero(playerX, playerTopY)}
-
-        {/* Feedback overlay */}
-        {feedback && (
-          <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)",
-            background:"rgba(180,20,20,0.96)", color:"white", fontWeight:900, fontSize:17,
-            padding:"12px 22px", borderRadius:14, boxShadow:"0 4px 20px rgba(0,0,0,0.6)", zIndex:30, whiteSpace:"nowrap" }}>
-            {feedback.msg}
-          </div>
-        )}
-
-        {/* Word win overlay */}
-        {phase === "wordWin" && (
-          <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.8)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:10, zIndex:40 }}>
-            <div style={{ fontSize:52 }}>🎉</div>
-            <div style={{ color:"#FFD700", fontWeight:900, fontSize:26, textShadow:"2px 2px 0 rgba(0,0,0,0.5)" }}>"{roundWords[wordIdx]}" Spelled!</div>
-            <div style={{ color:"rgba(255,255,255,0.8)", fontWeight:700, fontSize:15 }}>+20 pts ⭐</div>
-            <button onClick={nextWord} style={{ background:"linear-gradient(to right,#FF5F1F,#5B2D8E)", color:"white", fontWeight:900, fontSize:17, padding:"12px 32px", borderRadius:16, border:"none", cursor:"pointer", marginTop:8 }}>
-              {wordIdx+1 < roundWords.length ? "Next Word →" : "Finish! 🏆"}
+  if (gameOver) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-900 to-emerald-800 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="text-6xl mb-4">🐸</div>
+          <h2 className="text-3xl font-extrabold text-gray-900 mb-2">Swamp Cleared!</h2>
+          <p className="text-xl text-gray-700 mb-2">{correctCount} / {roundWords.length} correct</p>
+          <p className="text-2xl font-extrabold text-green-700 mb-6">+{score} points</p>
+          <div className="flex gap-3">
+            <button onClick={buildRound} className="flex-1 bg-emerald-600 hover:opacity-90 text-white font-extrabold py-4 rounded-2xl">
+              Play Again
+            </button>
+            <button onClick={onComplete} className="flex-1 bg-gradient-to-r from-pink-500 to-purple-500 hover:opacity-90 text-white font-extrabold py-4 rounded-2xl">
+              Done!
             </button>
           </div>
-        )}
+        </div>
       </div>
+    );
+  }
 
-      {/* Touch controls */}
-      <div style={{ marginTop:10, display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
-        <button onPointerDown={doHopUp} style={{ ...btn, background:"#16a34a", padding:"12px 48px", fontSize:16 }}>▲ HOP UP</button>
-        <div style={{ display:"flex", gap:8 }}>
-          <button onPointerDown={() => { keysRef.current["ArrowLeft"]=true; }} onPointerUp={() => { keysRef.current["ArrowLeft"]=false; }} onPointerLeave={() => { keysRef.current["ArrowLeft"]=false; }} style={btn}>◀</button>
-          <button onPointerDown={doHopDown} style={{ ...btn, fontSize:13, padding:"10px 18px" }}>▼ Back</button>
-          <button onPointerDown={() => { keysRef.current["ArrowRight"]=true; }} onPointerUp={() => { keysRef.current["ArrowRight"]=false; }} onPointerLeave={() => { keysRef.current["ArrowRight"]=false; }} style={btn}>▶</button>
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-green-900 to-emerald-800 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="flex items-center justify-between mb-6">
+          <button onClick={onBack} className="text-green-200 hover:text-white font-semibold flex items-center gap-2">
+            <ArrowLeft size={18} /> Back
+          </button>
+          <div className="text-green-200 font-extrabold">
+            {currentIndex + 1} / {roundWords.length}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-3xl p-8 shadow-2xl text-center">
+          <div className="text-5xl mb-4">🐸</div>
+          <h2 className="text-2xl font-extrabold text-gray-900 mb-1">Spelling Swamp</h2>
+          <p className="text-gray-500 mb-6">Listen and spell the word!</p>
+
+          <button
+            onClick={() => speak(currentWord)}
+            className="w-full bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-extrabold py-3 rounded-2xl mb-6 flex items-center justify-center gap-2"
+          >
+            <Volume2 size={20} /> Hear Again
+          </button>
+
+          <input
+            type="text"
+            value={userInput}
+            onChange={e => setUserInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type the word..."
+            autoFocus
+            disabled={!!feedback}
+            className="w-full border-2 border-gray-300 rounded-2xl px-4 py-3 text-xl text-center font-bold focus:outline-none focus:border-emerald-500 mb-4"
+          />
+
+          <button
+            onClick={handleSubmit}
+            disabled={!userInput.trim() || !!feedback}
+            className="w-full bg-gradient-to-r from-emerald-600 to-green-700 hover:opacity-90 disabled:opacity-50 text-white font-extrabold py-4 rounded-2xl"
+          >
+            Submit
+          </button>
+
+          {feedback && (
+            <div className={`mt-4 p-3 rounded-2xl font-extrabold text-lg ${feedback === "correct" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+              {feedback === "correct" ? "✓ Correct! +10 pts" : `✗ The word was "${currentWord}"`}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1258,382 +882,56 @@ const PhonicsIsFallingGame = ({
 };
 
 /* ============================== World Map Screen ============================== */
-const WorldMapScreen = ({
-  onBack,
-  onLaunchZone,
-  worldProgress = {},
-  customSightWords = [],
-  customSpellingWords = [],
-  customVocabWords = [],
-  customPhonicsWords = [],
-  weeklyGames = {},
-}) => {
-  const [phase, setPhase] = useState("pipe"); // "pipe" | "map"
-
-  useEffect(() => {
-    const styleId = "worldmap-anim-styles";
-    if (!document.getElementById(styleId)) {
-      const style = document.createElement("style");
-      style.id = styleId;
-      style.textContent = `
-        @keyframes speedRush {
-          0%   { transform: translateY(-120%); opacity: 0; }
-          20%  { opacity: 1; }
-          80%  { opacity: 1; }
-          100% { transform: translateY(120%); opacity: 0; }
-        }
-        @keyframes pipePulse {
-          0%, 100% { transform: scale(1); box-shadow: 0 0 80px #4ade8066, inset -20px -20px 40px #052e1688; }
-          50%      { transform: scale(1.08); box-shadow: 0 0 120px #4ade8099, inset -20px -20px 40px #052e1688; }
-        }
-        @keyframes dotPulse {
-          0%, 100% { transform: scale(1); opacity: 0.6; }
-          50%      { transform: scale(1.5); opacity: 1; }
-        }
-        @keyframes mapReveal {
-          0%   { opacity: 0; transform: scale(1.08); }
-          100% { opacity: 1; transform: scale(1); }
-        }
-        @keyframes stopBounce {
-          0%   { opacity: 0; transform: scale(0) translateY(-24px); }
-          70%  { transform: scale(1.15) translateY(0); }
-          100% { opacity: 1; transform: scale(1) translateY(0); }
-        }
-        @keyframes floatCloud {
-          0%, 100% { transform: translateX(0); }
-          50%      { transform: translateX(12px); }
-        }
-      `;
-      document.head.appendChild(style);
-    }
-    return () => document.getElementById("worldmap-anim-styles")?.remove();
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => setPhase("map"), 2400);
-    return () => clearTimeout(t);
-  }, []);
-
-  // Build dynamic stops from populated data
-  const contentStops = [
-    customSightWords?.length > 0 && {
-      id: "sight", name: "Sight City", emoji: "👁️",
-      color: "#2563EB", bg: "#EFF6FF",
-      desc: `${customSightWords.length} words`,
-    },
-    customSpellingWords?.length > 0 && {
-      id: "spelling", name: "Spell Swamp", emoji: "🐸",
-      color: "#16A34A", bg: "#F0FDF4",
-      desc: `${customSpellingWords.length} words`,
-    },
-    customVocabWords?.length > 0 && {
-      id: "vocab", name: "Vocab Vale", emoji: "📚",
-      color: "#7C3AED", bg: "#F5F3FF",
-      desc: `${customVocabWords.length} words`,
-    },
-    customPhonicsWords?.length > 0 && {
-      id: "phonics", name: "Phonics Falls", emoji: "🎵",
-      color: "#D97706", bg: "#FFFBEB",
-      desc: `${customPhonicsWords.length} words`,
-    },
-    (weeklyGames?.mathProblemsPerDay || 0) > 0 && {
-      id: "math", name: "Math Peak", emoji: "⚡",
-      color: "#DC2626", bg: "#FFF1F2",
-      desc: `${weeklyGames.mathProblemsPerDay} problems`,
-    },
-  ].filter(Boolean);
-
-  const allStops = [
-    { id: "start",  name: "Base Camp", emoji: "🏕️", color: "#6B7280", bg: "#F9FAFB", desc: "" },
-    ...contentStops,
-    { id: "finish", name: "Victory!",  emoji: "🏆", color: "#F59E0B", bg: "#FFFBEB", desc: "" },
+const WorldMapScreen = ({ onBack, onLaunchZone, worldProgress = {} }) => {
+  const zones = [
+    { id: "sight",    name: "Sight Word City",  emoji: "🏙️", gradient: "from-blue-500 to-indigo-600",    desc: "Master sight words in the city!" },
+    { id: "phonics",  name: "Phonics is Falling", emoji: "⬇️", gradient: "from-sky-500 to-blue-600",      desc: "Catch the falling letters to spell the word!" },
+    { id: "math",     name: "Math Mountain",    emoji: "⛰️", gradient: "from-orange-500 to-red-600",     desc: "Climb to the top with math!" },
+    { id: "spelling", name: "Spelling Swamp",   emoji: "🐸", gradient: "from-teal-500 to-green-900",     desc: "Spell your way through the swamp!" },
   ];
 
-  // 7 fixed positions along the winding path (SVG viewBox 0 0 400 590)
-  const PATH_POSITIONS = [
-    { x: 78,  y: 530 },
-    { x: 200, y: 455 },
-    { x: 310, y: 385 },
-    { x: 248, y: 298 },
-    { x: 128, y: 212 },
-    { x: 298, y: 142 },
-    { x: 348, y: 52  },
-  ];
+  const totalStars = zones.reduce((sum, z) => sum + (worldProgress[z.id] || 0), 0);
 
-  const SVG_PATH =
-    "M 78,530 C 78,504 148,478 200,455 " +
-    "C 256,430 296,410 310,385 " +
-    "C 328,356 304,326 248,298 " +
-    "C 192,270 146,252 128,212 " +
-    "C 108,170 138,153 200,145 " +
-    "C 248,138 280,142 298,142 " +
-    "C 326,142 346,78 348,52";
-
-  const n = allStops.length;
-  const stopsWithPos = allStops.map((stop, i) => {
-    const posIdx = n > 1 ? Math.round(i * 6 / (n - 1)) : 0;
-    return { ...stop, ...PATH_POSITIONS[Math.min(posIdx, 6)] };
-  });
-
-  const totalStars = Object.values(worldProgress).reduce((s, v) => s + (v || 0), 0);
-
-  /* ── Pipe transition ── */
-  if (phase === "pipe") {
-    return (
-      <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#080c10", overflow: "hidden" }}>
-        {/* Speed lines */}
-        {[...Array(22)].map((_, i) => (
-          <div key={i} style={{
-            position: "absolute",
-            left: `${(i * 4.6 + 1) % 98}%`,
-            top: 0, bottom: 0,
-            width: i % 4 === 0 ? 3 : 1,
-            background: i % 5 === 0 ? "#A8FF3E" : i % 3 === 0 ? "#5B2D8E" : "#ffffff",
-            opacity: 0.15 + (i % 4) * 0.12,
-            animation: `speedRush ${0.28 + (i % 6) * 0.07}s ${(i * 0.04) % 0.5}s linear infinite`,
-          }} />
-        ))}
-
-        {/* Central pipe portal */}
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-          {/* Outer ring */}
-          <div style={{
-            width: 200, height: 200, borderRadius: "50%",
-            border: "8px solid #2d6a4f",
-            boxShadow: "0 0 40px #4ade8044",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            marginBottom: -100,
-          }} />
-          {/* Pipe circle */}
-          <div style={{
-            width: 160, height: 160, borderRadius: "50%",
-            background: "radial-gradient(circle at 32% 32%, #4ade80, #16a34a 55%, #052e16)",
-            boxShadow: "0 0 80px #4ade8077, inset -18px -18px 36px #052e1699",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 60,
-            animation: "pipePulse 0.9s ease-in-out infinite",
-            zIndex: 1,
-          }}>
-            🌀
-          </div>
-
-          <p style={{
-            marginTop: 32, color: "#A8FF3E",
-            fontFamily: "'Fredoka One', cursive", fontSize: 26,
-            letterSpacing: 1,
-          }}>
-            Entering Adventure...
-          </p>
-          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-            {[0, 1, 2].map(i => (
-              <div key={i} style={{
-                width: 11, height: 11, borderRadius: "50%", background: "#A8FF3E",
-                animation: `dotPulse 0.7s ${i * 0.22}s ease-in-out infinite`,
-              }} />
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  /* ── Adventure Map ── */
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 50, overflowY: "auto",
-      background: "linear-gradient(180deg, #87CEEB 0%, #b0e0ff 22%, #3a9e3a 22%, #2d8a2d 100%)",
-      animation: "mapReveal 0.7s cubic-bezier(0.34,1.56,0.64,1)",
-    }}>
-
-      {/* Sky / clouds */}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "22%", pointerEvents: "none", overflow: "hidden" }}>
-        {[
-          { l: "8%",  t: "18%", w: 90,  h: 32 },
-          { l: "5%",  t: "10%", w: 55,  h: 26 },
-          { l: "55%", t: "25%", w: 110, h: 38 },
-          { l: "52%", t: "14%", w: 65,  h: 28 },
-          { l: "75%", t: "30%", w: 70,  h: 26 },
-        ].map((c, i) => (
-          <div key={i} style={{
-            position: "absolute", left: c.l, top: c.t,
-            width: c.w, height: c.h,
-            borderRadius: c.h,
-            background: "rgba(255,255,255,0.85)",
-            animation: `floatCloud ${5 + i * 1.4}s ${i * 0.7}s ease-in-out infinite`,
-          }} />
-        ))}
-      </div>
-
-      {/* Header bar */}
-      <div style={{
-        position: "relative", zIndex: 10,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "12px 16px",
-      }}>
-        <button onClick={onBack} style={{
-          display: "flex", alignItems: "center", gap: 8,
-          background: "rgba(0,0,0,0.45)", color: "white",
-          border: "none", borderRadius: 999,
-          padding: "8px 16px", fontWeight: 800, fontSize: 14, cursor: "pointer",
-        }}>
-          ← Back
+    <div className="max-w-2xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <button onClick={onBack} className="text-purple-800 hover:text-purple-900 font-semibold flex items-center gap-2">
+          <ArrowLeft size={18} /> Back
         </button>
-        <div style={{
-          background: "rgba(0,0,0,0.45)", color: "#A8FF3E",
-          borderRadius: 999, padding: "8px 18px",
-          fontFamily: "'Fredoka One', cursive", fontSize: 17,
-        }}>
-          🗺️ This Week's Adventures!
-        </div>
-        <div style={{
-          background: "#FEF3C7", color: "#92400E",
-          borderRadius: 999, padding: "8px 14px",
-          fontWeight: 800, fontSize: 14,
-        }}>
-          ⭐ {totalStars}
+        <div className="bg-yellow-100 border border-yellow-300 text-yellow-800 font-extrabold px-4 py-2 rounded-full shadow-sm">
+          ⭐ {totalStars} / 12
         </div>
       </div>
 
-      {/* SVG Map */}
-      <div style={{ display: "flex", justifyContent: "center", padding: "0 12px 48px" }}>
-        <svg
-          viewBox="0 0 400 590"
-          style={{ width: "100%", maxWidth: 480, maxHeight: "calc(100vh - 72px)" }}
-        >
-          {/* Grass texture patches */}
-          {[...Array(28)].map((_, i) => (
-            <ellipse key={`g${i}`}
-              cx={(i * 131 + 20) % 378}
-              cy={(i * 97 + 30) % 558}
-              rx={7 + (i % 5) * 4} ry={4 + (i % 4) * 2}
-              fill="#1a7a2e" opacity="0.25"
-            />
-          ))}
+      <div className="text-center mb-6">
+        <h1 className="text-4xl font-extrabold text-gray-900">🗺️ Adventure World</h1>
+        <p className="text-gray-600 mt-1">Explore zones, defeat bosses, and earn stars!</p>
+      </div>
 
-          {/* Trees scattered around path */}
-          {[
-            [22, 498], [358, 472], [38, 358], [372, 316], [18, 198],
-            [372, 178], [155, 76], [378, 62], [96, 436], [282, 502],
-            [340, 250], [50, 270], [200, 80], [310, 500],
-          ].map(([tx, ty], i) => (
-            <g key={`t${i}`} transform={`translate(${tx},${ty})`}>
-              <rect x={-3} y={0}  width={6}  height={16} fill="#6B3F1F" rx={2} />
-              <circle cx={0}  cy={-14} r={20} fill="#1e5c3a" />
-              <circle cx={-7} cy={-8}  r={13} fill="#2d7a4f" />
-              <circle cx={7}  cy={-9}  r={14} fill="#155c30" />
-              <circle cx={0}  cy={-22} r={12} fill="#3a9e5f" />
-            </g>
-          ))}
+      <div className="grid grid-cols-2 gap-4">
+        {zones.map(zone => {
+          const stars = worldProgress[zone.id] || 0;
+          return (
+            <div key={zone.id} className={`bg-gradient-to-br ${zone.gradient} rounded-3xl p-5 text-white shadow-lg flex flex-col`}>
+              <div className="text-4xl mb-2">{zone.emoji}</div>
+              <div className="font-extrabold text-lg leading-tight mb-1">{zone.name}</div>
+              <p className="text-white/80 text-sm mb-3 flex-1">{zone.desc}</p>
 
-          {/* Flower decorations */}
-          {[[60,420],[340,340],[170,160],[80,110],[310,470]].map(([fx,fy],i)=>(
-            <g key={`f${i}`} transform={`translate(${fx},${fy})`}>
-              <circle cx={0} cy={0} r={5} fill={["#FF6B6B","#FFD93D","#FF6B9D","#C77DFF","#4ECDC4"][i]} />
-              <circle cx={0} cy={-7} r={3} fill={["#FF6B6B","#FFD93D","#FF6B9D","#C77DFF","#4ECDC4"][i]} opacity="0.7" />
-              <circle cx={6}  cy={3}  r={3} fill={["#FF6B6B","#FFD93D","#FF6B9D","#C77DFF","#4ECDC4"][i]} opacity="0.7" />
-              <circle cx={-6} cy={3}  r={3} fill={["#FF6B6B","#FFD93D","#FF6B9D","#C77DFF","#4ECDC4"][i]} opacity="0.7" />
-            </g>
-          ))}
-
-          {/* Trail shadow */}
-          <path d={SVG_PATH} fill="none" stroke="rgba(0,0,0,0.18)"
-            strokeWidth={24} strokeLinecap="round" strokeLinejoin="round"
-            transform="translate(5,6)" />
-          {/* Trail base (dark edge) */}
-          <path d={SVG_PATH} fill="none" stroke="#a0713a"
-            strokeWidth={22} strokeLinecap="round" strokeLinejoin="round" />
-          {/* Trail main fill */}
-          <path d={SVG_PATH} fill="none" stroke="#D4A574"
-            strokeWidth={18} strokeLinecap="round" strokeLinejoin="round" />
-          {/* Trail highlight */}
-          <path d={SVG_PATH} fill="none" stroke="#e8c99a"
-            strokeWidth={10} strokeLinecap="round" strokeLinejoin="round" opacity="0.5" />
-          {/* Trail center dashes */}
-          <path d={SVG_PATH} fill="none" stroke="#b8895a"
-            strokeWidth={2.5} strokeLinecap="round" strokeDasharray="10 18" opacity="0.6" />
-
-          {/* Stops */}
-          {stopsWithPos.map((stop, i) => {
-            const stars = worldProgress[stop.id] || 0;
-            const clickable = stop.id !== "start" && stop.id !== "finish";
-            return (
-              <g key={stop.id}
-                onClick={() => clickable && onLaunchZone(stop.id)}
-                style={{
-                  cursor: clickable ? "pointer" : "default",
-                  animation: `stopBounce 0.55s ${0.35 + i * 0.14}s cubic-bezier(0.34,1.56,0.64,1) both`,
-                }}
-              >
-                {/* Pole */}
-                <rect x={stop.x - 2.5} y={stop.y - 34} width={5} height={62}
-                  fill="#7B5E2A" rx={2.5} opacity="0.9" />
-
-                {/* Drop shadow */}
-                <ellipse cx={stop.x + 3} cy={stop.y + 34} rx={26} ry={8}
-                  fill="rgba(0,0,0,0.18)" />
-
-                {/* Outer ring (glow for clickable) */}
-                {clickable && (
-                  <circle cx={stop.x} cy={stop.y} r={37}
-                    fill="none" stroke={stop.color} strokeWidth={2} opacity="0.3" />
-                )}
-
-                {/* Main circle shadow */}
-                <circle cx={stop.x + 3} cy={stop.y + 4} r={32} fill="rgba(0,0,0,0.2)" />
-                {/* Main circle */}
-                <circle cx={stop.x} cy={stop.y} r={32} fill={stop.bg}
-                  stroke={stop.color} strokeWidth={4} />
-                <circle cx={stop.x} cy={stop.y} r={27} fill={stop.bg} />
-
-                {/* Inner gradient overlay */}
-                <circle cx={stop.x - 8} cy={stop.y - 8} r={10}
-                  fill="white" opacity="0.3" />
-
-                {/* Emoji */}
-                <text x={stop.x} y={stop.y + 9}
-                  textAnchor="middle" fontSize={26} dominantBaseline="middle"
-                  style={{ userSelect: "none" }}>
-                  {stop.emoji}
-                </text>
-
-                {/* Stars */}
-                {[0, 1, 2].map(si => (
-                  <text key={si}
-                    x={stop.x - 16 + si * 16} y={stop.y - 42}
-                    textAnchor="middle" fontSize={11}>
-                    {si < stars ? "⭐" : "☆"}
-                  </text>
+              <div className="flex gap-1 mb-3">
+                {[0,1,2].map(i => (
+                  <Star key={i} size={18} className={i < stars ? "fill-yellow-400 text-yellow-400" : "text-white/40"} />
                 ))}
+              </div>
 
-                {/* Name label */}
-                <rect x={stop.x - 46} y={stop.y + 36}
-                  width={92} height={21} rx={10.5}
-                  fill={stop.color} opacity="0.93" />
-                <text x={stop.x} y={stop.y + 51}
-                  textAnchor="middle" fontSize={9.5} fill="white" fontWeight="800"
-                  style={{ fontFamily: "'Baloo 2', cursive" }}>
-                  {stop.name}
-                </text>
-
-                {/* Desc / count */}
-                {stop.desc ? (
-                  <text x={stop.x} y={stop.y + 67}
-                    textAnchor="middle" fontSize={8.5} fill={stop.color} fontWeight="700">
-                    {stop.desc}
-                  </text>
-                ) : null}
-
-                {/* Tap hint */}
-                {clickable && (
-                  <text x={stop.x} y={stop.y + 79}
-                    textAnchor="middle" fontSize={7.5} fill="rgba(0,0,0,0.45)">
-                    tap to play
-                  </text>
-                )}
-              </g>
-            );
-          })}
-        </svg>
+              <button
+                onClick={() => onLaunchZone(zone.id)}
+                className="w-full bg-white/20 hover:bg-white/30 text-white font-extrabold py-2 rounded-2xl text-sm transition"
+              >
+                Enter Zone
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1800,7 +1098,7 @@ const SoundJumperGame = ({
               onClick={onComplete}
               className="bg-gray-100 hover:bg-gray-200 text-gray-900 font-bold py-3 px-6 rounded-2xl"
             >
-              Back to Today's Quest
+              Back to Today's Games
             </button>
           </div>
         </div>
@@ -2043,7 +1341,7 @@ const MathRaceGame = ({
               onClick={() => (onDone ? onDone() : onBack())}
               className="bg-gray-100 hover:bg-gray-200 text-gray-900 font-bold py-3 px-6 rounded-2xl"
             >
-              Back to Today's Quest
+              Back to Today's Games
             </button>
           </div>
         </div>
@@ -2539,7 +1837,7 @@ const SightWordObbyGame = ({ onBack, onComplete, setPoints, onEvent, customSight
           setCollectEffect(coin.id);
           setTimeout(() => setCollectEffect((c) => (c === coin.id ? null : c)), 800);
           setCurrentWord(coin.word);
-          speak(coin.word); // Auto-play TTS so CG3 hears the word immediately
+          speak(coin.word); // Auto-play TTS so Hayden hears the word immediately
           setUserSpelling("");
           setShowFeedback(false);
         }
@@ -3258,12 +2556,8 @@ const ChestOpeningModal = ({ chestType, onClose, onRewardReceived }) => {
 };
 
 /* ============================== Main App ============================== */
-const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, parentsOnly = false } = {}) => {
-  const LS_KEY = childId ? `haydens_homework_${childId}_v6` : DEFAULT_LS_KEY;
-  const [currentView, setCurrentView] = useState(parentsOnly ? "parents" : "home"); // home | parents | flashcards | today | game | loot
-  const [localChildName, setLocalChildName] = useState(childName || "");
-  const [childNameInput, setChildNameInput] = useState(childName || "");
-  const [savingChildName, setSavingChildName] = useState(false);
+const HomeworkGamesApp = () => {
+  const [currentView, setCurrentView] = useState("home"); // home | parents | flashcards | today | game | loot
   const [selectedGame, setSelectedGame] = useState(null);
   const [points, setPoints] = useState(0);
   const [keys, setKeys] = useState(0);
@@ -3313,9 +2607,6 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
   const [todayCardIndex, setTodayCardIndex] = useState(0);
 
   const [lastImportSummary, setLastImportSummary] = useState(null);
-  const [aiImportStatus, setAiImportStatus] = useState("idle"); // idle | parsing | preview | error
-  const [aiImportPreview, setAiImportPreview] = useState(null);
-  const [aiImportError, setAiImportError] = useState(null);
 
   /* ----------------------------- Load / Save ----------------------------- */
   const applyData = useCallback((data) => {
@@ -3433,14 +2724,12 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
   }, []);
 
   useEffect(() => {
-    if (!syncCode && !uid) { setSyncStatus("disconnected"); return; }
+    if (!syncCode) { setSyncStatus("disconnected"); return; }
     let unsub = null;
     setSyncStatus("connecting");
     getFirestore().then(({ db, doc, onSnapshot }) => {
       if (!db) { setSyncStatus("error"); return; }
-      const ref = uid
-        ? doc(db, "users", uid, "children", childId)
-        : doc(db, "families", syncCode, "children", activeChildId);
+      const ref = doc(db, "families", syncCode, "children", activeChildId);
       unsub = onSnapshot(ref, (snap) => {
         setSyncStatus("connected");
         if (!snap.exists()) return;
@@ -3453,7 +2742,7 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
   }, [syncCode, activeChildId, applyData, getFirestore]);
 
   useEffect(() => {
-    if (!syncCode && !uid) return;
+    if (!syncCode) return;
     localStorage.setItem("haydens_homework_sync_code", syncCode);
     localStorage.setItem("haydens_homework_child_id", activeChildId);
     const payload = {
@@ -3468,10 +2757,8 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
       try {
         const { db, doc, setDoc, serverTimestamp } = await getFirestore();
         if (!db) return;
-        const ref = uid
-          ? doc(db, "users", uid, "children", childId)
-          : doc(db, "families", syncCode, "children", activeChildId);
-        await setDoc(ref, { ...payload, _updatedAt: serverTimestamp() });
+        await setDoc(doc(db, "families", syncCode, "children", activeChildId),
+          { ...payload, _updatedAt: serverTimestamp() });
         setSyncStatus("connected");
       } catch {
         setSyncStatus("error");
@@ -3584,10 +2871,6 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
     setActiveBossZone(zoneId);
     setGameSource("worldmap");
     const MAP = { sight: "Sight Word Obby", phonics: "Phonics is Falling", math: "Math Race", spelling: "Spelling Swamp" };
-    if (zoneId === "vocab") {
-      setCurrentView("flashcards");
-      return;
-    }
     setSelectedGame(MAP[zoneId]);
     setCurrentView("game");
   };
@@ -3878,81 +3161,6 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
     return { ok: true, message, summary };
   };
 
-  /* ------------------------- AI Document Import ------------------------- */
-  const handleAiDocumentUpload = async (file) => {
-    if (!file) return;
-    setAiImportStatus("parsing");
-    setAiImportPreview(null);
-    setAiImportError(null);
-
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = "";
-      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
-
-      const res = await fetch("/api/parse-homework", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileData: base64, mimeType: file.type || "text/plain", fileName: file.name }),
-      });
-
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || "Parsing failed");
-
-      setAiImportPreview(json.data);
-      setAiImportStatus("preview");
-    } catch (err) {
-      setAiImportError(err.message);
-      setAiImportStatus("error");
-    }
-  };
-
-  const applyAiImport = () => {
-    if (!aiImportPreview) return;
-    const { sightWords = [], spellingWords = [], vocabWords = [], phonicsWords = [], tests = [] } = aiImportPreview;
-
-    if (sightWords.length) {
-      setCustomSightWords(prev => {
-        const existing = new Set(prev.map(x => x.toLowerCase()));
-        const toAdd = sightWords.filter(w => w && !existing.has(w.toLowerCase()));
-        return [...prev, ...toAdd];
-      });
-    }
-    if (spellingWords.length) {
-      setCustomSpellingWords(prev => {
-        const existing = new Set(prev.map(x => x.toLowerCase()));
-        const toAdd = spellingWords.filter(w => w && !existing.has(w.toLowerCase()));
-        return [...prev, ...toAdd];
-      });
-    }
-    if (vocabWords.length) {
-      setCustomVocabWords(prev => {
-        const existing = new Set(prev.map(x => (x.word || x).toLowerCase()));
-        const toAdd = vocabWords.filter(v => v?.word && !existing.has(v.word.toLowerCase()));
-        return [...prev, ...toAdd.map(v => ({ word: v.word, def: v.definition || "" }))];
-      });
-    }
-    if (phonicsWords.length) {
-      setCustomPhonicsWords(prev => {
-        const existing = new Set(prev.map(x => (x.word || x).toLowerCase()));
-        const toAdd = phonicsWords.filter(p => p?.word && !existing.has(p.word.toLowerCase()));
-        return [...prev, ...toAdd];
-      });
-    }
-    if (tests.length) {
-      setUpcomingTests(prev => {
-        const existing = new Set(prev.map(t => `${t.name}|${t.date}`));
-        const toAdd = tests.filter(t => t?.name && !existing.has(`${t.name}|${t.date}`));
-        return [...prev, ...toAdd.map(t => ({ id: Date.now() + Math.random(), name: t.name, subject: t.subject || "General", date: t.date || "" }))];
-      });
-    }
-
-    setAiImportStatus("idle");
-    setAiImportPreview(null);
-  };
-
   /* ------------------------- Parents: add items ------------------------- */
   const addSightWord = () => {
     const w = newSightWord.trim();
@@ -4118,7 +3326,7 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
         <div className="bg-white rounded-3xl shadow-md border border-gray-200 p-6">
           <div className="flex items-start justify-between gap-4 mb-4">
             <div>
-              <h1 className="text-3xl font-display text-gray-900">Today's Quest</h1>
+              <h1 className="text-3xl font-extrabold text-gray-900">Today's Games</h1>
               <p className="text-gray-600">
                 Now playing: <strong>{title}</strong>
               </p>
@@ -4467,62 +3675,16 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
     const grouped = groupByPattern(customPhonicsWords);
     const patterns = Object.keys(grouped).sort();
 
-    const renameChild = async () => {
-      const name = childNameInput.trim();
-      if (!name || savingChildName) return;
-      setSavingChildName(true);
-      try {
-        const { db, doc, getDoc, setDoc } = await getFirestore();
-        if (!db) throw new Error("no db");
-        const profileRef = doc(db, "users", uid);
-        const snap = await getDoc(profileRef);
-        const data = snap.exists() ? snap.data() : {};
-        const updatedChildren = (data.children || []).map(c =>
-          c.id === childId ? { ...c, name } : c
-        );
-        await setDoc(profileRef, { children: updatedChildren }, { merge: true });
-        setLocalChildName(name);
-      } catch (e) {
-        console.error("Rename learner failed:", e);
-      } finally {
-        setSavingChildName(false);
-      }
-    };
-
     return (
       <div className="max-w-6xl mx-auto">
-        <BackButton onClick={onSwitchChild} label="Back to Parent Page" className="mb-6" />
+        <BackButton onClick={() => setCurrentView("home")} label="Back to Home" className="mb-6" />
 
-        <h1 className="text-4xl font-extrabold text-gray-900 mb-6 text-center">
-          {localChildName ? `${localChildName}'s Parent's Page` : "Parent's Page"}
-        </h1>
-
-        {/* Learner Name */}
-        <div className="bg-white rounded-3xl shadow-md p-6 border border-indigo-200 mb-6">
-          <h2 className="text-2xl font-extrabold text-gray-900 mb-3">👤 Learner Name</h2>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={childNameInput}
-              onChange={e => setChildNameInput(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && renameChild()}
-              className="flex-1 rounded-2xl px-4 py-3 text-lg font-semibold border border-gray-300 focus:outline-none focus:border-indigo-400"
-            />
-            <button
-              onClick={renameChild}
-              disabled={savingChildName || !childNameInput.trim() || childNameInput.trim() === localChildName}
-              className="px-5 py-3 rounded-2xl font-extrabold text-white disabled:opacity-50"
-              style={{ background: "#5B2D8E" }}
-            >
-              {savingChildName ? "Saving..." : "Save"}
-            </button>
-          </div>
-        </div>
+        <h1 className="text-4xl font-extrabold text-gray-900 mb-6 text-center">Parents Page</h1>
 
         {/* Cloud Sync */}
         <div className="bg-white rounded-3xl shadow-md p-6 border border-indigo-200 mb-6">
           <h2 className="text-2xl font-extrabold text-gray-900 mb-1">☁️ Cloud Sync</h2>
-          <p className="text-gray-600 mb-4">Enter the same sync code on every device to keep {localChildName || "this learner"}'s data in sync automatically.</p>
+          <p className="text-gray-600 mb-4">Enter the same sync code on every device to keep Hayden's data in sync automatically.</p>
 
           <div className="flex items-center gap-2 mb-4">
             <span className={`w-3 h-3 rounded-full flex-shrink-0 ${syncStatus === "connected" ? "bg-green-500" : syncStatus === "connecting" ? "bg-yellow-400" : syncStatus === "error" ? "bg-red-500" : "bg-gray-300"}`} />
@@ -4567,77 +3729,6 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
               Disconnect
             </button>
           )}
-        </div>
-
-        {/* AI Document Import */}
-        <div className="rounded-3xl shadow-md p-6 border border-purple-300 mb-6" style={{ background: 'linear-gradient(135deg, #5B2D8E, #3d1d61)' }}>
-          <h2 className="text-2xl font-display text-white mb-1">✨ Smart Homework Import</h2>
-          <p className="text-purple-200 mb-4">Upload any homework sheet, teacher letter, or newsletter — AI will extract the word lists automatically.</p>
-
-          {aiImportStatus === "idle" || aiImportStatus === "error" ? (
-            <div>
-              <label className="block w-full cursor-pointer">
-                <div className="w-full rounded-2xl py-4 px-6 text-center font-extrabold transition hover:opacity-90" style={{ background: '#A8FF3E', color: '#1C1C1E' }}>
-                  📄 Upload Document
-                </div>
-                <input
-                  type="file"
-                  accept=".pdf,.txt,.png,.jpg,.jpeg,.webp"
-                  className="hidden"
-                  onChange={e => { handleAiDocumentUpload(e.target.files?.[0]); e.target.value = ""; }}
-                />
-              </label>
-              <p className="text-purple-300 text-xs mt-2 text-center">Supports PDF, images (PNG/JPG), and text files</p>
-              {aiImportStatus === "error" && (
-                <div className="mt-3 bg-red-100 text-red-800 rounded-2xl px-4 py-3 text-sm font-semibold">
-                  ⚠️ {aiImportError}
-                </div>
-              )}
-            </div>
-          ) : aiImportStatus === "parsing" ? (
-            <div className="text-center py-6">
-              <div className="text-4xl mb-3 animate-pulse">🔍</div>
-              <p className="text-white font-extrabold">Reading document...</p>
-              <p className="text-purple-300 text-sm mt-1">Claude is extracting the homework</p>
-            </div>
-          ) : aiImportStatus === "preview" && aiImportPreview ? (
-            <div>
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                {[
-                  { label: "Sight Words", items: aiImportPreview.sightWords, emoji: "👁️" },
-                  { label: "Spelling Words", items: aiImportPreview.spellingWords, emoji: "✏️" },
-                  { label: "Vocab Words", items: (aiImportPreview.vocabWords || []).map(v => v.word), emoji: "📖" },
-                  { label: "Phonics Words", items: (aiImportPreview.phonicsWords || []).map(p => p.word), emoji: "🔤" },
-                ].map(({ label, items, emoji }) => items?.length > 0 && (
-                  <div key={label} className="bg-white bg-opacity-10 rounded-2xl p-3">
-                    <div className="text-white font-extrabold text-sm mb-1">{emoji} {label} ({items.length})</div>
-                    <div className="text-purple-200 text-xs">{items.slice(0, 6).join(", ")}{items.length > 6 ? ` +${items.length - 6} more` : ""}</div>
-                  </div>
-                ))}
-                {aiImportPreview.tests?.length > 0 && (
-                  <div className="bg-white bg-opacity-10 rounded-2xl p-3 col-span-2">
-                    <div className="text-white font-extrabold text-sm mb-1">📅 Tests ({aiImportPreview.tests.length})</div>
-                    <div className="text-purple-200 text-xs">{aiImportPreview.tests.map(t => t.name).join(", ")}</div>
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-3">
-                <button
-                  onClick={applyAiImport}
-                  className="flex-1 font-extrabold py-3 rounded-2xl hover:opacity-90"
-                  style={{ background: '#A8FF3E', color: '#1C1C1E' }}
-                >
-                  ✅ Apply to App
-                </button>
-                <button
-                  onClick={() => { setAiImportStatus("idle"); setAiImportPreview(null); }}
-                  className="px-5 py-3 rounded-2xl font-extrabold text-white bg-white bg-opacity-20 hover:bg-opacity-30"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : null}
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
@@ -5163,11 +4254,6 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
       onBack={() => setCurrentView("home")}
       onLaunchZone={handleZoneLaunch}
       worldProgress={worldProgress}
-      customSightWords={customSightWords}
-      customSpellingWords={customSpellingWords}
-      customVocabWords={customVocabWords}
-      customPhonicsWords={customPhonicsWords}
-      weeklyGames={weeklyGames}
     />
   );
 
@@ -5175,20 +4261,16 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
     <div className="max-w-6xl mx-auto">
       <div className="flex items-center justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-4xl md:text-5xl font-display text-white">Crestly</h1>
-          <p className="text-crestly-lime font-semibold mt-1">
-            {childName ? `${childEmoji || "⭐"} ${childName}'s Adventure` : "Rise. Learn. Conquer."}
-          </p>
+          <h1 className="text-4xl md:text-5xl font-extrabold text-gray-900">Hayden's Homework</h1>
+          <p className="text-gray-700 font-semibold mt-1">A simple routine that turns practice into progress.</p>
         </div>
 
-        {onSwitchChild && (
-          <button
-            onClick={onSwitchChild}
-            className="text-sm text-white hover:opacity-80 font-extrabold flex items-center gap-2 px-4 py-2 rounded-full border border-gray-600"
-          >
-            ⇄ Switch
-          </button>
-        )}
+        <button
+          onClick={() => setCurrentView("parents")}
+          className="text-sm text-purple-900 hover:text-purple-950 font-extrabold flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-200"
+        >
+          <Settings size={16} /> Parents
+        </button>
       </div>
 
       <div className="mb-6 flex gap-3 flex-wrap items-center">
@@ -5210,25 +4292,40 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
         <div className="lg:col-span-1">{renderStudentPlanner()}</div>
 
         <div className="lg:col-span-2 space-y-6">
-          <div className="rounded-3xl p-6 text-white shadow-md" style={{ background: 'linear-gradient(135deg, #5B2D8E, #3d1d61)' }}>
+          <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-3xl p-6 text-white shadow-md">
             <div className="flex items-center gap-3 mb-2">
               <span className="text-3xl">🗺️</span>
-              <div className="text-2xl font-display">This weeks adventures!</div>
+              <div className="text-2xl font-extrabold">Adventure World</div>
             </div>
-            <p className="text-purple-200 mb-4">Explore 4 zones, defeat bosses, earn stars!</p>
+            <p className="text-indigo-100 mb-4">Explore 4 zones, defeat bosses, earn stars!</p>
             <button
               onClick={() => { setGameSource("home"); setCurrentView("worldmap"); }}
-              className="w-full font-extrabold py-4 rounded-2xl transition hover:opacity-90"
-              style={{ background: '#A8FF3E', color: '#1C1C1E' }}
+              className="w-full bg-white hover:bg-indigo-50 text-indigo-800 font-extrabold py-4 rounded-2xl"
             >
               🗺️ Enter World
             </button>
           </div>
 
           <div className="bg-white rounded-3xl border border-gray-200 shadow-md p-6">
+            <div className="flex items-center gap-3 mb-2">
+              <Check className="text-purple-800" />
+              <div className="text-2xl font-extrabold text-gray-900">Today's Games</div>
+            </div>
+            <p className="text-gray-600 mb-4">
+              A guided set of mini-games based on your weekly settings. Earn keys for each game!
+            </p>
+            <button
+              onClick={startTodaysGames}
+              className="w-full bg-gradient-to-r from-pink-500 to-purple-500 hover:opacity-95 text-white font-extrabold py-4 rounded-2xl"
+            >
+              Start Today's Games
+            </button>
+          </div>
+
+          <div className="bg-white rounded-3xl border border-gray-200 shadow-md p-6">
             <div className="flex items-center gap-3 mb-4">
-              <Package style={{ color: '#5B2D8E' }} />
-              <div className="text-2xl font-display text-gray-900">Open Chests</div>
+              <Package className="text-purple-800" />
+              <div className="text-2xl font-extrabold text-gray-900">Open Chests</div>
             </div>
 
             <div className="grid grid-cols-3 gap-3 mb-4">
@@ -5252,8 +4349,7 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
 
             <button
               onClick={() => setCurrentView("loot")}
-              className="w-full font-extrabold py-3 rounded-2xl hover:opacity-90"
-              style={{ background: '#F3ECF9', color: '#5B2D8E' }}
+              className="w-full bg-purple-100 hover:bg-purple-200 text-purple-900 font-extrabold py-3 rounded-2xl"
             >
               View My Loot ({inventory.length} items)
             </button>
@@ -5261,10 +4357,10 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
 
           <div className="bg-white rounded-3xl border border-gray-200 shadow-md p-6">
             <div className="flex items-center gap-3 mb-2">
-              <BookOpen style={{ color: '#5B2D8E' }} />
-              <div className="text-2xl font-display text-gray-900">Flashcards</div>
+              <BookOpen className="text-purple-800" />
+              <div className="text-2xl font-extrabold text-gray-900">Flashcards</div>
             </div>
-            <p className="text-gray-600 mb-4">Unlock your word power — sight words, spelling, and vocab.</p>
+            <p className="text-gray-600 mb-4">Sight words, spelling, and vocabulary practice.</p>
             <button
               onClick={() => {
                 setCurrentView("flashcards");
@@ -5272,8 +4368,7 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
                 setCurrentFlashcard(0);
                 setShowFlashcardAnswer(false);
               }}
-              className="w-full hover:opacity-95 text-white font-extrabold py-4 rounded-2xl"
-              style={{ background: '#1C1C1E' }}
+              className="w-full bg-gray-900 hover:opacity-95 text-white font-extrabold py-4 rounded-2xl"
             >
               Open Flashcards
             </button>
@@ -5281,8 +4376,8 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
 
           <div className="bg-white rounded-3xl border border-gray-200 shadow-md p-6">
             <div className="flex items-center gap-3 mb-4">
-              <Gamepad2 style={{ color: '#5B2D8E' }} />
-              <div className="text-2xl font-display text-gray-900">Games</div>
+              <Gamepad2 className="text-purple-800" />
+              <div className="text-2xl font-extrabold text-gray-900">Games</div>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -5300,13 +4395,13 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
                   }}
                   className="bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-2xl p-4 font-extrabold text-gray-900 text-left"
                 >
-                  <game.icon className="mb-2" style={{ color: '#5B2D8E' }} />
+                  <game.icon className="mb-2 text-purple-800" />
                   <div>{game.name}</div>
                 </button>
               ))}
             </div>
 
-            <div className="mt-4 text-sm text-gray-500">Tip: Start "Today's Quest" for your full guided adventure with adaptive learning.</div>
+            <div className="mt-4 text-sm text-gray-600">Tip: Start "Today's Games" for a guided flow with adaptive review.</div>
           </div>
         </div>
       </div>
@@ -5402,7 +4497,7 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
 
   /* -------------------------------- Render -------------------------------- */
   return (
-    <div className="min-h-screen bg-crestly-charcoal p-4 md:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-pink-200 via-purple-200 to-pink-300 p-4 md:p-8">
       {currentView === "home" && renderHome()}
       {currentView === "worldmap" && renderWorldMap()}
       {currentView === "parents" && renderParentsPage()}

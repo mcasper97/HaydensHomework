@@ -3,8 +3,42 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hayden's Homework</title>
+    <title>Crestly – Rise. Learn. Conquer.</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Baloo+2:wght@400;600;800&display=swap" rel="stylesheet" />
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              crestly: {
+                purple:        '#5B2D8E',
+                orange:        '#FF5F1F',
+                lime:          '#A8FF3E',
+                charcoal:      '#1C1C1E',
+                'purple-light':'#F3ECF9',
+                'orange-light':'#FFF0EA',
+              }
+            },
+            fontFamily: {
+              display: ['"Fredoka One"', 'cursive'],
+              body:    ['"Baloo 2"', 'cursive'],
+            },
+          }
+        }
+      }
+    </script>
+    <style>
+      body {
+        font-family: 'Baloo 2', cursive;
+        background-color: #1C1C1E;
+      }
+      h1, h2, h3 {
+        font-family: 'Fredoka One', cursive;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

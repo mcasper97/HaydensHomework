@@ -6,7 +6,7 @@ import {
   createUserWithEmailAndPassword,
   signOut,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, arrayUnion } from "firebase/firestore";
+import { doc, getDoc, setDoc, arrayUnion, onSnapshot } from "firebase/firestore";
 import { auth, googleProvider, db } from "./Firebase.js";
 import App from "./App.jsx";
 import FamilyBoard from "./FamilyBoard.jsx";
@@ -22,6 +22,44 @@ const ADMIN_USER = { uid: "admin-bypass", email: "Admin", displayName: "Admin", 
 // the exact Firestore path the board route reads/writes without signing in,
 // so treat it with the same care as the security-rules note in firestore.rules.
 const FAMILY_UID = import.meta.env.VITE_FAMILY_UID;
+
+/* ─────────────────────── Splash Page ───────────────────────
+   Temporary marketing/splash landing page while real sign-in is disabled.
+   Both buttons bypass Firebase Auth entirely and log straight into the
+   family's real Firestore data via FAMILY_UID — see handleBypassLogin in
+   AuthShell below. LandingPage (with the real Google/email/admin sign-in
+   flows) is left fully intact and unused, for reimplementation later. */
+const SplashPage = ({ onEnter }) => {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-6" style={{ background: "#1C1C1E" }}>
+      <div className="w-full max-w-md text-center">
+        <div className="mb-10">
+          <div className="text-7xl mb-4">🏔️</div>
+          <h1 className="text-6xl font-display text-white mb-2">Crestly</h1>
+          <p className="text-xl font-semibold" style={{ color: "#A8FF3E" }}>Rise. Learn. Conquer.</p>
+          <p className="text-gray-400 mt-3 text-sm">The learning app that keeps up with your child's classroom.</p>
+        </div>
+
+        <div className="rounded-3xl p-8 shadow-2xl space-y-3" style={{ background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}>
+          <button
+            onClick={onEnter}
+            className="w-full flex items-center justify-center gap-2 font-extrabold py-4 px-6 rounded-2xl transition text-white"
+            style={{ background: "rgba(255,255,255,0.12)" }}
+          >
+            Login
+          </button>
+          <button
+            onClick={onEnter}
+            className="w-full font-extrabold py-4 rounded-2xl transition"
+            style={{ background: "#A8FF3E", color: "#1C1C1E" }}
+          >
+            Create an account
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 /* ─────────────────────── Landing Page ─────────────────────── */
 const LandingPage = ({ onSignIn, onEmailSignIn, loading, emailLoading, googleError }) => {
@@ -194,7 +232,7 @@ const LandingPage = ({ onSignIn, onEmailSignIn, loading, emailLoading, googleErr
 };
 
 /* ─────────────────────── Child Selector ─────────────────────── */
-const ChildSelector = ({ user, onSelectChild, onSignOut, onOpenCalendar }) => {
+const ChildSelector = ({ user, onSelectChild, onOpenChildParents, onSignOut, onOpenCalendar }) => {
   const [children, setChildren] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -222,8 +260,11 @@ const ChildSelector = ({ user, onSelectChild, onSignOut, onOpenCalendar }) => {
       return;
     }
     if (!db) { setLoading(false); return; }
+    // Live listener (not a one-time fetch) so renames made from a learner's
+    // own Parent's Page — see App.jsx's renderParentsPage — show up here
+    // immediately when you navigate back, without needing a refresh.
     const profileRef = doc(db, "users", user.uid);
-    getDoc(profileRef).then(snap => {
+    const unsub = onSnapshot(profileRef, snap => {
       if (snap.exists()) {
         const data = snap.data();
         setChildren(data.children || []);
@@ -231,7 +272,8 @@ const ChildSelector = ({ user, onSelectChild, onSignOut, onOpenCalendar }) => {
         setLastNameInput(data.familyLastName || "");
       }
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }, () => setLoading(false));
+    return unsub;
   }, [user]);
 
   const saveFamilyName = async () => {
@@ -323,19 +365,27 @@ const ChildSelector = ({ user, onSelectChild, onSignOut, onOpenCalendar }) => {
           <>
             <div className="space-y-3 mb-4">
               {children.map(child => (
-                <button
-                  key={child.id}
-                  onClick={() => onSelectChild(child)}
-                  className="w-full flex items-center gap-4 p-5 rounded-3xl text-left transition hover:opacity-90"
-                  style={{ background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}
-                >
-                  <span className="text-4xl">{child.emoji}</span>
-                  <div>
-                    <div className="text-xl font-display text-white">{child.name}</div>
-                    <div className="text-purple-300 text-sm">Tap to start learning</div>
-                  </div>
-                  <div className="ml-auto text-white text-2xl">→</div>
-                </button>
+                <div key={child.id} className="flex gap-3">
+                  <button
+                    onClick={() => onOpenChildParents(child)}
+                    className="flex items-center justify-center text-center p-5 rounded-3xl transition hover:opacity-90 font-display text-white text-sm leading-snug"
+                    style={{ background: "#2a2a2c", border: "1px solid #3d3d40", flex: "1 1 0%" }}
+                  >
+                    {child.name}'s Parent's Page
+                  </button>
+                  <button
+                    onClick={() => onSelectChild(child)}
+                    className="flex items-center gap-4 p-5 rounded-3xl text-left transition hover:opacity-90 min-w-0"
+                    style={{ background: "linear-gradient(135deg, #5B2D8E, #3d1d61)", flex: "3 1 0%" }}
+                  >
+                    <span className="text-3xl flex-shrink-0">{child.emoji}</span>
+                    <div className="min-w-0">
+                      <div className="text-base font-display text-white leading-snug">To {child.name}'s Page</div>
+                      <div className="text-purple-300 text-xs">Tap to start learning</div>
+                    </div>
+                    <div className="ml-auto text-white text-xl flex-shrink-0">→</div>
+                  </button>
+                </div>
               ))}
             </div>
 
@@ -443,6 +493,11 @@ const ChildSelector = ({ user, onSelectChild, onSignOut, onOpenCalendar }) => {
 const AuthShell = () => {
   const [user, setUser] = useState(undefined);
   const [selectedChild, setSelectedChild] = useState(null);
+  // When a child was reached via "{name}'s Parent's Page" (as opposed to
+  // "To {name}'s Page"), App.jsx opens straight into that learner's Parent's
+  // Page instead of their adventure home screen — see the `parentsOnly` prop
+  // passed to <App> below.
+  const [childParentsOnly, setChildParentsOnly] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [googleError, setGoogleError] = useState("");
   const [emailLoading, setEmailLoading] = useState(false);
@@ -457,7 +512,7 @@ const AuthShell = () => {
     if (!auth) { setUser(null); return; }
     const unsub = onAuthStateChanged(auth, u => {
       setUser(u ?? null);
-      if (!u) setSelectedChild(null);
+      if (!u) { setSelectedChild(null); setChildParentsOnly(false); }
     });
     return unsub;
   }, []);
@@ -513,9 +568,19 @@ const AuthShell = () => {
 
   const handleSignOut = async () => {
     setSelectedChild(null);
+    setChildParentsOnly(false);
     setShowCalendar(false);
-    if (user?.isAdmin) { setUser(null); return; }
+    if (user?.isAdmin || user?.isBypass) { setUser(null); return; }
     await signOut(auth);
+  };
+
+  // ── Temporary: real sign-in is disabled. Both Splash-page buttons ("Login"
+  // and "Create an account") call this — it skips Firebase Auth entirely and
+  // logs straight into the family's real Firestore data via FAMILY_UID (the
+  // same env var the unattended wall-tablet board route uses). Remove this
+  // and go back to LandingPage below once real auth is reinstated. ──
+  const handleBypassLogin = () => {
+    setUser({ uid: FAMILY_UID, email: "", isAdmin: false, isBypass: true });
   };
 
   // ── Unattended wall-tablet board route: ?board=1 bypasses sign-in entirely. ──
@@ -552,15 +617,24 @@ const AuthShell = () => {
   }
 
   if (!user) {
-    return (
-      <LandingPage
-        onSignIn={handleGoogleSignIn}
-        onEmailSignIn={handleEmailSignIn}
-        loading={googleLoading}
-        emailLoading={emailLoading}
-        googleError={googleError}
-      />
-    );
+    // Temporary: real sign-in is disabled — see handleBypassLogin above.
+    // LandingPage (real Google/email/admin sign-in) is kept intact, unused,
+    // for reimplementation later.
+    if (!FAMILY_UID) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "#1C1C1E" }}>
+          <div className="text-center max-w-md">
+            <div className="text-5xl mb-4">⚠️</div>
+            <p className="text-white font-display text-xl mb-2">Not configured</p>
+            <p className="text-gray-400 text-sm">
+              Set VITE_FAMILY_UID (see .env.local.example) to the parent account's Firebase UID,
+              then rebuild/redeploy.
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return <SplashPage onEnter={handleBypassLogin} />;
   }
 
   if (!selectedChild) {
@@ -577,7 +651,8 @@ const AuthShell = () => {
     return (
       <ChildSelector
         user={user}
-        onSelectChild={setSelectedChild}
+        onSelectChild={child => { setChildParentsOnly(false); setSelectedChild(child); }}
+        onOpenChildParents={child => { setChildParentsOnly(true); setSelectedChild(child); }}
         onSignOut={handleSignOut}
         onOpenCalendar={() => setShowCalendar(true)}
       />
@@ -590,7 +665,8 @@ const AuthShell = () => {
       childId={selectedChild.id}
       childName={selectedChild.name}
       childEmoji={selectedChild.emoji}
-      onSwitchChild={() => setSelectedChild(null)}
+      parentsOnly={childParentsOnly}
+      onSwitchChild={() => { setSelectedChild(null); setChildParentsOnly(false); }}
     />
   );
 };

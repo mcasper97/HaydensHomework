@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCU9VXdjCbRxH36B6aLRDrHCCAg52dRhnw",
@@ -12,11 +13,17 @@ const firebaseConfig = {
 };
 
 let db = null;
+let auth = null;
+let googleProvider = null;
+
 try {
   const app = initializeApp(firebaseConfig);
   db = getFirestore(app);
+  auth = getAuth(app);
+  googleProvider = new GoogleAuthProvider();
+  googleProvider.setCustomParameters({ prompt: "select_account" });
 } catch (e) {
   console.warn("Firebase init failed:", e);
 }
 
-export { db };
+export { db, auth, googleProvider };
