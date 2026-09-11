@@ -13,24 +13,20 @@ import FamilyBoard from "./FamilyBoard.jsx";
 
 const CHILD_EMOJIS = ["🦁", "🐯", "🐺", "🦊", "🐻", "🐼", "🦄", "🐲", "🚀", "⭐", "🌈", "🔥"];
 
-// Hardcoded admin bypass — no Firebase needed
-const ADMIN_USER = { uid: "admin-bypass", email: "Admin", displayName: "Admin", isAdmin: true };
-
-// UID for the unattended wall-tablet board route (?board=1). Set in .env.local
-// for local dev and in your Vercel project's Environment Variables for prod —
-// see .env.local.example. This is NOT a secret on its own, but it identifies
-// the exact Firestore path the board route reads/writes without signing in,
-// so treat it with the same care as the security-rules note in firestore.rules.
-const FAMILY_UID = import.meta.env.VITE_FAMILY_UID;
+// Local-only guest/demo profile — NOT a privilege level and NOT tied to any
+// real household's Firestore data. `isAdmin` here just means "use the
+// crestly_admin_* localStorage keys instead of Firestore" (see ChildSelector
+// and FamilyBoard below); the name is kept only so existing local demo data
+// under those keys keeps working. Entry no longer requires (or checks) any
+// credential — see the "Continue without an account" button in LandingPage.
+const GUEST_USER = { uid: "guest-local", email: "Guest", displayName: "Guest", isAdmin: true };
 
 /* ─────────────────────── Landing Page ─────────────────────── */
-const LandingPage = ({ onSignIn, onEmailSignIn, loading, emailLoading, googleError }) => {
-  const [mode, setMode] = useState("main"); // main | email | admin
+const LandingPage = ({ onSignIn, onEmailSignIn, onGuestEnter, loading, emailLoading, googleError }) => {
+  const [mode, setMode] = useState("main"); // main | email
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isNew, setIsNew] = useState(false);
-  const [adminUser, setAdminUser] = useState("");
-  const [adminPass, setAdminPass] = useState("");
   const [error, setError] = useState("");
 
   const handleEmailSubmit = async (e) => {
@@ -38,15 +34,6 @@ const LandingPage = ({ onSignIn, onEmailSignIn, loading, emailLoading, googleErr
     setError("");
     const result = await onEmailSignIn(email, password, isNew);
     if (result?.error) setError(result.error);
-  };
-
-  const handleAdminSubmit = (e) => {
-    e.preventDefault();
-    if (adminUser.toLowerCase() === "admin" && adminPass.toLowerCase() === "admin") {
-      onEmailSignIn("__admin__", "__admin__", false);
-    } else {
-      setError("Incorrect username or password.");
-    }
   };
 
   return (
@@ -99,12 +86,12 @@ const LandingPage = ({ onSignIn, onEmailSignIn, loading, emailLoading, googleErr
               ✉️ Sign in with Email
             </button>
 
-            {/* Admin bypass */}
+            {/* Guest / local-demo entry — no credential, clearly scoped */}
             <button
-              onClick={() => { setMode("admin"); setError(""); }}
+              onClick={onGuestEnter}
               className="w-full text-purple-300 hover:text-white text-sm font-semibold py-2 transition"
             >
-              Admin login
+              Continue without an account (this device only)
             </button>
           </div>
         )}
@@ -153,41 +140,6 @@ const LandingPage = ({ onSignIn, onEmailSignIn, loading, emailLoading, googleErr
           </div>
         )}
 
-        {mode === "admin" && (
-          <div className="rounded-3xl p-8 shadow-2xl" style={{ background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}>
-            <h2 className="text-2xl font-display text-white mb-6">Admin Access</h2>
-            <form onSubmit={handleAdminSubmit} className="space-y-3">
-              <input
-                type="text"
-                placeholder="Username"
-                value={adminUser}
-                onChange={e => setAdminUser(e.target.value)}
-                autoFocus
-                className="w-full rounded-2xl px-4 py-3 text-lg font-semibold focus:outline-none"
-                style={{ background: "#1C1C1E", color: "white", border: "2px solid rgba(255,255,255,0.15)" }}
-              />
-              <input
-                type="password"
-                placeholder="Password"
-                value={adminPass}
-                onChange={e => setAdminPass(e.target.value)}
-                className="w-full rounded-2xl px-4 py-3 text-lg font-semibold focus:outline-none"
-                style={{ background: "#1C1C1E", color: "white", border: "2px solid rgba(255,255,255,0.15)" }}
-              />
-              {error && <p className="text-red-300 text-sm font-semibold">{error}</p>}
-              <button
-                type="submit"
-                className="w-full font-extrabold py-4 rounded-2xl transition"
-                style={{ background: "#A8FF3E", color: "#1C1C1E" }}
-              >
-                Enter
-              </button>
-            </form>
-            <button onClick={() => { setMode("main"); setError(""); }} className="w-full text-purple-300 hover:text-white text-sm mt-3">
-              ← Back
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -482,12 +434,6 @@ const AuthShell = () => {
   };
 
   const handleEmailSignIn = async (email, password, isNew) => {
-    // Admin bypass
-    if (email === "__admin__" && password === "__admin__") {
-      setUser(ADMIN_USER);
-      return {};
-    }
-
     setEmailLoading(true);
     try {
       if (isNew) {
@@ -518,25 +464,28 @@ const AuthShell = () => {
     await signOut(auth);
   };
 
-  // ── Unattended wall-tablet board route: ?board=1 bypasses sign-in entirely. ──
-  // Checked before the auth listener's result matters, so a tablet that's never
-  // signed in still shows the board instead of the login screen.
-  if (isBoardRoute) {
-    if (!FAMILY_UID) {
-      return (
-        <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "#1C1C1E" }}>
-          <div className="text-center max-w-md">
-            <div className="text-5xl mb-4">⚠️</div>
-            <p className="text-white font-display text-xl mb-2">Board not configured</p>
-            <p className="text-gray-400 text-sm">
-              Set VITE_FAMILY_UID (see .env.local.example) to the parent account's Firebase UID,
-              then rebuild/redeploy.
-            </p>
-          </div>
-        </div>
-      );
-    }
-    return <FamilyBoard uid={FAMILY_UID} kiosk />;
+  // Local-only guest/demo entry — no credential, no Firebase Auth session,
+  // no access to any real household's Firestore data (see GUEST_USER above
+  // and the isAdmin-gated localStorage branches in ChildSelector/FamilyBoard).
+  const handleGuestEntry = () => {
+    setUser(GUEST_USER);
+  };
+
+  // ── Wall-tablet board route: ?board=1 opens straight to the family board
+  // in kiosk styling, skipping child-selection — but ONLY after the same
+  // real Firebase Auth sign-in every other user goes through. Firebase Auth
+  // persists the session locally (IndexedDB), so a mounted tablet signs in
+  // once and stays signed in like any other browser session; it no longer
+  // has a special unauthenticated path. See LandingPage below for sign-in.
+  if (isBoardRoute && user) {
+    return (
+      <FamilyBoard
+        uid={user.uid}
+        email={user.email}
+        isAdmin={user.isAdmin}
+        kiosk
+      />
+    );
   }
 
   // Loading auth state
@@ -556,6 +505,7 @@ const AuthShell = () => {
       <LandingPage
         onSignIn={handleGoogleSignIn}
         onEmailSignIn={handleEmailSignIn}
+        onGuestEnter={handleGuestEntry}
         loading={googleLoading}
         emailLoading={emailLoading}
         googleError={googleError}

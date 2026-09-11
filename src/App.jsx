@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { auth } from "./Firebase.js";
 import {
   ArrowLeft,
   Award,
@@ -36,6 +37,54 @@ const DEVICE_ID = (() => {
   if (!id) { id = Math.random().toString(36).slice(2, 10); localStorage.setItem(key, id); }
   return id;
 })();
+
+/* ------------------------- AI Document Import (deferred for MVP) -------------------------
+ * No upload UI currently calls this — the AI-ingestion feature itself is deferred. This
+ * function exists so the security requirement (real auth required, ID token forwarded,
+ * guest mode blocked) is satisfied and ready the moment ingestion UI is wired up, per the
+ * Phase 0 security remediation. It intentionally has no component-state dependencies so it
+ * can be wired into a future upload control without restructuring App's state.
+ *
+ * Requires a real, signed-in Firebase Auth session — /api/parse-homework verifies the ID
+ * token server-side and rejects anything else. Guest/local-demo mode (no Firebase Auth
+ * session, see AuthShell.jsx's GUEST_USER) cannot use this, since there's no real identity
+ * to authenticate.
+ */
+async function handleAiDocumentUpload(file) {
+  if (!file) return { ok: false, error: "No file provided." };
+
+  if (!auth?.currentUser) {
+    return {
+      ok: false,
+      error: "AI document import requires a signed-in account. Sign in with Google or email to use this — it isn't available in guest/demo mode.",
+    };
+  }
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = "";
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+    const base64 = btoa(binary);
+
+    const idToken = await auth.currentUser.getIdToken();
+
+    const res = await fetch("/api/parse-homework", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ fileData: base64, mimeType: file.type || "text/plain", fileName: file.name }),
+    });
+
+    const json = await res.json();
+    if (!json.ok) return { ok: false, error: json.error || "Parsing failed" };
+    return { ok: true, data: json.data };
+  } catch (err) {
+    return { ok: false, error: err.message || "Something went wrong." };
+  }
+}
 
 /* ============================== Default Data ============================== */
 const DEFAULT_SIGHT_DECK = [

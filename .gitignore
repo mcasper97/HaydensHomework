@@ -13,6 +13,6 @@ dist/
 # Claude Code
 .claude/
 
-# Local env vars (contains the wall-tablet board's Firebase UID)
+# Local env vars (server-side Firebase Admin credentials — see .env.local.example)
 .env
 .env.local
