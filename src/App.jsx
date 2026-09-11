@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { auth } from "./Firebase.js";
 import {
   ArrowLeft,
   Award,
@@ -3879,11 +3880,21 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
   };
 
   /* ------------------------- AI Document Import ------------------------- */
+  // Requires a real, signed-in Firebase Auth session — /api/parse-homework
+  // verifies the ID token server-side and rejects anything else (Phase 0
+  // security remediation). Guest/local-demo mode (no Firebase Auth session)
+  // can't use this feature, since there's no real identity to authenticate.
   const handleAiDocumentUpload = async (file) => {
     if (!file) return;
     setAiImportStatus("parsing");
     setAiImportPreview(null);
     setAiImportError(null);
+
+    if (!auth?.currentUser) {
+      setAiImportError("AI document import requires a signed-in account. Sign in with Google or email to use this — it isn't available in guest/demo mode.");
+      setAiImportStatus("error");
+      return;
+    }
 
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -3892,9 +3903,14 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, onSwitchChild, 
       for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
       const base64 = btoa(binary);
 
+      const idToken = await auth.currentUser.getIdToken();
+
       const res = await fetch("/api/parse-homework", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({ fileData: base64, mimeType: file.type || "text/plain", fileName: file.name }),
       });
 

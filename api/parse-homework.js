@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { requireFirebaseUser, checkRateLimit } from "./_auth.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -25,26 +26,130 @@ Rules:
 - Clean up words: lowercase, trimmed, no punctuation
 - Do not duplicate words across lists`;
 
+// --- Request validation limits (Workstream 4) ---
+const ALLOWED_MIME_TYPES = new Set([
+  "text/plain",
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+// Base64 is ~1.33x the raw byte size; cap around ~8MB raw content.
+const MAX_BASE64_LENGTH = 11_000_000;
+const MAX_FILENAME_LENGTH = 200;
+
+// --- Output validation limits (Workstream 5) ---
+const MAX_LIST_LENGTH = 200;
+const MAX_STRING_LENGTH = 200;
+
+function isCleanString(value, maxLength = MAX_STRING_LENGTH) {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
+}
+
+function sanitizeStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v) => isCleanString(v)).slice(0, MAX_LIST_LENGTH);
+}
+
+function sanitizeVocabArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((v) => v && typeof v === "object" && isCleanString(v.word))
+    .map((v) => ({
+      word: v.word,
+      definition: isCleanString(v.definition, 500) ? v.definition : "",
+    }))
+    .slice(0, MAX_LIST_LENGTH);
+}
+
+function sanitizePhonicsArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((v) => v && typeof v === "object" && isCleanString(v.word))
+    .map((v) => ({
+      word: v.word,
+      pattern: isCleanString(v.pattern) ? v.pattern : "",
+    }))
+    .slice(0, MAX_LIST_LENGTH);
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function sanitizeTestsArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((v) => v && typeof v === "object" && isCleanString(v.name))
+    .map((v) => ({
+      name: v.name,
+      subject: isCleanString(v.subject) ? v.subject : "General",
+      date: isCleanString(v.date, 20) && DATE_RE.test(v.date) ? v.date : "",
+    }))
+    .slice(0, MAX_LIST_LENGTH);
+}
+
+/**
+ * Validates and clamps the AI's extracted output before it's ever returned
+ * to the client for merge into app state (Workstream 5 — this endpoint does
+ * not decide what gets applied; App.jsx's existing preview/apply step still
+ * does that. This is boundary validation only: reject shapes that don't
+ * match, clamp everything else to sane limits.)
+ */
+function sanitizeExtraction(parsed) {
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Model output was not a JSON object");
+  }
+  return {
+    sightWords: sanitizeStringArray(parsed.sightWords),
+    spellingWords: sanitizeStringArray(parsed.spellingWords),
+    vocabWords: sanitizeVocabArray(parsed.vocabWords),
+    phonicsWords: sanitizePhonicsArray(parsed.phonicsWords),
+    tests: sanitizeTestsArray(parsed.tests),
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { fileData, mimeType, fileName } = req.body;
+  // --- Auth (Workstream 4) ---
+  // A UID supplied in the request body is never trusted for identity — only
+  // a verified Firebase ID token is. See api/_auth.js.
+  let uid;
+  try {
+    ({ uid } = await requireFirebaseUser(req));
+  } catch {
+    return res.status(401).json({ ok: false, error: "Authentication required" });
+  }
+
+  if (!checkRateLimit(uid)) {
+    return res.status(429).json({ ok: false, error: "Too many requests — please wait a few minutes and try again." });
+  }
+
+  const { fileData, mimeType, fileName } = req.body || {};
 
   if (!fileData || !mimeType) {
-    return res.status(400).json({ error: "Missing fileData or mimeType" });
+    return res.status(400).json({ ok: false, error: "Missing fileData or mimeType" });
   }
+  if (typeof fileData !== "string" || fileData.length > MAX_BASE64_LENGTH) {
+    return res.status(400).json({ ok: false, error: "File is too large" });
+  }
+  if (typeof mimeType !== "string" || !ALLOWED_MIME_TYPES.has(mimeType)) {
+    return res.status(400).json({ ok: false, error: "Unsupported file type" });
+  }
+  if (fileName !== undefined && (typeof fileName !== "string" || fileName.length > MAX_FILENAME_LENGTH)) {
+    return res.status(400).json({ ok: false, error: "Invalid file name" });
+  }
+  const safeFileName = fileName || "upload";
 
   try {
     let content;
 
     if (mimeType === "text/plain") {
-      // Plain text — send as text
       const text = Buffer.from(fileData, "base64").toString("utf-8");
-      content = [{ type: "text", text: `Homework document (${fileName}):\n\n${text}` }];
+      content = [{ type: "text", text: `Homework document (${safeFileName}):\n\n${text}` }];
     } else if (mimeType === "application/pdf") {
-      // PDF — use Claude's document block
       content = [
         {
           type: "document",
@@ -56,8 +161,9 @@ export default async function handler(req, res) {
         },
         { type: "text", text: "Extract all homework content from this document." },
       ];
-    } else if (mimeType.startsWith("image/")) {
-      // Image — use vision
+    } else {
+      // image/jpeg, image/png, image/webp, image/gif — the only remaining
+      // allowed types (see ALLOWED_MIME_TYPES above).
       content = [
         {
           type: "image",
@@ -69,10 +175,6 @@ export default async function handler(req, res) {
         },
         { type: "text", text: "Extract all homework content from this image." },
       ];
-    } else {
-      // Fallback: try to read as text
-      const text = Buffer.from(fileData, "base64").toString("utf-8");
-      content = [{ type: "text", text: `Homework document (${fileName}):\n\n${text}` }];
     }
 
     const message = await client.messages.create({
@@ -86,11 +188,24 @@ export default async function handler(req, res) {
 
     // Strip any accidental markdown fences
     const jsonStr = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
-    const parsed = JSON.parse(jsonStr);
 
-    return res.status(200).json({ ok: true, data: parsed });
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch {
+      return res.status(502).json({ ok: false, error: "Could not parse document — please try a clearer scan or a different file." });
+    }
+
+    let data;
+    try {
+      data = sanitizeExtraction(parsed);
+    } catch {
+      return res.status(502).json({ ok: false, error: "Document parsing returned an unexpected result — please try again." });
+    }
+
+    return res.status(200).json({ ok: true, data });
   } catch (err) {
     console.error("parse-homework error:", err);
-    return res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({ ok: false, error: "Something went wrong processing this document. Please try again." });
   }
 }
