@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "./Firebase.js";
+import { subscribeItems, createItem, deleteItem } from "./data/itemsRepository.js";
+import ChildTodayView from "./organizer/ChildTodayView.jsx";
 import {
   ArrowLeft,
   Award,
@@ -2607,7 +2609,7 @@ const ChestOpeningModal = ({ chestType, onClose, onRewardReceived }) => {
 };
 
 /* ============================== Main App ============================== */
-const HomeworkGamesApp = () => {
+const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
   const [currentView, setCurrentView] = useState("home"); // home | parents | flashcards | today | game | loot
   const [selectedGame, setSelectedGame] = useState(null);
   const [points, setPoints] = useState(0);
@@ -2658,6 +2660,22 @@ const HomeworkGamesApp = () => {
   const [todayCardIndex, setTodayCardIndex] = useState(0);
 
   const [lastImportSummary, setLastImportSummary] = useState(null);
+
+  /* ----------------------------- Canonical items (Academic Organizer) ----------------------------- */
+  // ctx/items feed the Tests & Quizzes panel below, CSV import, and the "My
+  // Day" card on Home — all going through data/itemsRepository.js rather
+  // than touching Firestore directly here (see itemsRepository.js). This is
+  // the actual, minimal point where App.jsx starts using its authenticated
+  // uid/childId props, which — before this change — were passed by
+  // AuthShell.jsx but never read here.
+  const ctx = useMemo(() => ({ uid, isAdmin }), [uid, isAdmin]);
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    if (!uid) return undefined;
+    const unsub = subscribeItems(ctx, childId ? { childId } : {}, setItems);
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.uid, ctx.isAdmin, childId]);
 
   /* ----------------------------- Load / Save ----------------------------- */
   const applyData = useCallback((data) => {
@@ -2851,16 +2869,36 @@ const HomeworkGamesApp = () => {
     return `In ${diffDays} days`;
   };
 
-  const addTest = () => {
+  // Tests/quizzes are canonical "test" items (data/itemsRepository.js) as of
+  // Phase 1 — upcomingTests/setUpcomingTests (above) are kept only as inert
+  // local-persistence state (still saved to localStorage/legacy sync for
+  // backward compatibility) but are no longer the source of truth read here.
+  const addTest = async () => {
     if (newTestName.trim() && newTestDate) {
-      setUpcomingTests((prev) => [...prev, { name: newTestName.trim(), subject: newTestSubject, date: newTestDate }]);
-      setNewTestName("");
-      setNewTestSubject("Math");
-      setNewTestDate("");
+      try {
+        await createItem(ctx, {
+          type: "test",
+          title: newTestName.trim(),
+          childIds: childId ? [childId] : [],
+          subject: newTestSubject,
+          startDate: newTestDate,
+        });
+        setNewTestName("");
+        setNewTestSubject("Math");
+        setNewTestDate("");
+      } catch (e) {
+        console.error("Add test failed:", e);
+      }
     }
   };
 
-  const deleteTest = (index) => setUpcomingTests((prev) => prev.filter((_, i) => i !== index));
+  const deleteTest = async (itemId) => {
+    try {
+      await deleteItem(ctx, itemId);
+    } catch (e) {
+      console.error("Delete test failed:", e);
+    }
+  };
 
   /* ---------------------- Mastery + Adaptive Selection ---------------------- */
   const getProgressEntry = (type, key) => {
@@ -3013,7 +3051,6 @@ const HomeworkGamesApp = () => {
     const nextSpell = [...customSpellingWords];
     const nextVocab = [...customVocabWords];
     const nextPhonics = [...customPhonicsWords];
-    const nextTests = [...upcomingTests];
 
     const sightSet = new Set(nextSight.map((x) => x.toLowerCase()));
     const spellSet = new Set(nextSpell.map((x) => x.toLowerCase()));
@@ -3022,9 +3059,16 @@ const HomeworkGamesApp = () => {
     const phonicsKey = (w, p) => `${(w || "").trim().toLowerCase()}|${(p || "unknown").trim().toLowerCase()}`;
     const phonicsSet = new Set(nextPhonics.map((x) => phonicsKey(x.word, x.pattern)));
 
+    // TEST rows now create canonical "test" items (data/itemsRepository.js)
+    // instead of the legacy upcomingTests array — dedup runs against the
+    // already-loaded `items` state so a re-import doesn't create duplicates.
     const testKey = (t) =>
       `${(t.name || "").trim().toLowerCase()}|${(t.subject || "").trim().toLowerCase()}|${(t.date || "").trim()}`;
-    const testSet = new Set(nextTests.map(testKey));
+    const existingTestItems = items.filter((it) => it.type === "test" || it.type === "quiz");
+    const testSet = new Set(
+      existingTestItems.map((it) => testKey({ name: it.title, subject: it.subject, date: it.startDate }))
+    );
+    const newTestPayloads = [];
 
     const summary = {
       processedRows: 0,
@@ -3171,7 +3215,7 @@ const HomeworkGamesApp = () => {
         const k = testKey(newTest);
 
         if (!testSet.has(k)) {
-          nextTests.push(newTest);
+          newTestPayloads.push(newTest);
           testSet.add(k);
           summary.added.tests += 1;
         } else summary.skipped.testDup += 1;
@@ -3189,7 +3233,21 @@ const HomeworkGamesApp = () => {
     setCustomSpellingWords(nextSpell);
     setCustomVocabWords(nextVocab);
     setCustomPhonicsWords(nextPhonics);
-    setUpcomingTests(nextTests);
+
+    if (newTestPayloads.length > 0) {
+      await Promise.all(
+        newTestPayloads.map((t) =>
+          createItem(ctx, {
+            type: "test",
+            title: t.name,
+            childIds: childId ? [childId] : [],
+            subject: t.subject,
+            startDate: t.date,
+            source: { type: "csv_import", sourceId: null },
+          })
+        )
+      );
+    }
 
     const message =
       "Import complete.\n\n" +
@@ -3732,55 +3790,11 @@ const HomeworkGamesApp = () => {
 
         <h1 className="text-4xl font-extrabold text-gray-900 mb-6 text-center">Parents Page</h1>
 
-        {/* Cloud Sync */}
-        <div className="bg-white rounded-3xl shadow-md p-6 border border-indigo-200 mb-6">
-          <h2 className="text-2xl font-extrabold text-gray-900 mb-1">☁️ Cloud Sync</h2>
-          <p className="text-gray-600 mb-4">Enter the same sync code on every device to keep Hayden's data in sync automatically.</p>
-
-          <div className="flex items-center gap-2 mb-4">
-            <span className={`w-3 h-3 rounded-full flex-shrink-0 ${syncStatus === "connected" ? "bg-green-500" : syncStatus === "connecting" ? "bg-yellow-400" : syncStatus === "error" ? "bg-red-500" : "bg-gray-300"}`} />
-            <span className="font-semibold text-gray-700 capitalize">{syncStatus}</span>
-            {syncCode && <span className="ml-2 text-gray-500 text-sm">Code: <strong className="font-mono">{syncCode}</strong> · Child: <strong>{activeChildId}</strong></span>}
-          </div>
-
-          <div className="flex gap-2 mb-3">
-            <input
-              value={syncCodeInput}
-              onChange={e => setSyncCodeInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
-              onKeyDown={e => e.key === "Enter" && syncCodeInput.length >= 4 && (setSyncCode(syncCodeInput), setActiveChildId(activeChildInput || "hayden"))}
-              placeholder="e.g. HAY123"
-              maxLength={8}
-              className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 font-mono text-lg font-bold focus:outline-none focus:border-indigo-500"
-            />
-            <button
-              onClick={() => { if (syncCodeInput.length >= 4) { setSyncCode(syncCodeInput); setActiveChildId(activeChildInput || "hayden"); } }}
-              disabled={syncCodeInput.length < 4}
-              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-extrabold px-6 py-2 rounded-2xl"
-            >
-              Connect
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2 mb-3">
-            <label className="text-sm font-bold text-gray-700 whitespace-nowrap">Child name/ID:</label>
-            <input
-              value={activeChildInput}
-              onChange={e => setActiveChildInput(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))}
-              placeholder="hayden"
-              className="flex-1 border border-gray-300 rounded-2xl px-4 py-2 text-sm focus:outline-none focus:border-indigo-500"
-            />
-            <span className="text-xs text-gray-400">(for siblings, use different IDs)</span>
-          </div>
-
-          {syncCode && (
-            <button
-              onClick={() => { setSyncCode(""); setSyncCodeInput(""); setSyncStatus("disconnected"); }}
-              className="text-sm text-red-500 hover:text-red-700 underline"
-            >
-              Disconnect
-            </button>
-          )}
-        </div>
+        {/* Legacy "Cloud Sync" (sync-code) UI hidden for Phase 1 — the families/{syncCode}
+            path it wrote to has no firestore.rules coverage (rules only allow
+            users/{uid}/**), so for any signed-in account it was already failing
+            silently (syncStatus: "error") before this change. State/effects above
+            are left in place rather than removed, per Phase 1 scope. */}
 
         <div className="grid lg:grid-cols-2 gap-6">
           {/* CSV Import */}
@@ -4216,22 +4230,25 @@ const HomeworkGamesApp = () => {
             </div>
 
             <div className="space-y-2">
-              {upcomingTests
+              {items
+                .filter((it) => it.type === "test" || it.type === "quiz")
                 .slice()
-                .sort((a, b) => new Date(a.date) - new Date(b.date))
-                .map((test, i) => (
-                  <div key={i} className="bg-gray-50 border border-gray-200 rounded-2xl p-3 relative">
+                .sort((a, b) => (a.startDate || "").localeCompare(b.startDate || ""))
+                .map((test) => (
+                  <div key={test.id} className="bg-gray-50 border border-gray-200 rounded-2xl p-3 relative">
                     <button
-                      onClick={() => deleteTest(i)}
+                      onClick={() => deleteTest(test.id)}
                       className="absolute top-2 right-2 text-gray-400 hover:text-gray-900"
                       aria-label="delete"
                     >
                       <X size={16} />
                     </button>
-                    <p className="font-extrabold text-gray-900">{test.name}</p>
+                    <p className="font-extrabold text-gray-900">{test.title}</p>
                     <p className="text-sm text-gray-600">{test.subject}</p>
                     <p className="text-sm text-purple-800 font-semibold">
-                      {new Date(test.date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+                      {test.startDate
+                        ? new Date(test.startDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+                        : ""}
                     </p>
                   </div>
                 ))}
@@ -4243,62 +4260,21 @@ const HomeworkGamesApp = () => {
   };
 
   /* ---------------------------------- Home --------------------------------- */
-  const renderStudentPlanner = () => {
-    const upcomingReminders = getUpcomingReminders();
-
-    return (
-      <div className="bg-white rounded-3xl border border-gray-200 shadow-md p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <Calendar className="text-purple-800" size={20} />
-          <h3 className="text-lg font-extrabold text-gray-900">Student Planner</h3>
+  // Formerly a tests-only "Student Planner" driven by local upcomingTests
+  // state; now the canonical-items-backed "My Day" card (assignments, study
+  // tasks, tests/quizzes, chores) — see organizer/ChildTodayView.jsx. Same
+  // slot in renderHome below, teacherNotes display unchanged.
+  const renderStudentPlanner = () => (
+    <div>
+      <ChildTodayView uid={uid} childId={childId} isAdmin={isAdmin} />
+      {teacherNotes && (
+        <div className="mt-4 bg-purple-50 border border-purple-100 rounded-2xl p-3">
+          <div className="text-xs font-extrabold text-purple-900">Teacher note</div>
+          <div className="text-sm text-gray-800 mt-1">{teacherNotes}</div>
         </div>
-
-        {upcomingReminders.length === 0 ? (
-          <div className="text-sm text-gray-600">
-            No tests or quizzes in the next 7 days.
-            <div className="mt-3 text-xs text-gray-500">Add items on the Parents Page or import a CSV.</div>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {upcomingReminders.map((test, i) => {
-              const daysUntil = getDaysUntil(test.date);
-              const urgency =
-                daysUntil === "Today"
-                  ? "border-red-300 bg-red-50"
-                  : daysUntil === "Tomorrow"
-                  ? "border-orange-300 bg-orange-50"
-                  : "border-gray-200 bg-gray-50";
-
-              return (
-                <div key={i} className={`rounded-2xl p-3 border ${urgency}`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="font-extrabold text-gray-900">{test.name}</div>
-                      <div className="text-sm text-gray-600">{test.subject}</div>
-                    </div>
-                    <div className="text-xs font-extrabold text-gray-900 bg-white border border-gray-200 rounded-full px-2.5 py-1">
-                      {daysUntil}
-                    </div>
-                  </div>
-
-                  <div className="text-xs text-gray-600 mt-2">
-                    {new Date(test.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {teacherNotes && (
-          <div className="mt-4 bg-purple-50 border border-purple-100 rounded-2xl p-3">
-            <div className="text-xs font-extrabold text-purple-900">Teacher note</div>
-            <div className="text-sm text-gray-800 mt-1">{teacherNotes}</div>
-          </div>
-        )}
-      </div>
-    );
-  };
+      )}
+    </div>
+  );
 
   const renderWorldMap = () => (
     <WorldMapScreen

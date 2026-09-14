@@ -540,6 +540,7 @@ const AuthShell = () => {
       childId={selectedChild.id}
       childName={selectedChild.name}
       childEmoji={selectedChild.emoji}
+      isAdmin={!!user.isAdmin}
       onSwitchChild={() => setSelectedChild(null)}
     />
   );
