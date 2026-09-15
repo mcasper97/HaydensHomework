@@ -2609,7 +2609,7 @@ const ChestOpeningModal = ({ chestType, onClose, onRewardReceived }) => {
 };
 
 /* ============================== Main App ============================== */
-const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
+const HomeworkGamesApp = ({ uid, childId, isAdmin, deviceMode, onRequestParentUnlock }) => {
   const [currentView, setCurrentView] = useState("home"); // home | parents | flashcards | today | game | loot
   const [selectedGame, setSelectedGame] = useState(null);
   const [points, setPoints] = useState(0);
@@ -4189,71 +4189,11 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
             </div>
           </div>
 
-          {/* Tests */}
-          <div className="bg-white rounded-3xl shadow-md p-6 border border-gray-200">
-            <h2 className="text-2xl font-extrabold text-gray-900 mb-4 flex items-center gap-2">
-              <Calendar size={22} className="text-purple-800" />
-              Tests and Quizzes
-            </h2>
-
-            <div className="space-y-2 mb-4">
-              <input
-                type="text"
-                value={newTestName}
-                onChange={(e) => setNewTestName(e.target.value)}
-                placeholder="Test / Quiz name"
-                className="w-full px-4 py-2 border border-gray-200 rounded-2xl"
-              />
-
-              <select
-                value={newTestSubject}
-                onChange={(e) => setNewTestSubject(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-200 rounded-2xl"
-              >
-                <option value="Math">Math</option>
-                <option value="Language Arts - Spelling">Language Arts - Spelling</option>
-                <option value="Language Arts - Reading/Comprehension">Language Arts - Reading/Comprehension</option>
-                <option value="Science">Science</option>
-                <option value="Social Studies">Social Studies</option>
-              </select>
-
-              <input
-                type="date"
-                value={newTestDate}
-                onChange={(e) => setNewTestDate(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-200 rounded-2xl"
-              />
-
-              <button onClick={addTest} className="w-full bg-purple-700 hover:bg-purple-800 text-white font-extrabold py-2 rounded-2xl">
-                Add Test/Quiz
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {items
-                .filter((it) => it.type === "test" || it.type === "quiz")
-                .slice()
-                .sort((a, b) => (a.startDate || "").localeCompare(b.startDate || ""))
-                .map((test) => (
-                  <div key={test.id} className="bg-gray-50 border border-gray-200 rounded-2xl p-3 relative">
-                    <button
-                      onClick={() => deleteTest(test.id)}
-                      className="absolute top-2 right-2 text-gray-400 hover:text-gray-900"
-                      aria-label="delete"
-                    >
-                      <X size={16} />
-                    </button>
-                    <p className="font-extrabold text-gray-900">{test.title}</p>
-                    <p className="text-sm text-gray-600">{test.subject}</p>
-                    <p className="text-sm text-purple-800 font-semibold">
-                      {test.startDate
-                        ? new Date(test.startDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
-                        : ""}
-                    </p>
-                  </div>
-                ))}
-            </div>
-          </div>
+          {/* The legacy Test/Quiz add/delete mini-form that used to live here has been
+              removed (Phase 1.5): ItemForm, reached from Parent Mode, is now the one
+              canonical way to create/edit/delete academic items — see
+              organizer/ParentOrganizer.jsx. This page itself is also no longer reachable
+              from a locked Child Mode device (see the deviceMode gating in renderHome). */}
         </div>
       </div>
     );
@@ -4292,12 +4232,25 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
           <p className="text-gray-700 font-semibold mt-1">A simple routine that turns practice into progress.</p>
         </div>
 
-        <button
-          onClick={() => setCurrentView("parents")}
-          className="text-sm text-purple-900 hover:text-purple-950 font-extrabold flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-200"
-        >
-          <Settings size={16} /> Parents
-        </button>
+        {/* Phase 1.5: a device locked to Child Mode must not be able to reach the
+            Parents Page (CSV import, weekly-game settings, word lists) without going
+            through Parent Unlock first — see AuthShell.jsx. Any other context
+            (deviceMode undefined/"parent"/"organizer") keeps today's behavior. */}
+        {deviceMode === "child" ? (
+          <button
+            onClick={() => onRequestParentUnlock?.()}
+            className="text-sm text-purple-900 hover:text-purple-950 font-extrabold flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-200"
+          >
+            🔓 Parent Unlock
+          </button>
+        ) : (
+          <button
+            onClick={() => setCurrentView("parents")}
+            className="text-sm text-purple-900 hover:text-purple-950 font-extrabold flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-200"
+          >
+            <Settings size={16} /> Parents
+          </button>
+        )}
       </div>
 
       <div className="mb-6 flex gap-3 flex-wrap items-center">

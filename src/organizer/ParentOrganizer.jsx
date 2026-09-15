@@ -10,8 +10,25 @@ import ItemForm from "./ItemForm.jsx";
  * read/complete-only projection of the existing legacy chore data (Phase 1
  * decision: chores are not migrated into canonical items) — creating/removing
  * a chore *template* still happens through FamilyBoard's existing chore UI.
+ *
+ * allowManage (Phase 1.5) — when false, hides the "+ type" quick-create row,
+ * the ItemForm mount, and each row's Edit/Delete controls. Used by the
+ * display-only Organizer view (see organizer/OrganizerDisplay.jsx) so it
+ * reuses this exact same bucketing/rendering code in read-mostly form
+ * instead of a separate component.
+ * allowComplete — independently controls the complete-toggle checkboxes
+ * (items and chores). Kept separate from allowManage per Phase 1.5: the wall
+ * Organizer allows marking things done/undone but never create/edit/delete.
  */
-const ParentOrganizer = ({ ctx, children = [], choreTemplates = {}, choreCompletions = {}, onToggleChore }) => {
+const ParentOrganizer = ({
+  ctx,
+  children = [],
+  choreTemplates = {},
+  choreCompletions = {},
+  onToggleChore,
+  allowManage = true,
+  allowComplete = true,
+}) => {
   const [items, setItems] = useState([]);
   const [filterChild, setFilterChild] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -77,11 +94,12 @@ const ParentOrganizer = ({ ctx, children = [], choreTemplates = {}, choreComplet
     return (
       <div key={item.id} className="flex items-center gap-3 p-3 rounded-2xl bg-white border border-gray-200">
         <button
-          onClick={() => handleComplete(item)}
+          onClick={() => allowComplete && handleComplete(item)}
+          disabled={!allowComplete}
           aria-label={isDone ? "Mark not complete" : "Mark complete"}
           className={`w-7 h-7 flex-shrink-0 rounded-full border-2 flex items-center justify-center text-xs font-bold transition ${
             isDone ? "bg-green-500 border-green-500 text-white" : "border-gray-300 text-transparent hover:border-gray-400"
-          }`}
+          } ${!allowComplete ? "cursor-default" : ""}`}
         >
           ✓
         </button>
@@ -98,12 +116,16 @@ const ParentOrganizer = ({ ctx, children = [], choreTemplates = {}, choreComplet
             {dateLabel ? ` · ${dateLabel}` : ""}
           </div>
         </div>
-        <button onClick={() => openEdit(item)} className="text-gray-400 hover:text-gray-700 text-xs font-bold px-2 flex-shrink-0">
-          Edit
-        </button>
-        <button onClick={() => handleDelete(item)} aria-label="Delete" className="text-gray-400 hover:text-red-500 text-lg px-1 flex-shrink-0">
-          ×
-        </button>
+        {allowManage && (
+          <>
+            <button onClick={() => openEdit(item)} className="text-gray-400 hover:text-gray-700 text-xs font-bold px-2 flex-shrink-0">
+              Edit
+            </button>
+            <button onClick={() => handleDelete(item)} aria-label="Delete" className="text-gray-400 hover:text-red-500 text-lg px-1 flex-shrink-0">
+              ×
+            </button>
+          </>
+        )}
       </div>
     );
   };
@@ -132,19 +154,21 @@ const ParentOrganizer = ({ ctx, children = [], choreTemplates = {}, choreComplet
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {FORM_TYPES.map((t) => (
-          <button
-            key={t}
-            onClick={() => openCreate(t)}
-            className="text-xs font-bold px-3 py-1.5 rounded-full bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 transition"
-          >
-            + {ITEM_TYPE_META[t].label}
-          </button>
-        ))}
-      </div>
+      {allowManage && (
+        <div className="flex flex-wrap gap-2">
+          {FORM_TYPES.map((t) => (
+            <button
+              key={t}
+              onClick={() => openCreate(t)}
+              className="text-xs font-bold px-3 py-1.5 rounded-full bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 transition"
+            >
+              + {ITEM_TYPE_META[t].label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {showForm && (
+      {allowManage && showForm && (
         <div className="rounded-3xl p-5 border border-gray-200 bg-gray-50">
           <ItemForm
             children={children}
@@ -170,11 +194,12 @@ const ParentOrganizer = ({ ctx, children = [], choreTemplates = {}, choreComplet
               {g.chores.map((chore) => (
                 <div key={chore.id} className="flex items-center gap-3 p-3 rounded-2xl bg-white border border-gray-200">
                   <button
-                    onClick={() => onToggleChore?.(g.child.id, chore)}
+                    onClick={() => allowComplete && onToggleChore?.(g.child.id, chore)}
+                    disabled={!allowComplete}
                     aria-label={chore.done ? "Mark chore not done" : "Mark chore done"}
                     className={`w-7 h-7 flex-shrink-0 rounded-full border-2 flex items-center justify-center text-xs font-bold transition ${
                       chore.done ? "bg-green-500 border-green-500 text-white" : "border-gray-300 text-transparent hover:border-gray-400"
-                    }`}
+                    } ${!allowComplete ? "cursor-default" : ""}`}
                   >
                     ✓
                   </button>
