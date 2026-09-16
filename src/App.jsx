@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "./Firebase.js";
 import { subscribeItems, createItem, deleteItem } from "./data/itemsRepository.js";
-import { createSourceRecord } from "./data/sourceRecordsRepository.js";
+import { createSourceRecord, updateSourceRecord } from "./data/sourceRecordsRepository.js";
+import { createIngestionCandidate } from "./data/ingestionCandidatesRepository.js";
 import ChildTodayView from "./organizer/ChildTodayView.jsx";
+import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
 import {
   ArrowLeft,
   Award,
@@ -84,6 +86,70 @@ async function handleAiDocumentUpload(file) {
     const json = await res.json();
     if (!json.ok) return { ok: false, error: json.error || "Parsing failed" };
     return { ok: true, data: json.data };
+  } catch (err) {
+    return { ok: false, error: err.message || "Something went wrong." };
+  }
+}
+
+/* ------------------------- Photo Ingestion — image capture ------------------------- */
+// Server (api/extract-obligations.js) caps the base64 payload at 3.5M chars
+// (~2.6MB raw) to stay comfortably under Vercel's ~4.5MB serverless request
+// body limit. A typical unmodified phone photo is routinely well over that,
+// so every capture is downscaled/recompressed client-side before upload —
+// this is required, not an optional optimization (see the ingestion
+// planning report's file-transport tradeoff).
+const INGESTION_MAX_DIMENSION = 1600;
+const INGESTION_JPEG_QUALITY = 0.82;
+const INGESTION_MAX_BASE64_LENGTH = 3_500_000;
+
+async function compressImageForUpload(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, INGESTION_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+  const targetWidth = Math.max(1, Math.round(bitmap.width * scale));
+  const targetHeight = Math.max(1, Math.round(bitmap.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+
+  const blob = await new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not process this image."))), "image/jpeg", INGESTION_JPEG_QUALITY)
+  );
+
+  const arrayBuffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  const base64 = btoa(binary);
+
+  return { base64, mimeType: "image/jpeg" };
+}
+
+/**
+ * Calls the extraction endpoint only — never writes a SourceRecord,
+ * IngestionCandidate, or item itself. Requires a real, signed-in Firebase
+ * Auth session (guest/local-demo mode has no real identity to authenticate
+ * with the server), same restriction as the existing parse-homework path.
+ */
+async function extractObligationsFromImage(base64, mimeType, fileName) {
+  if (!auth?.currentUser) {
+    return { ok: false, error: "Photo import requires a signed-in account — it isn't available in guest/demo mode." };
+  }
+  if (base64.length > INGESTION_MAX_BASE64_LENGTH) {
+    return { ok: false, error: "That photo is still too large after compression — please try a different photo." };
+  }
+
+  try {
+    const idToken = await auth.currentUser.getIdToken();
+    const res = await fetch("/api/extract-obligations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ fileData: base64, mimeType, fileName }),
+    });
+    const json = await res.json();
+    if (!json.ok) return { ok: false, error: json.error || "Couldn't read this photo." };
+    return { ok: true, obligations: json.obligations };
   } catch (err) {
     return { ok: false, error: err.message || "Something went wrong." };
   }
@@ -2610,7 +2676,7 @@ const ChestOpeningModal = ({ chestType, onClose, onRewardReceived }) => {
 };
 
 /* ============================== Main App ============================== */
-const HomeworkGamesApp = ({ uid, childId, isAdmin, deviceMode, onRequestParentUnlock }) => {
+const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, isAdmin, deviceMode, onRequestParentUnlock }) => {
   const [currentView, setCurrentView] = useState("home"); // home | parents | flashcards | today | game | loot
   const [selectedGame, setSelectedGame] = useState(null);
   const [points, setPoints] = useState(0);
@@ -2661,6 +2727,10 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin, deviceMode, onRequestParentUn
   const [todayCardIndex, setTodayCardIndex] = useState(0);
 
   const [lastImportSummary, setLastImportSummary] = useState(null);
+
+  /* ----------------------------- Photo ingestion (vertical slice) ----------------------------- */
+  const [ingestionBusy, setIngestionBusy] = useState(false);
+  const [ingestionCandidates, setIngestionCandidates] = useState([]);
 
   /* ----------------------------- Canonical items (Academic Organizer) ----------------------------- */
   // ctx/items feed the Tests & Quizzes panel below, CSV import, and the "My
@@ -3284,6 +3354,84 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin, deviceMode, onRequestParentUn
       `  Unknown or invalid rows: ${summary.skipped.unknownType}`;
 
     return { ok: true, message, summary };
+  };
+
+  /* ------------------------- Photo ingestion: capture -> extract -> candidates -------------------------
+   * SourceRecord is created at capture time, before extraction, and walks a
+   * processingStatus lifecycle (captured -> processing -> extracted |
+   * no_candidates | failed) so a failed or empty capture still leaves
+   * provenance/diagnostic history — it is not cleaned up or hidden. An
+   * IngestionCandidate is only ever created on a successful "extracted"
+   * result; failed/empty extractions produce zero candidates.
+   */
+  const handleImageIngestionUpload = async (file) => {
+    if (!file || ingestionBusy) return;
+    setIngestionBusy(true);
+
+    let sourceRecord = null;
+    try {
+      sourceRecord = await createSourceRecord(ctx, {
+        sourceType: "image_capture",
+        title: file.name,
+        mimeType: file.type || "image/jpeg",
+        processingStatus: "captured",
+        createdByUid: ctx.uid,
+      });
+    } catch (err) {
+      alert(err?.message || "Couldn't start photo import — please try again.");
+      setIngestionBusy(false);
+      return;
+    }
+
+    try {
+      await updateSourceRecord(ctx, sourceRecord.id, { processingStatus: "processing" });
+
+      const { base64, mimeType } = await compressImageForUpload(file);
+      const result = await extractObligationsFromImage(base64, mimeType, file.name);
+
+      if (!result.ok) {
+        await updateSourceRecord(ctx, sourceRecord.id, { processingStatus: "failed" });
+        alert(result.error || "Couldn't read this photo. Please try again.");
+        return;
+      }
+
+      if (!result.obligations || result.obligations.length === 0) {
+        await updateSourceRecord(ctx, sourceRecord.id, { processingStatus: "no_candidates" });
+        alert("No homework details were found in that photo.");
+        return;
+      }
+
+      await updateSourceRecord(ctx, sourceRecord.id, { processingStatus: "extracted" });
+
+      const candidates = await Promise.all(
+        result.obligations.map((o) =>
+          createIngestionCandidate(ctx, {
+            sourceRecordId: sourceRecord.id,
+            proposedType: o.type,
+            title: o.title,
+            proposedChildName: o.childName,
+            date: o.date,
+            subject: o.subject,
+            academicTopic: o.academicTopic,
+            academicUnit: o.academicUnit,
+            preparationRequired: o.preparationRequired,
+            description: o.description,
+            extractionConfidence: o.extractionConfidence,
+            reviewStatus: "pending",
+          })
+        )
+      );
+      setIngestionCandidates(candidates);
+    } catch (err) {
+      try {
+        await updateSourceRecord(ctx, sourceRecord.id, { processingStatus: "failed" });
+      } catch {
+        // best-effort — the user-facing error below still fires either way
+      }
+      alert(err?.message || "Something went wrong processing this photo.");
+    } finally {
+      setIngestionBusy(false);
+    }
   };
 
   /* ------------------------- Parents: add items ------------------------- */
@@ -4205,12 +4353,51 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin, deviceMode, onRequestParentUn
             </div>
           </div>
 
+          {/* Photo Ingestion — vertical slice: a single image capture (gallery or
+              camera, same input) is downscaled client-side, sent to
+              api/extract-obligations.js, and any obligations found become
+              pending IngestionCandidates for this child to review below.
+              Nothing here creates a canonical item without an explicit
+              parent approval on each candidate. */}
+          <div className="bg-white rounded-3xl shadow-md p-6 border border-gray-200">
+            <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Import from a Photo</h2>
+            <p className="text-gray-600 mb-4">
+              Snap or upload a photo of a homework sheet or teacher note — we'll pull out tests, assignments, and
+              events for you to review.
+            </p>
+
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              capture="environment"
+              disabled={ingestionBusy}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                await handleImageIngestionUpload(file);
+              }}
+              className="w-full px-4 py-3 border border-gray-200 rounded-2xl bg-white disabled:opacity-50"
+            />
+
+            {ingestionBusy && <p className="mt-3 text-sm text-gray-600 font-semibold">Reading your photo…</p>}
+          </div>
+
           {/* The legacy Test/Quiz add/delete mini-form that used to live here has been
               removed (Phase 1.5): ItemForm, reached from Parent Mode, is now the one
               canonical way to create/edit/delete academic items — see
               organizer/ParentOrganizer.jsx. This page itself is also no longer reachable
               from a locked Child Mode device (see the deviceMode gating in renderHome). */}
         </div>
+
+        {ingestionCandidates.length > 0 && (
+          <CandidateReviewModal
+            ctx={ctx}
+            candidates={ingestionCandidates}
+            child={childId ? { id: childId, name: childName, emoji: childEmoji } : null}
+            onClose={() => setIngestionCandidates([])}
+          />
+        )}
       </div>
     );
   };

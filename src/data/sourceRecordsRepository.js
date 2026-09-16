@@ -48,6 +48,14 @@ const EMPTY_DEFAULTS = {
   sourceType: "manual",
   title: null,
   mimeType: null,
+  // AI-ingestion captures (sourceType: "image_capture") drive this through a
+  // fuller lifecycle via updateSourceRecord() — "captured" (this default, set
+  // at upload time before extraction runs) -> "processing" (extraction
+  // request in flight) -> "extracted" (>=1 candidate produced) |
+  // "no_candidates" (call succeeded, nothing useful found) | "failed"
+  // (extraction errored). Manual/csv_import records never leave "captured".
+  // A "failed"/"no_candidates" record is kept, not deleted — it is
+  // intentional provenance/diagnostic history, not an error state to clean up.
   processingStatus: "captured",
   createdByUid: null,
   // Generic bag for future type-specific detail (sourceUrl, sender,

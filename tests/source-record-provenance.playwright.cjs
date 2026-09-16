@@ -160,7 +160,10 @@ function ok(name, cond) {
     `TEST,CSV Test One,Math,${today}\n` +
     `TEST,CSV Test Two,Science,${today}\n`;
 
-  const fileInput = page.locator('input[type="file"]');
+  // Scoped to the CSV-specific input — the Parents Page also has a separate
+  // image-capture input (photo ingestion vertical slice) that a bare
+  // input[type="file"] selector would now also match.
+  const fileInput = page.locator('input[type="file"][accept=".csv"]');
   if (await fileInput.count()) {
     await fileInput.setInputFiles({
       name: 'import.csv',

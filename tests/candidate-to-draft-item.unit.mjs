@@ -1,0 +1,84 @@
+/**
+ * Pure unit tests for src/organizer/candidateToDraftItem.js — the adapter
+ * that shapes an IngestionCandidate as an ItemForm `existingItem`. Kept as
+ * a plain-JS module (no JSX/React) specifically so it can be unit-tested
+ * directly in Node.
+ *
+ * Usage: node tests/candidate-to-draft-item.unit.mjs
+ */
+import { candidateToDraftItem } from "../src/organizer/candidateToDraftItem.js";
+
+let pass = 0, fail = 0;
+function ok(name, cond) {
+  if (cond) { pass++; console.log(`PASS: ${name}`); }
+  else { fail++; console.log(`FAIL: ${name}`); }
+}
+
+const child = { id: "child-1", name: "Ava", emoji: "🦁" };
+
+// ============ Due-date types (assignment/project/study_task) map date -> dueDate ============
+for (const type of ["assignment", "project", "study_task"]) {
+  const draft = candidateToDraftItem({ proposedType: type, title: "X", date: "2026-10-01" }, child);
+  ok(`${type}: date maps to dueDate, not startDate`, draft.dueDate === "2026-10-01" && draft.startDate === null);
+}
+
+// ============ Non-due-date types map date -> startDate ============
+for (const type of ["test", "quiz", "school_event", "family_event", "reminder"]) {
+  const draft = candidateToDraftItem({ proposedType: type, title: "X", date: "2026-10-01" }, child);
+  ok(`${type}: date maps to startDate, not dueDate`, draft.startDate === "2026-10-01" && draft.dueDate === null);
+}
+
+// ============ Child match pre-selects; mismatch/absence leaves unselected ============
+{
+  const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "Ava" }, child);
+  ok("Exact (case-insensitive) child name match pre-selects the child", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
+}
+{
+  const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "ava" }, child);
+  ok("Child name match is case-insensitive", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
+}
+{
+  const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "Ben" }, child);
+  ok("Mismatched child name never auto-selects — parent must confirm", draft.childIds.length === 0);
+}
+{
+  const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: null }, child);
+  ok("No proposed child name leaves selection empty (never guesses)", draft.childIds.length === 0);
+}
+{
+  const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "Ava" }, null);
+  ok("No child in scope at all never throws, leaves selection empty", draft.childIds.length === 0);
+}
+
+// ============ Field passthrough ============
+{
+  const draft = candidateToDraftItem(
+    {
+      proposedType: "test",
+      title: "Math Test",
+      subject: "Math",
+      academicTopic: "Fractions",
+      academicUnit: "Unit 3",
+      preparationRequired: true,
+      description: "Study pages 12-15",
+    },
+    child
+  );
+  ok("title passes through", draft.title === "Math Test");
+  ok("subject passes through", draft.subject === "Math");
+  ok("academicTopic passes through", draft.academicTopic === "Fractions");
+  ok("academicUnit passes through", draft.academicUnit === "Unit 3");
+  ok("preparationRequired passes through", draft.preparationRequired === true);
+  ok("description maps to notes", draft.notes === "Study pages 12-15");
+}
+
+// ============ Missing optional fields default sanely, never throw ============
+{
+  const draft = candidateToDraftItem({ proposedType: "reminder", title: "Bring lunch money" }, child);
+  ok("Missing subject defaults to null", draft.subject === null);
+  ok("Missing description defaults to empty notes string (matches ItemForm's own default)", draft.notes === "");
+  ok("Missing date defaults to null on the relevant date field", draft.startDate === null);
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail > 0 ? 1 : 0);
