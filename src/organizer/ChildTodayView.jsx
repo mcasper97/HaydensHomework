@@ -72,7 +72,11 @@ const ChildTodayView = ({ uid, childId, isAdmin }) => {
                 <div className="font-extrabold text-gray-900 text-sm">
                   {meta.icon} {item.title}
                 </div>
-                {item.subject && <div className="text-xs text-gray-600">{item.subject}</div>}
+                {(item.subject || item.academicTopic || item.academicUnit) && (
+                  <div className="text-xs text-gray-600">
+                    {[item.subject, item.academicTopic, item.academicUnit].filter(Boolean).join(" · ")}
+                  </div>
+                )}
               </div>
             );
           })}

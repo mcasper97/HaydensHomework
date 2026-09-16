@@ -113,6 +113,9 @@ const ParentOrganizer = ({
               .filter(Boolean)
               .join(", ")}
             {item.subject ? ` · ${item.subject}` : ""}
+            {[item.academicTopic, item.academicUnit].filter(Boolean).length > 0
+              ? ` · ${[item.academicTopic, item.academicUnit].filter(Boolean).join(" · ")}`
+              : ""}
             {dateLabel ? ` · ${dateLabel}` : ""}
           </div>
         </div>
