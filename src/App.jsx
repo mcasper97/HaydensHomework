@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "./Firebase.js";
 import { subscribeItems, createItem, deleteItem } from "./data/itemsRepository.js";
+import { createSourceRecord } from "./data/sourceRecordsRepository.js";
 import ChildTodayView from "./organizer/ChildTodayView.jsx";
 import {
   ArrowLeft,
@@ -3235,6 +3236,20 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin, deviceMode, onRequestParentUn
     setCustomPhonicsWords(nextPhonics);
 
     if (newTestPayloads.length > 0) {
+      let sourceRecordId = null;
+      try {
+        const record = await createSourceRecord(ctx, {
+          sourceType: "csv_import",
+          title: file.name,
+          mimeType: file.type || "text/csv",
+          createdByUid: ctx.uid,
+        });
+        sourceRecordId = record?.id ?? null;
+      } catch (err) {
+        // Provenance is best-effort — imported items must still be created
+        // even if the shared SourceRecord write fails for any reason.
+        console.error("importStructuredCSV: createSourceRecord failed", err);
+      }
       await Promise.all(
         newTestPayloads.map((t) =>
           createItem(ctx, {
@@ -3244,6 +3259,7 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin, deviceMode, onRequestParentUn
             subject: t.subject,
             startDate: t.date,
             source: { type: "csv_import", sourceId: null },
+            ...(sourceRecordId ? { sourceRecordId } : {}),
           })
         )
       );

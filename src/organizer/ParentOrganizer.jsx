@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { subscribeItems, createItem, updateItem, deleteItem, setItemStatus } from "../data/itemsRepository.js";
+import { createSourceRecord } from "../data/sourceRecordsRepository.js";
 import { bucketItems, choresDueToday } from "./itemBuckets.js";
 import { ITEM_TYPE_META, FORM_TYPES, ACADEMIC_TYPES } from "../data/itemTypes.js";
 import ItemForm from "./ItemForm.jsx";
@@ -76,8 +77,24 @@ const ParentOrganizer = ({
   };
 
   const handleFormSubmit = async (payload, existing) => {
-    if (existing) await updateItem(ctx, existing.id, payload);
-    else await createItem(ctx, payload);
+    if (existing) {
+      await updateItem(ctx, existing.id, payload);
+    } else {
+      let sourceRecordId = null;
+      try {
+        const record = await createSourceRecord(ctx, {
+          sourceType: "manual",
+          title: payload.title,
+          createdByUid: ctx.uid,
+        });
+        sourceRecordId = record?.id ?? null;
+      } catch (err) {
+        // Provenance is best-effort — the item must still be created even
+        // if the SourceRecord write fails for any reason.
+        console.error("ParentOrganizer: createSourceRecord failed", err);
+      }
+      await createItem(ctx, sourceRecordId ? { ...payload, sourceRecordId } : payload);
+    }
     setShowForm(false);
     setEditingItem(null);
   };

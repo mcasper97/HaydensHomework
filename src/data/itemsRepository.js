@@ -88,6 +88,12 @@ const EMPTY_DEFAULTS = {
   preparationRequired: null,
   location: null,
   priority: null,
+  // SourceRecord provenance foundation — optional reference to a
+  // users/{uid}/sourceRecords/{id} document describing how this item was
+  // captured. item.source stays as-is (kept for backward compatibility);
+  // sourceRecordId is purely additive and defaults to null/absent for every
+  // pre-existing item.
+  sourceRecordId: null,
 };
 
 /**
