@@ -2,14 +2,14 @@
  * Focused regression test for the "Parent Page -> parent management
  * workspace -> photo/CSV import" navigation fix.
  *
- * Smoke testing found that an authenticated parent had no way to reach the
- * Parents Page (where CSV and photo import live) directly from the Parent
- * Page — it was only reachable by first selecting a specific child and then
- * clicking "⚙️ Parents" on that child's Home screen. The existing
- * "📅 Family Board" button on the Parent Page already opens the real parent
- * management workspace (Organizer + Calendar + Add, via FamilyBoard.jsx) —
- * so this fix adds a small "📷 Import from Photo / CSV" link per child on
- * that workspace, which navigates directly to that child's Parents Page.
+ * Product rule (corrected after an initial revision placed the entry point
+ * on Family Board and was rejected): Family Board / Shared Display and
+ * Child pages are execution-only surfaces (view + mark eligible items
+ * complete) and must never expose admin functionality — import/upload,
+ * edit, delete, source management, AI review, recurrence, or household
+ * config. The entry point into Import must live on the authenticated
+ * Parent Page itself, behind its own clearly-labeled "Parent Tools"
+ * control — never inside Family Board, never on a child page.
  *
  * Exercises the guest/local-demo path (no live Firebase project needed).
  *
@@ -57,33 +57,49 @@ function ok(name, cond) {
   ok('Parent Page still shows the learner card (Ava)', await visible('Ava'));
   ok('Parent Page still shows the existing "Family Board" entry point', await page.getByText(/Family Board/).first().isVisible());
 
-  // ============ Family Board (parent management workspace) now has an Import link ============
+  // ============ Criterion 1: obvious new entry point on the Parent Page itself ============
+  ok('Parent Page shows the new "Parent Tools" button', await visible('Parent Tools'));
+  ok('Import is NOT visible on the Parent Page before opening the panel', !(await visible('Import from Photo / CSV')));
+
+  await page.getByText('Parent Tools').click();
+  ok('Clicking it reveals the Import panel, still on the Parent Page', await visible('Import from Photo / CSV'));
+  const panel = page.locator('[data-testid="parent-organizer-panel"]');
+  ok('Panel lists the learner to import for', await panel.locator('button', { hasText: 'Ava' }).isVisible());
+
+  // ============ Criterion 2: Family Board is free of admin/import controls ============
   await page.getByText(/Family Board/).first().click();
   await page.waitForSelector('text=🔆 Today');
   ok('Family Board shows the Organizer ("🔆 Today")', await visible('🔆 Today'));
   ok('Family Board shows the Calendar ("📅 Coming Up")', await visible('📅 Coming Up'));
   ok('Family Board shows a create control (+ Assignment) — "Add" is present', await page.getByRole('button', { name: '+ Assignment' }).isVisible());
-  ok('Family Board now shows the new "Import from Photo / CSV" link', await visible('Import from Photo / CSV'));
+  ok('Family Board does NOT show any Import control', !(await page.getByText('Import from Photo / CSV').isVisible().catch(() => false)));
+  ok('Family Board does NOT show any Import control (alt text match)', !(await page.getByText('Import Teacher Plan').isVisible().catch(() => false)));
 
-  // ============ Clicking it lands directly on that child's Parents Page ============
-  await page.getByText('📷 Import from Photo / CSV').click();
+  // ============ Criterion 5: import reachable only via the Parent Tools panel ============
+  await page.getByText('← Back').click();
+  await page.waitForSelector('text=Parent Page', { timeout: 5000 }).catch(() => {});
+  ok('Family Board\'s own Back control returns to the Parent Page', await visible('Parent Page'));
+
+  await page.getByText('Parent Tools').click();
+  await page.waitForSelector('text=Import from Photo / CSV');
+  await page.locator('[data-testid="parent-organizer-panel"] button', { hasText: 'Ava' }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
-  ok('Clicking the Import link lands directly on the Parents Page', await visible('Parents Page'));
+  ok('Clicking a learner in the panel lands directly on that child\'s Parents Page', await visible('Parents Page'));
   ok('The photo-import card is reachable from this entry point', await visible('Import from a Photo'));
   ok('The existing CSV-import card is also present (nothing removed)', await visible('Import Teacher Plan (CSV)'));
 
-  // ============ Back navigation is clear: returns to the Parent Page, not the child's game Home ============
+  // ============ Criterion 4 / back navigation: returns to the Parent Page, not the child's game Home ============
   ok('Back button is labeled for returning to the Parent Page (not "Back to Home")', await visible('Back to Parent Page'));
   await page.getByText('Back to Parent Page').click();
   await page.waitForSelector('text=Parent Page', { timeout: 5000 }).catch(() => {});
   ok('Back button returns to the Parent Page', await visible('Parent Page'));
-  ok('Back navigation did NOT land in the child\'s game Home (no "My Day"/game-home marker)', !(await page.getByText('Hayden\'s Homework').isVisible().catch(() => false)));
+  ok('Back navigation did NOT land in the child\'s game Home (no game-home marker)', !(await page.getByText("Hayden's Homework").isVisible().catch(() => false)));
 
-  // ============ Normal flow (pick a child from the Parent Page) still opens on Home, unaffected ============
+  // ============ Criterion 3: normal child-card flow (Child page) still has no import/admin controls ============
   await page.getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
   ok('Normal child selection still opens on that child\'s Home (unaffected by the new entry point)', await page.getByRole('button', { name: /Parents/ }).isVisible().catch(() => false));
-  ok('Normal flow\'s own Parents button still leads to the same Parents Page', true);
+  ok('Child\'s Home screen itself shows no Import control directly (only via the gated ⚙️ Parents click)', !(await page.getByText('Import from a Photo').isVisible().catch(() => false)));
   await page.getByRole('button', { name: /Parents/ }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
   ok('Normal Home -> Parents flow still shows "Back to Home" (unchanged existing behavior)', await visible('Back to Home'));

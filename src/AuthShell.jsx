@@ -440,6 +440,7 @@ const ChildSelector = ({
   onSelectChild,
   onSignOut,
   onOpenCalendar,
+  onOpenChildImport,
   deviceMode,
   lockedChildId,
   suppressAutoLock,
@@ -449,6 +450,7 @@ const ChildSelector = ({
   const [children, setChildren] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [showParentTools, setShowParentTools] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmoji, setNewEmoji] = useState("🦁");
   const [saving, setSaving] = useState(false);
@@ -576,11 +578,54 @@ const ChildSelector = ({
 
         <button
           onClick={onOpenCalendar}
-          className="w-full flex items-center gap-3 p-4 rounded-2xl mb-6 transition hover:opacity-90 font-extrabold text-white"
+          className="w-full flex items-center gap-3 p-4 rounded-2xl mb-3 transition hover:opacity-90 font-extrabold text-white"
           style={{ background: "linear-gradient(135deg, #2d6b3f, #1f4a2c)" }}
         >
           <span className="text-2xl">📅</span> {boardLabel}
         </button>
+
+        {/* Parent-only entry point into admin/import functionality. Deliberately
+            kept off Family Board / Shared Display and off every child-facing
+            page — those are execution-only surfaces (view + mark-complete),
+            never import/edit/delete/source-management/AI-review/household
+            config. This is the one place a parent reaches Import from.
+            Labeled "Parent Tools" rather than "Organizer" — it doesn't open
+            the Organizer (that's still the Family Board button above); it
+            opens a learner picker leading to that child's management/import
+            page. */}
+        <button
+          onClick={() => setShowParentTools((v) => !v)}
+          className="w-full flex items-center gap-3 p-4 rounded-2xl mb-6 transition hover:opacity-90 font-extrabold text-white"
+          style={{ background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}
+        >
+          <span className="text-2xl">🗂️</span> Parent Tools
+        </button>
+
+        {showParentTools && onOpenChildImport && (
+          <div data-testid="parent-organizer-panel" className="rounded-3xl p-5 mb-6 border border-gray-700" style={{ background: "#2a2a2c" }}>
+            <h3 className="text-white font-display text-lg mb-1">Import from Photo / CSV</h3>
+            <p className="text-gray-400 text-sm mb-4">
+              Pull homework details from a photo or spreadsheet into a learner's organizer.
+            </p>
+            {children.length === 0 ? (
+              <p className="text-gray-400 text-sm">Add a learner first to import for them.</p>
+            ) : (
+              <div className="space-y-2">
+                {children.map((child) => (
+                  <button
+                    key={child.id}
+                    onClick={() => onOpenChildImport(child)}
+                    className="w-full flex items-center gap-3 p-3 rounded-2xl text-left transition hover:opacity-90"
+                    style={{ background: "#1C1C1E" }}
+                  >
+                    <span className="text-xl">{child.emoji}</span>
+                    <span className="text-white font-semibold">{child.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {loading ? (
           <div className="text-center py-12">
@@ -725,9 +770,12 @@ const AuthShell = () => {
 
   // Which view a newly-selected child's App instance should open on.
   // Normally "home" (every existing entry point). Set to "parents" only by
-  // FamilyBoard's "Import from Photo / CSV" link (handleOpenChildImport
+  // the Parent Page's "Parent Tools" -> Import panel (handleOpenChildImport
   // below) so that link lands directly on the Parents Page instead of the
-  // child's game Home.
+  // child's game Home. Deliberately NOT
+  // reachable from Family Board / Shared Display or any child-facing
+  // page — import/admin functionality only ever originates from this
+  // authenticated Parent Page screen (see ChildSelector below).
   const [childEntryView, setChildEntryView] = useState("home");
 
   // Read once at mount — this doesn't change during the session.
@@ -848,11 +896,13 @@ const AuthShell = () => {
     setParentUnlockedView(null);
   };
 
-  // FamilyBoard's "Import from Photo / CSV" link (see below). Deliberately
-  // does NOT call handleSelectChild / applyLockedChildId — this is pure
-  // navigation to an existing child's Parents Page, not a device-mode
-  // change, and must never re-lock a device to a different child as a
-  // side effect.
+  // Called only from the Parent Page's "Parent Tools" panel (see
+  // ChildSelector below) — never from Family Board / Shared Display or any
+  // child-facing page, per product rule (those surfaces are execution-only
+  // and must not expose import/admin functionality). Deliberately does NOT
+  // call handleSelectChild / applyLockedChildId — this is pure navigation
+  // to an existing child's Parents Page, not a device-mode change, and
+  // must never re-lock a device to a different child as a side effect.
   const handleOpenChildImport = (child) => {
     setChildEntryView("parents");
     setSelectedChild(child);
@@ -1047,7 +1097,6 @@ const AuthShell = () => {
           email={user.email}
           isAdmin={user.isAdmin}
           onBack={() => setShowCalendar(false)}
-          onOpenChildImport={handleOpenChildImport}
         />
       );
     }
@@ -1060,6 +1109,7 @@ const AuthShell = () => {
         onSelectChild={handleSelectChild}
         onSignOut={handleSignOut}
         onOpenCalendar={() => setShowCalendar(true)}
+        onOpenChildImport={handleOpenChildImport}
         deviceMode={deviceMode}
         lockedChildId={lockedChildId}
         suppressAutoLock={parentUnlockedView === "switch"}
