@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { requireFirebaseUser, checkRateLimit } from "./_auth.js";
-import { FORM_TYPES } from "../src/data/itemTypes.js";
+import { FORM_TYPES, SUBJECT_OPTIONS } from "../src/data/itemTypes.js";
 
 /* ============================== Photo/Image Ingestion — Extraction Endpoint ==============================
  * First real ingestion vertical slice: parent uploads a single image (photo
@@ -24,6 +24,7 @@ import { FORM_TYPES } from "../src/data/itemTypes.js";
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const TYPE_ENUM_LIST = FORM_TYPES.join(" | ");
+const SUBJECT_ENUM_LIST = SUBJECT_OPTIONS.join(" | ");
 
 const SYSTEM_PROMPT = `You are a homework/school-document parser for a family organizer app.
 Given a photo of a school document (teacher letter, weekly newsletter, homework sheet, permission slip, etc.),
@@ -37,7 +38,7 @@ Return ONLY valid JSON with this exact shape — no markdown, no explanation:
       "title": "string",
       "childName": "string or null",
       "date": "YYYY-MM-DD or null",
-      "subject": "string or null",
+      "subject": "${SUBJECT_ENUM_LIST} | null",
       "academicTopic": "string or null",
       "academicUnit": "string or null",
       "preparationRequired": true/false/null,
@@ -48,9 +49,10 @@ Return ONLY valid JSON with this exact shape — no markdown, no explanation:
 
 Rules:
 - type must be one of: ${TYPE_ENUM_LIST}. If unsure, pick the closest match.
-- title is required and should be short and specific (e.g. "Chapter 4 Math Test", not "Test").
+- title is required and should be short and specific (e.g. "Friday Spelling Quiz", not "Quiz").
 - childName: only fill in if a specific child's name is visibly written on the document; otherwise null. Never guess.
 - date: only output a real calendar date in YYYY-MM-DD format if one is stated or clearly computable from the document; otherwise null. Never invent a date.
+- subject: must be exactly one of: ${SUBJECT_ENUM_LIST}. Base it strictly on the actual academic content of THIS document, not on assumptions or on what a typical worksheet is about. Examples: a page of sight words, phonics patterns, or reading passages/comprehension questions is "Language Arts - Reading/Comprehension"; a spelling word list is "Language Arts - Spelling"; only use "Math" when the content is actually arithmetic/numbers/math problems. If the obligation has no clear academic subject at all (e.g. a school event, permission slip, or reminder), use null — never default to "Math" or any other subject when you are unsure.
 - preparationRequired: true only for test/quiz-like obligations that need studying; otherwise null.
 - description: a short plain-language summary of any instructions/details not captured by the other fields; otherwise null.
 - If the document contains no useful obligations, return { "obligations": [] }.
@@ -100,7 +102,12 @@ function sanitizeObligation(value) {
     title: value.title.trim(),
     childName: isCleanString(value.childName, 100) ? value.childName.trim() : null,
     date: isCleanString(value.date, 20) && DATE_RE.test(value.date) ? value.date : null,
-    subject: isCleanString(value.subject, 100) ? value.subject.trim() : null,
+    // Enum-validated against the app's actual subject list, same pattern as
+    // `type` above — a value outside SUBJECT_OPTIONS (or missing/malformed)
+    // is dropped to null rather than trusted as free text, so a prompt
+    // regression or model drift can't silently write an unreviewable
+    // subject string into the dropdown the parent edits before approval.
+    subject: SUBJECT_OPTIONS.includes(value.subject) ? value.subject : null,
     academicTopic: isCleanString(value.academicTopic, 100) ? value.academicTopic.trim() : null,
     academicUnit: isCleanString(value.academicUnit, 100) ? value.academicUnit.trim() : null,
     preparationRequired: typeof value.preparationRequired === "boolean" ? value.preparationRequired : null,

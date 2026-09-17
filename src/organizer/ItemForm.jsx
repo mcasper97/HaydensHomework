@@ -37,6 +37,12 @@ const showsField = (type, field) => {
  *
  * onSubmit(payload, existingItem) is awaited — caller decides create vs.
  * update via itemsRepository.
+ *
+ * submitLabel — optional override for the submit button's text (used while
+ * not saving/disabled). Defaults to the existing "Save changes"/"Add"
+ * behavior when omitted. Purely presentational — this form has no idea why
+ * a caller wants different wording (e.g. reviewing an ingestion candidate),
+ * it just displays whatever string it's given.
  */
 const ItemForm = ({
   children = [],
@@ -45,6 +51,7 @@ const ItemForm = ({
   existingItem = null,
   onSubmit,
   onCancel,
+  submitLabel = null,
 }) => {
   const [type, setType] = useState(existingItem?.type || initialType);
   const [title, setTitle] = useState(existingItem?.title || "");
@@ -264,7 +271,7 @@ const ItemForm = ({
           disabled={!title.trim() || childIds.length === 0 || saving}
           className="flex-1 bg-purple-700 hover:bg-purple-800 disabled:opacity-50 text-white font-extrabold py-2 rounded-2xl"
         >
-          {saving ? "Saving..." : existingItem ? "Save changes" : "Add"}
+          {saving ? "Saving..." : submitLabel || (existingItem ? "Save changes" : "Add")}
         </button>
         {onCancel && (
           <button type="button" onClick={onCancel} className="px-4 py-2 rounded-2xl font-extrabold text-gray-500 border border-gray-300">

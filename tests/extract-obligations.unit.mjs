@@ -152,6 +152,26 @@ try {
   ok("Partial extraction preserves order of valid entries", r.obligations[0].title === "Valid one" && r.obligations[1].title === "Valid two");
 }
 
+// ============ Subject is enum-validated against SUBJECT_OPTIONS (Issue 2 fix) ============
+{
+  const r = sanitizeObligationsResponse({
+    obligations: [{ type: "quiz", title: "Phonics Quiz", subject: "Language Arts - Reading/Comprehension" }],
+  });
+  ok("A valid non-Math subject (e.g. reading/phonics) is preserved as-is", r.obligations[0].subject === "Language Arts - Reading/Comprehension");
+}
+{
+  const r = sanitizeObligationsResponse({
+    obligations: [{ type: "quiz", title: "Phonics Quiz", subject: "Reading" }],
+  });
+  ok("A subject value outside the enum (not an exact SUBJECT_OPTIONS match) is dropped to null, not trusted as free text", r.obligations[0].subject === null);
+}
+{
+  const r = sanitizeObligationsResponse({
+    obligations: [{ type: "school_event", title: "Field Day" }],
+  });
+  ok("Missing subject normalizes to null", r.obligations[0].subject === null);
+}
+
 // ============ Result is capped at MAX_OBLIGATIONS (20) ============
 {
   const many = Array.from({ length: 30 }, (_, i) => ({ type: "assignment", title: `Item ${i}` }));

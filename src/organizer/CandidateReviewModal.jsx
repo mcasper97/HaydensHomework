@@ -89,6 +89,7 @@ const CandidateReviewModal = ({ ctx, candidates, child, onClose }) => {
             }
           }}
           onCancel={handleReject}
+          submitLabel="Approve & Add"
         />
       </div>
     </div>

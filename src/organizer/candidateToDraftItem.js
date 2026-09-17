@@ -21,18 +21,22 @@ const DUE_DATE_TYPES = ["assignment", "project", "study_task"];
  */
 export function candidateToDraftItem(candidate, child) {
   const isDue = DUE_DATE_TYPES.includes(candidate.proposedType);
-  const childMatches =
-    child?.id &&
-    candidate.proposedChildName &&
-    child.name?.trim().toLowerCase() === candidate.proposedChildName.trim().toLowerCase();
 
   return {
     type: candidate.proposedType,
     title: candidate.title || "",
-    // Only pre-checked when the AI's guessed name matches this device's
-    // child exactly — never auto-selected just because a name was present.
-    // The parent still has to see and keep (or change) this selection.
-    childIds: childMatches ? [child.id] : [],
+    // Pre-selected whenever a child is in scope. `child` here is always
+    // either the single child whose Parents Page is currently open, or
+    // null (never a list to choose among) — see App.jsx's CandidateReviewModal
+    // usage — so this isn't the AI silently assigning a child, it's
+    // defaulting to the only slot this screen could ever offer. The parent
+    // still sees it highlighted and must click Approve to confirm; nothing
+    // is written until then. (Bug fix: `existingItem.childIds || fallback`
+    // in ItemForm.jsx never falls back for an explicit `[]`, since an empty
+    // array is truthy in JS — returning `[]` here on a name mismatch left
+    // the submit button genuinely disabled with no available way to select
+    // a child other than a click ItemForm's own fallback never offered.)
+    childIds: child?.id ? [child.id] : [],
     subject: candidate.subject || null,
     academicTopic: candidate.academicTopic || null,
     academicUnit: candidate.academicUnit || null,

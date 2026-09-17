@@ -28,26 +28,30 @@ for (const type of ["test", "quiz", "school_event", "family_event", "reminder"])
   ok(`${type}: date maps to startDate, not dueDate`, draft.startDate === "2026-10-01" && draft.dueDate === null);
 }
 
-// ============ Child match pre-selects; mismatch/absence leaves unselected ============
+// ============ Child pre-selection: the single in-scope child is always
+// pre-selected regardless of the AI's proposedChildName guess — there is
+// only ever 0 or 1 child passed in (the one whose Parents Page is open),
+// so this is a context default, not the AI silently assigning a child.
+// Bug fix regression coverage: previously this only pre-selected on an
+// exact proposedChildName match, which left the submit button genuinely
+// disabled (ItemForm's `existingItem.childIds || fallback` never falls
+// back for an explicit `[]`, since `[]` is truthy in JS) whenever the
+// AI's guess didn't match — the common case for most real documents. ============
 {
   const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "Ava" }, child);
-  ok("Exact (case-insensitive) child name match pre-selects the child", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
-}
-{
-  const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "ava" }, child);
-  ok("Child name match is case-insensitive", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
+  ok("Matching proposedChildName: child is pre-selected", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
 }
 {
   const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "Ben" }, child);
-  ok("Mismatched child name never auto-selects — parent must confirm", draft.childIds.length === 0);
+  ok("Mismatched proposedChildName: the in-scope child is still pre-selected (only slot this screen offers)", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
 }
 {
   const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: null }, child);
-  ok("No proposed child name leaves selection empty (never guesses)", draft.childIds.length === 0);
+  ok("No proposedChildName at all: the in-scope child is still pre-selected", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
 }
 {
   const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "Ava" }, null);
-  ok("No child in scope at all never throws, leaves selection empty", draft.childIds.length === 0);
+  ok("No child in scope at all: never throws, selection stays empty (nothing to pre-select)", draft.childIds.length === 0);
 }
 
 // ============ Field passthrough ============
