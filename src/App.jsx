@@ -2676,8 +2676,22 @@ const ChestOpeningModal = ({ chestType, onClose, onRewardReceived }) => {
 };
 
 /* ============================== Main App ============================== */
-const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, isAdmin, deviceMode, onRequestParentUnlock }) => {
-  const [currentView, setCurrentView] = useState("home"); // home | parents | flashcards | today | game | loot
+const HomeworkGamesApp = ({
+  uid,
+  childId,
+  childName,
+  childEmoji,
+  isAdmin,
+  deviceMode,
+  onRequestParentUnlock,
+  initialView,
+  onSwitchChild,
+}) => {
+  // initialView lets a caller (see AuthShell.jsx's "Import from Photo / CSV"
+  // link on FamilyBoard) land this child directly on the Parents Page
+  // instead of Home — used only for that entry point; every other caller
+  // omits it and gets the existing default.
+  const [currentView, setCurrentView] = useState(initialView === "parents" ? "parents" : "home"); // home | parents | flashcards | today | game | loot
   const [selectedGame, setSelectedGame] = useState(null);
   const [points, setPoints] = useState(0);
   const [keys, setKeys] = useState(0);
@@ -3948,9 +3962,21 @@ const HomeworkGamesApp = ({ uid, childId, childName, childEmoji, isAdmin, device
     const grouped = groupByPattern(customPhonicsWords);
     const patterns = Object.keys(grouped).sort();
 
+    // Reached two ways: the normal Home -> "⚙️ Parents" click (back should
+    // return to this child's Home, existing behavior, unchanged), or
+    // directly from FamilyBoard's "Import from Photo / CSV" link (back
+    // should return to the Parent Page instead — landing back in this
+    // child's game Home would be a confusing dead end for a parent who
+    // never intended to open that child's game session).
+    const cameDirectlyForImport = initialView === "parents" && typeof onSwitchChild === "function";
+
     return (
       <div className="max-w-6xl mx-auto">
-        <BackButton onClick={() => setCurrentView("home")} label="Back to Home" className="mb-6" />
+        <BackButton
+          onClick={cameDirectlyForImport ? onSwitchChild : () => setCurrentView("home")}
+          label={cameDirectlyForImport ? "Back to Parent Page" : "Back to Home"}
+          className="mb-6"
+        />
 
         <h1 className="text-4xl font-extrabold text-gray-900 mb-6 text-center">Parents Page</h1>
 

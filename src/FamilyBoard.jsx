@@ -27,7 +27,7 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
  * WITHOUT merge (see App.jsx's debounced Firestore-sync effect) — if the
  * board wrote there too, App.jsx's next autosave would silently wipe it out.
  */
-const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }) => {
+const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk, onOpenChildImport }) => {
   const [profile, setProfile] = useState(null); // { children, familyEvents, choreTemplates, choreCompletions, chorePoints, migrated_familyEvents_v1 }
   const [childStats, setChildStats] = useState({}); // { [childId]: { homeworkPoints } } — homeworkPoints only; upcomingTests now live as canonical test/quiz items (see ParentOrganizer/OrganizerCalendar)
   const [loading, setLoading] = useState(true);
@@ -306,6 +306,14 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
                           <div className="text-white font-display text-xl">📚 {hw}</div>
                         </div>
                       </div>
+                      {onOpenChildImport && (
+                        <button
+                          onClick={() => onOpenChildImport(child)}
+                          className="mt-3 w-full text-xs font-bold text-purple-100 hover:text-white bg-white/10 hover:bg-white/20 rounded-full py-1.5 transition"
+                        >
+                          📷 Import from Photo / CSV
+                        </button>
+                      )}
                     </div>
                   );
                 })}

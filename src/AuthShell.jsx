@@ -723,6 +723,13 @@ const AuthShell = () => {
   const [emailLoading, setEmailLoading] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
 
+  // Which view a newly-selected child's App instance should open on.
+  // Normally "home" (every existing entry point). Set to "parents" only by
+  // FamilyBoard's "Import from Photo / CSV" link (handleOpenChildImport
+  // below) so that link lands directly on the Parents Page instead of the
+  // child's game Home.
+  const [childEntryView, setChildEntryView] = useState("home");
+
   // Read once at mount — this doesn't change during the session.
   const [isBoardRoute] = useState(
     () => new URLSearchParams(window.location.search).get("board") === "1"
@@ -833,10 +840,23 @@ const AuthShell = () => {
 
   // ── Phase 1.5: device-mode / child-lock handlers ──
   const handleSelectChild = (child) => {
+    setChildEntryView("home"); // every normal selection opens on Home, as before
     setSelectedChild(child);
     // Re-lock to whichever child is now selected — covers both the initial
     // auto-forward (already matches) and a genuine "switch child" pick.
     if (deviceMode === "child") applyLockedChildId(child.id);
+    setParentUnlockedView(null);
+  };
+
+  // FamilyBoard's "Import from Photo / CSV" link (see below). Deliberately
+  // does NOT call handleSelectChild / applyLockedChildId — this is pure
+  // navigation to an existing child's Parents Page, not a device-mode
+  // change, and must never re-lock a device to a different child as a
+  // side effect.
+  const handleOpenChildImport = (child) => {
+    setChildEntryView("parents");
+    setSelectedChild(child);
+    setShowCalendar(false);
     setParentUnlockedView(null);
   };
 
@@ -1027,6 +1047,7 @@ const AuthShell = () => {
           email={user.email}
           isAdmin={user.isAdmin}
           onBack={() => setShowCalendar(false)}
+          onOpenChildImport={handleOpenChildImport}
         />
       );
     }
@@ -1088,7 +1109,11 @@ const AuthShell = () => {
       childEmoji={selectedChild.emoji}
       isAdmin={!!user.isAdmin}
       deviceMode={deviceMode}
-      onSwitchChild={() => setSelectedChild(null)}
+      initialView={childEntryView}
+      onSwitchChild={() => {
+        setSelectedChild(null);
+        setChildEntryView("home");
+      }}
     />
   );
 };
