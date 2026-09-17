@@ -27,8 +27,10 @@ const TYPE_ENUM_LIST = FORM_TYPES.join(" | ");
 const SUBJECT_ENUM_LIST = SUBJECT_OPTIONS.join(" | ");
 
 const SYSTEM_PROMPT = `You are a homework/school-document parser for a family organizer app.
-Given a photo of a school document (teacher letter, weekly newsletter, homework sheet, permission slip, etc.),
-extract every distinct obligation (something a parent/student needs to know, do, or prepare for) into structured JSON.
+Given a photo of a school document (teacher letter, weekly newsletter, homework sheet, worksheet, permission slip, etc.),
+carefully read BOTH the printed/typed content AND any handwritten text (margin notes, circled words, teacher or parent
+handwriting) — extract every distinct obligation (something a parent/student needs to know, do, or prepare for) into
+structured JSON.
 
 Return ONLY valid JSON with this exact shape — no markdown, no explanation:
 {
@@ -50,9 +52,31 @@ Return ONLY valid JSON with this exact shape — no markdown, no explanation:
 Rules:
 - type must be one of: ${TYPE_ENUM_LIST}. If unsure, pick the closest match.
 - title is required and should be short and specific (e.g. "Friday Spelling Quiz", not "Quiz").
+- Handwritten annotations (margin notes, circled text, or handwriting added by a teacher, parent, or child) are
+  potentially authoritative scheduling information — read them as carefully as printed text, and extract actionable
+  obligations (dates, due dates, test/quiz notes, reminders) even when they appear only in handwriting and nowhere
+  in print. Treat handwritten and printed information as equally valid evidence: do not automatically give
+  handwriting precedence over printed information, or printed information precedence over handwriting. If
+  handwritten and printed scheduling information conflict (e.g. a handwritten date differs from a printed date for
+  what looks like the same obligation), do not silently pick one — note the conflict in the description field so the
+  parent can resolve it, and set extractionConfidence lower to reflect that uncertainty.
+- Distinguish the underlying document from an obligation an annotation communicates about it. A worksheet, practice
+  quiz, or completed/scored assignment (already filled in, graded, or marked "practice") is reference material, not
+  something to schedule — do not create a test/quiz/assignment obligation merely because the page looks like a
+  test/quiz/worksheet. Only create a scheduled obligation when the document actually announces something upcoming
+  (most often via a handwritten note, a letter, or explicit printed instructions). If a completed practice page also
+  carries a handwritten note about a real upcoming test/assignment, extract only the obligation the note describes —
+  do not also invent a separate obligation representing the completed practice page itself.
 - childName: only fill in if a specific child's name is visibly written on the document; otherwise null. Never guess.
-- date: only output a real calendar date in YYYY-MM-DD format if one is stated or clearly computable from the document; otherwise null. Never invent a date.
+- date: only output a real calendar date in YYYY-MM-DD format if one is stated or clearly computable from the
+  document (printed or handwritten); otherwise null. Never invent a date. If both a weekday name and a specific
+  day/month are written (e.g. "Tuesday Sept 22"), use the specific day/month, and choose the year so the date falls
+  on or after today's date (given below) rather than in the past — if the weekday name and the day/month seem to
+  conflict, trust the explicit day/month over the weekday name.
 - subject: must be exactly one of: ${SUBJECT_ENUM_LIST}. Base it strictly on the actual academic content of THIS document, not on assumptions or on what a typical worksheet is about. Examples: a page of sight words, phonics patterns, or reading passages/comprehension questions is "Language Arts - Reading/Comprehension"; a spelling word list is "Language Arts - Spelling"; only use "Math" when the content is actually arithmetic/numbers/math problems. If the obligation has no clear academic subject at all (e.g. a school event, permission slip, or reminder), use null — never default to "Math" or any other subject when you are unsure.
+- academicTopic / academicUnit: when the document names a specific unit, lesson, or skill (e.g. a lesson title, unit
+  number, or phonics pattern), capture it here even if the obligation itself was found in a handwritten note
+  elsewhere on the page.
 - preparationRequired: true only for test/quiz-like obligations that need studying; otherwise null.
 - description: a short plain-language summary of any instructions/details not captured by the other fields; otherwise null.
 - If the document contains no useful obligations, return { "obligations": [] }.
@@ -171,12 +195,19 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Anchors the model's date resolution (see the prompt's weekday/date
+    // reconciliation rule) — without a "today," a partial date like
+    // "Sept 22" (no year) has no way to resolve to the correct year.
+    const todayIso = new Date().toISOString().slice(0, 10);
     const content = [
       {
         type: "image",
         source: { type: "base64", media_type: mimeType, data: fileData },
       },
-      { type: "text", text: "Extract every obligation from this photo of a school document." },
+      {
+        type: "text",
+        text: `Today's date is ${todayIso}. Extract every obligation from this photo of a school document — check both the printed content and any handwritten notes.`,
+      },
     ];
 
     const message = await client.messages.create({
