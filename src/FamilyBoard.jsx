@@ -4,6 +4,7 @@ import { db } from "./Firebase.js";
 import { migrateLegacyFamilyEvents } from "./data/itemsRepository.js";
 import ParentOrganizer from "./organizer/ParentOrganizer.jsx";
 import OrganizerCalendar from "./organizer/OrganizerCalendar.jsx";
+import OrganizerDisplay from "./organizer/OrganizerDisplay.jsx";
 
 const uid4 = () => Math.random().toString(36).slice(2, 8);
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -26,7 +27,7 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
  * WITHOUT merge (see App.jsx's debounced Firestore-sync effect) — if the
  * board wrote there too, App.jsx's next autosave would silently wipe it out.
  */
-const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack }) => {
+const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }) => {
   const [profile, setProfile] = useState(null); // { children, familyEvents, choreTemplates, choreCompletions, chorePoints, migrated_familyEvents_v1 }
   const [childStats, setChildStats] = useState({}); // { [childId]: { homeworkPoints } } — homeworkPoints only; upcomingTests now live as canonical test/quiz items (see ParentOrganizer/OrganizerCalendar)
   const [loading, setLoading] = useState(true);
@@ -242,16 +243,29 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack }) => {
               ← Back
             </button>
           ) : kiosk ? (
-            // Kiosk mode (?board=1) has no signed-in "back" state to return to — this
-            // strips the board param and reloads, landing on the normal sign-in/chooser
-            // screen. Kept small and low-contrast so it doesn't read as an obvious button
-            // to a kid, but it's there when you need to get back in.
-            <a
-              href={window.location.pathname}
-              className="text-gray-600 hover:text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-full transition"
-            >
-              Home
-            </a>
+            // Kiosk mode has no signed-in "back" state to return to. When reached via
+            // the ?board=1 URL (onExitKiosk not provided), this strips the board param
+            // and reloads, landing on the normal sign-in/chooser screen — unchanged
+            // from before Phase 1.5. When reached via the local Organizer device-mode
+            // setting instead (onExitKiosk provided), it just clears that setting so
+            // the device falls back to Parent Mode, no URL/reload involved. Kept small
+            // and low-contrast so it doesn't read as an obvious button to a kid, but
+            // it's there when you need to get back in.
+            onExitKiosk ? (
+              <button
+                onClick={onExitKiosk}
+                className="text-gray-600 hover:text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-full transition"
+              >
+                Home
+              </button>
+            ) : (
+              <a
+                href={window.location.pathname}
+                className="text-gray-600 hover:text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-full transition"
+              >
+                Home
+              </a>
+            )
           ) : null}
         </div>
 
@@ -265,136 +279,154 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack }) => {
           <p className="text-gray-400 text-center py-8">No learners set up on this account yet.</p>
         )}
 
-        {/* ----------------------------- Points strip ----------------------------- */}
-        {children.length > 0 && (
-          <div className="flex gap-3 mb-6 flex-wrap">
-            {children.map((child) => {
-              const hw = childStats[child.id]?.homeworkPoints ?? 0;
-              const chore = chorePoints[child.id] || 0;
-              return (
-                <div key={child.id} className="flex-1 rounded-3xl p-4" style={{ minWidth: 160, background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-2xl">{child.emoji}</span>
-                    <div className="text-white font-display text-lg">{child.name}</div>
-                  </div>
-                  <div className="flex gap-4">
-                    <div>
-                      <div className="text-purple-300 text-xs uppercase font-bold">Chore pts</div>
-                      <div className="text-white font-display text-xl">🧹 {chore}</div>
+        {/* Parent Mode content: full Points strip + full-CRUD ParentOrganizer + chore-template
+            management. Kiosk/Organizer Mode renders the trimmed OrganizerDisplay instead — see
+            below — which never exposes create/edit/delete or chore-template controls (Phase 1.5). */}
+        {!kiosk && (
+          <>
+            {/* ----------------------------- Points strip ----------------------------- */}
+            {children.length > 0 && (
+              <div className="flex gap-3 mb-6 flex-wrap">
+                {children.map((child) => {
+                  const hw = childStats[child.id]?.homeworkPoints ?? 0;
+                  const chore = chorePoints[child.id] || 0;
+                  return (
+                    <div key={child.id} className="flex-1 rounded-3xl p-4" style={{ minWidth: 160, background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-2xl">{child.emoji}</span>
+                        <div className="text-white font-display text-lg">{child.name}</div>
+                      </div>
+                      <div className="flex gap-4">
+                        <div>
+                          <div className="text-purple-300 text-xs uppercase font-bold">Chore pts</div>
+                          <div className="text-white font-display text-xl">🧹 {chore}</div>
+                        </div>
+                        <div>
+                          <div className="text-purple-300 text-xs uppercase font-bold">Homework pts</div>
+                          <div className="text-white font-display text-xl">📚 {hw}</div>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-purple-300 text-xs uppercase font-bold">Homework pts</div>
-                      <div className="text-white font-display text-xl">📚 {hw}</div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                  );
+                })}
+              </div>
+            )}
 
-        {/* ----------------------------- Parent Organizer (Today / Needs Attention / Upcoming) ----------------------------- */}
-        {children.length > 0 && (
-          <div className="rounded-3xl p-5 mb-8" style={{ background: "#2a2a2c" }}>
-            <ParentOrganizer
-              ctx={ctx}
-              children={children}
-              choreTemplates={choreTemplates}
-              choreCompletions={choreCompletions}
-              onToggleChore={toggleChoreDone}
-            />
-          </div>
-        )}
+            {/* ----------------------------- Parent Organizer (Today / Needs Attention / Upcoming) ----------------------------- */}
+            {children.length > 0 && (
+              <div className="rounded-3xl p-5 mb-8" style={{ background: "#2a2a2c" }}>
+                <ParentOrganizer
+                  ctx={ctx}
+                  children={children}
+                  choreTemplates={choreTemplates}
+                  choreCompletions={choreCompletions}
+                  onToggleChore={toggleChoreDone}
+                />
+              </div>
+            )}
 
-        {/* ----------------------------- Manage chores (per child — unchanged legacy template model) ----------------------------- */}
-        {children.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-xl font-display text-white mb-3">🧹 Manage Chores</h2>
-            <div className="flex gap-3 flex-wrap items-start">
-              {children.map((child) => {
-                const list = choreTemplates[child.id] || [];
-                return (
-                  <div key={child.id} className="flex-1 rounded-3xl p-5" style={{ minWidth: 260, background: "#2a2a2c" }}>
-                    <div className="flex items-center gap-3 mb-3">
-                      <span className="text-2xl">{child.emoji}</span>
-                      <div className="text-lg font-display text-white">{child.name}</div>
-                    </div>
+            {/* ----------------------------- Manage chores (per child — unchanged legacy template model) ----------------------------- */}
+            {children.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-xl font-display text-white mb-3">🧹 Manage Chores</h2>
+                <div className="flex gap-3 flex-wrap items-start">
+                  {children.map((child) => {
+                    const list = choreTemplates[child.id] || [];
+                    return (
+                      <div key={child.id} className="flex-1 rounded-3xl p-5" style={{ minWidth: 260, background: "#2a2a2c" }}>
+                        <div className="flex items-center gap-3 mb-3">
+                          <span className="text-2xl">{child.emoji}</span>
+                          <div className="text-lg font-display text-white">{child.name}</div>
+                        </div>
 
-                    {list.length > 0 && (
-                      <div className="space-y-2 mb-3">
-                        {list.map((chore) => (
-                          <div key={chore.id} className="w-full flex items-center gap-3 p-2.5 rounded-2xl" style={{ background: "rgba(255,255,255,0.05)" }}>
-                            <div className="flex-1 text-white text-sm">{chore.text}</div>
-                            <span className="text-purple-300 text-xs font-bold">+{chore.points ?? 0}</span>
+                        {list.length > 0 && (
+                          <div className="space-y-2 mb-3">
+                            {list.map((chore) => (
+                              <div key={chore.id} className="w-full flex items-center gap-3 p-2.5 rounded-2xl" style={{ background: "rgba(255,255,255,0.05)" }}>
+                                <div className="flex-1 text-white text-sm">{chore.text}</div>
+                                <span className="text-purple-300 text-xs font-bold">+{chore.points ?? 0}</span>
+                                <button
+                                  onClick={() => removeChoreTemplate(child.id, chore.id)}
+                                  className="text-gray-400 hover:text-red-300 text-lg px-2"
+                                  aria-label="Remove chore"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {addChoreFor === child.id ? (
+                          <div className="flex gap-2 flex-wrap">
+                            <input
+                              type="text"
+                              value={choreText}
+                              onChange={(e) => setChoreText(e.target.value)}
+                              onKeyDown={(e) => e.key === "Enter" && addChoreTemplate(child.id)}
+                              placeholder="e.g. Empty upstairs trash"
+                              autoFocus
+                              className="flex-1 rounded-2xl px-4 py-2 font-semibold focus:outline-none"
+                              style={{ minWidth: 160, background: "#1C1C1E", color: "white", border: "2px solid rgba(255,255,255,0.15)" }}
+                            />
+                            <input
+                              type="number"
+                              min="0"
+                              value={chorePointsInput}
+                              onChange={(e) => setChorePointsInput(e.target.value)}
+                              className="w-20 rounded-2xl px-3 py-2 font-semibold focus:outline-none"
+                              style={{ background: "#1C1C1E", color: "white", border: "2px solid rgba(255,255,255,0.15)" }}
+                            />
                             <button
-                              onClick={() => removeChoreTemplate(child.id, chore.id)}
-                              className="text-gray-400 hover:text-red-300 text-lg px-2"
-                              aria-label="Remove chore"
+                              onClick={() => addChoreTemplate(child.id)}
+                              className="px-4 py-2 rounded-2xl font-extrabold"
+                              style={{ background: "#A8FF3E", color: "#1C1C1E" }}
                             >
-                              ×
+                              Add
+                            </button>
+                            <button
+                              onClick={() => { setAddChoreFor(null); setChoreText(""); }}
+                              className="px-4 py-2 rounded-2xl font-extrabold text-gray-300 border border-gray-600"
+                            >
+                              Cancel
                             </button>
                           </div>
-                        ))}
+                        ) : (
+                          <button
+                            onClick={() => setAddChoreFor(child.id)}
+                            className="w-full py-2 rounded-2xl font-bold text-gray-400 hover:text-white border-2 border-dashed border-gray-600 transition text-sm"
+                          >
+                            + Add a chore
+                          </button>
+                        )}
                       </div>
-                    )}
-
-                    {addChoreFor === child.id ? (
-                      <div className="flex gap-2 flex-wrap">
-                        <input
-                          type="text"
-                          value={choreText}
-                          onChange={(e) => setChoreText(e.target.value)}
-                          onKeyDown={(e) => e.key === "Enter" && addChoreTemplate(child.id)}
-                          placeholder="e.g. Empty upstairs trash"
-                          autoFocus
-                          className="flex-1 rounded-2xl px-4 py-2 font-semibold focus:outline-none"
-                          style={{ minWidth: 160, background: "#1C1C1E", color: "white", border: "2px solid rgba(255,255,255,0.15)" }}
-                        />
-                        <input
-                          type="number"
-                          min="0"
-                          value={chorePointsInput}
-                          onChange={(e) => setChorePointsInput(e.target.value)}
-                          className="w-20 rounded-2xl px-3 py-2 font-semibold focus:outline-none"
-                          style={{ background: "#1C1C1E", color: "white", border: "2px solid rgba(255,255,255,0.15)" }}
-                        />
-                        <button
-                          onClick={() => addChoreTemplate(child.id)}
-                          className="px-4 py-2 rounded-2xl font-extrabold"
-                          style={{ background: "#A8FF3E", color: "#1C1C1E" }}
-                        >
-                          Add
-                        </button>
-                        <button
-                          onClick={() => { setAddChoreFor(null); setChoreText(""); }}
-                          className="px-4 py-2 rounded-2xl font-extrabold text-gray-300 border border-gray-600"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setAddChoreFor(child.id)}
-                        className="w-full py-2 rounded-2xl font-bold text-gray-400 hover:text-white border-2 border-dashed border-gray-600 transition text-sm"
-                      >
-                        + Add a chore
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {/* ----------------------------- Calendar strip ----------------------------- */}
-      {/* Deliberately full-width, outside the max-w-6xl column above, so the whole week is visible without cramming. */}
-      {children.length > 0 && (
+      {!kiosk && children.length > 0 && (
+        /* Deliberately full-width, outside the max-w-6xl column above, so the whole week is visible without cramming. */
         <div className="w-full mt-4">
           <h2 className="text-xl font-display text-white mb-3">📅 Coming Up</h2>
           <OrganizerCalendar ctx={ctx} children={children} choreTemplates={choreTemplates} choreCompletions={choreCompletions} />
         </div>
+      )}
+
+      {kiosk && (
+        <OrganizerDisplay
+          children={children}
+          choreTemplates={choreTemplates}
+          choreCompletions={choreCompletions}
+          chorePoints={chorePoints}
+          childStats={childStats}
+          ctx={ctx}
+          onToggleChore={toggleChoreDone}
+        />
       )}
     </div>
   );

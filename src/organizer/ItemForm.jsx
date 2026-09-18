@@ -9,6 +9,8 @@ import { FORM_TYPES, ITEM_TYPE_META, ACADEMIC_TYPES, SUBJECT_OPTIONS } from "../
 const showsField = (type, field) => {
   switch (field) {
     case "subject":
+    case "academicTopic":
+    case "academicUnit":
       return ACADEMIC_TYPES.includes(type);
     case "dueDate":
       return ["assignment", "project", "study_task"].includes(type);
@@ -19,6 +21,10 @@ const showsField = (type, field) => {
       return ["school_event", "family_event"].includes(type);
     case "parentItemId":
       return type === "study_task";
+    // "Assessment-like" per the target domain model — tests/quizzes are
+    // where a due-to-study signal is actually meaningful.
+    case "preparationRequired":
+      return type === "test" || type === "quiz";
     default:
       return true;
   }
@@ -31,6 +37,12 @@ const showsField = (type, field) => {
  *
  * onSubmit(payload, existingItem) is awaited — caller decides create vs.
  * update via itemsRepository.
+ *
+ * submitLabel — optional override for the submit button's text (used while
+ * not saving/disabled). Defaults to the existing "Save changes"/"Add"
+ * behavior when omitted. Purely presentational — this form has no idea why
+ * a caller wants different wording (e.g. reviewing an ingestion candidate),
+ * it just displays whatever string it's given.
  */
 const ItemForm = ({
   children = [],
@@ -39,11 +51,15 @@ const ItemForm = ({
   existingItem = null,
   onSubmit,
   onCancel,
+  submitLabel = null,
 }) => {
   const [type, setType] = useState(existingItem?.type || initialType);
   const [title, setTitle] = useState(existingItem?.title || "");
   const [childIds, setChildIds] = useState(existingItem?.childIds || (children[0] ? [children[0].id] : []));
   const [subject, setSubject] = useState(existingItem?.subject || SUBJECT_OPTIONS[0]);
+  const [academicTopic, setAcademicTopic] = useState(existingItem?.academicTopic || "");
+  const [academicUnit, setAcademicUnit] = useState(existingItem?.academicUnit || "");
+  const [preparationRequired, setPreparationRequired] = useState(!!existingItem?.preparationRequired);
   const [startDate, setStartDate] = useState(existingItem?.startDate || "");
   const [startTime, setStartTime] = useState(existingItem?.startTime || "");
   const [dueDate, setDueDate] = useState(existingItem?.dueDate || "");
@@ -70,6 +86,9 @@ const ItemForm = ({
       title: title.trim(),
       childIds,
       subject: showsField(type, "subject") ? subject : null,
+      academicTopic: showsField(type, "academicTopic") && academicTopic.trim() ? academicTopic.trim() : null,
+      academicUnit: showsField(type, "academicUnit") && academicUnit.trim() ? academicUnit.trim() : null,
+      preparationRequired: showsField(type, "preparationRequired") ? preparationRequired : null,
       startDate: showsField(type, "startDate") && startDate ? startDate : null,
       startTime: showsField(type, "startDate") && startDate && startTime ? startTime : null,
       dueDate: showsField(type, "dueDate") && dueDate ? dueDate : null,
@@ -150,6 +169,29 @@ const ItemForm = ({
         </select>
       )}
 
+      {(showsField(type, "academicTopic") || showsField(type, "academicUnit")) && (
+        <div className="flex gap-2">
+          {showsField(type, "academicTopic") && (
+            <input
+              type="text"
+              value={academicTopic}
+              onChange={(e) => setAcademicTopic(e.target.value)}
+              placeholder="Topic (optional)"
+              className="flex-1 px-4 py-2 border border-gray-200 rounded-2xl"
+            />
+          )}
+          {showsField(type, "academicUnit") && (
+            <input
+              type="text"
+              value={academicUnit}
+              onChange={(e) => setAcademicUnit(e.target.value)}
+              placeholder="Unit (optional)"
+              className="flex-1 px-4 py-2 border border-gray-200 rounded-2xl"
+            />
+          )}
+        </div>
+      )}
+
       {showsField(type, "startDate") && (
         <div>
           <label className="text-xs font-bold text-gray-500 uppercase">
@@ -162,6 +204,13 @@ const ItemForm = ({
             )}
           </div>
         </div>
+      )}
+
+      {showsField(type, "preparationRequired") && (
+        <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+          <input type="checkbox" checked={preparationRequired} onChange={(e) => setPreparationRequired(e.target.checked)} />
+          Studying/preparation required
+        </label>
       )}
 
       {showsField(type, "endDate") && (
@@ -222,7 +271,7 @@ const ItemForm = ({
           disabled={!title.trim() || childIds.length === 0 || saving}
           className="flex-1 bg-purple-700 hover:bg-purple-800 disabled:opacity-50 text-white font-extrabold py-2 rounded-2xl"
         >
-          {saving ? "Saving..." : existingItem ? "Save changes" : "Add"}
+          {saving ? "Saving..." : submitLabel || (existingItem ? "Save changes" : "Add")}
         </button>
         {onCancel && (
           <button type="button" onClick={onCancel} className="px-4 py-2 rounded-2xl font-extrabold text-gray-500 border border-gray-300">

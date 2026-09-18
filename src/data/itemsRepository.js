@@ -78,6 +78,22 @@ const EMPTY_DEFAULTS = {
   parentItemId: null,
   studyMaterialIds: [],
   source: { type: "manual", sourceId: null },
+  // Domain-hardening additions — all optional, all default to "not set"
+  // (null, matching the rest of this object's convention) rather than a
+  // falsy-but-meaningful value, so absence is always distinguishable from an
+  // explicit value. Existing documents predating these fields simply lack
+  // these keys; every reader treats undefined the same as null.
+  academicTopic: null,
+  academicUnit: null,
+  preparationRequired: null,
+  location: null,
+  priority: null,
+  // SourceRecord provenance foundation — optional reference to a
+  // users/{uid}/sourceRecords/{id} document describing how this item was
+  // captured. item.source stays as-is (kept for backward compatibility);
+  // sourceRecordId is purely additive and defaults to null/absent for every
+  // pre-existing item.
+  sourceRecordId: null,
 };
 
 /**

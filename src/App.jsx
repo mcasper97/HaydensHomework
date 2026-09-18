@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "./Firebase.js";
 import { subscribeItems, createItem, deleteItem } from "./data/itemsRepository.js";
+import { createSourceRecord, updateSourceRecord } from "./data/sourceRecordsRepository.js";
+import { createIngestionCandidate } from "./data/ingestionCandidatesRepository.js";
 import ChildTodayView from "./organizer/ChildTodayView.jsx";
+import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
 import {
   ArrowLeft,
   Award,
@@ -83,6 +86,70 @@ async function handleAiDocumentUpload(file) {
     const json = await res.json();
     if (!json.ok) return { ok: false, error: json.error || "Parsing failed" };
     return { ok: true, data: json.data };
+  } catch (err) {
+    return { ok: false, error: err.message || "Something went wrong." };
+  }
+}
+
+/* ------------------------- Photo Ingestion — image capture ------------------------- */
+// Server (api/extract-obligations.js) caps the base64 payload at 3.5M chars
+// (~2.6MB raw) to stay comfortably under Vercel's ~4.5MB serverless request
+// body limit. A typical unmodified phone photo is routinely well over that,
+// so every capture is downscaled/recompressed client-side before upload —
+// this is required, not an optional optimization (see the ingestion
+// planning report's file-transport tradeoff).
+const INGESTION_MAX_DIMENSION = 1600;
+const INGESTION_JPEG_QUALITY = 0.82;
+const INGESTION_MAX_BASE64_LENGTH = 3_500_000;
+
+async function compressImageForUpload(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, INGESTION_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+  const targetWidth = Math.max(1, Math.round(bitmap.width * scale));
+  const targetHeight = Math.max(1, Math.round(bitmap.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+
+  const blob = await new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not process this image."))), "image/jpeg", INGESTION_JPEG_QUALITY)
+  );
+
+  const arrayBuffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  const base64 = btoa(binary);
+
+  return { base64, mimeType: "image/jpeg" };
+}
+
+/**
+ * Calls the extraction endpoint only — never writes a SourceRecord,
+ * IngestionCandidate, or item itself. Requires a real, signed-in Firebase
+ * Auth session (guest/local-demo mode has no real identity to authenticate
+ * with the server), same restriction as the existing parse-homework path.
+ */
+async function extractObligationsFromImage(base64, mimeType, fileName) {
+  if (!auth?.currentUser) {
+    return { ok: false, error: "Photo import requires a signed-in account — it isn't available in guest/demo mode." };
+  }
+  if (base64.length > INGESTION_MAX_BASE64_LENGTH) {
+    return { ok: false, error: "That photo is still too large after compression — please try a different photo." };
+  }
+
+  try {
+    const idToken = await auth.currentUser.getIdToken();
+    const res = await fetch("/api/extract-obligations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ fileData: base64, mimeType, fileName }),
+    });
+    const json = await res.json();
+    if (!json.ok) return { ok: false, error: json.error || "Couldn't read this photo." };
+    return { ok: true, obligations: json.obligations };
   } catch (err) {
     return { ok: false, error: err.message || "Something went wrong." };
   }
@@ -2609,8 +2676,22 @@ const ChestOpeningModal = ({ chestType, onClose, onRewardReceived }) => {
 };
 
 /* ============================== Main App ============================== */
-const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
-  const [currentView, setCurrentView] = useState("home"); // home | parents | flashcards | today | game | loot
+const HomeworkGamesApp = ({
+  uid,
+  childId,
+  childName,
+  childEmoji,
+  isAdmin,
+  deviceMode,
+  onRequestParentUnlock,
+  initialView,
+  onSwitchChild,
+}) => {
+  // initialView lets a caller (see AuthShell.jsx's "Import from Photo / CSV"
+  // link on FamilyBoard) land this child directly on the Parents Page
+  // instead of Home — used only for that entry point; every other caller
+  // omits it and gets the existing default.
+  const [currentView, setCurrentView] = useState(initialView === "parents" ? "parents" : "home"); // home | parents | flashcards | today | game | loot
   const [selectedGame, setSelectedGame] = useState(null);
   const [points, setPoints] = useState(0);
   const [keys, setKeys] = useState(0);
@@ -2660,6 +2741,10 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
   const [todayCardIndex, setTodayCardIndex] = useState(0);
 
   const [lastImportSummary, setLastImportSummary] = useState(null);
+
+  /* ----------------------------- Photo ingestion (vertical slice) ----------------------------- */
+  const [ingestionBusy, setIngestionBusy] = useState(false);
+  const [ingestionCandidates, setIngestionCandidates] = useState([]);
 
   /* ----------------------------- Canonical items (Academic Organizer) ----------------------------- */
   // ctx/items feed the Tests & Quizzes panel below, CSV import, and the "My
@@ -3235,6 +3320,20 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
     setCustomPhonicsWords(nextPhonics);
 
     if (newTestPayloads.length > 0) {
+      let sourceRecordId = null;
+      try {
+        const record = await createSourceRecord(ctx, {
+          sourceType: "csv_import",
+          title: file.name,
+          mimeType: file.type || "text/csv",
+          createdByUid: ctx.uid,
+        });
+        sourceRecordId = record?.id ?? null;
+      } catch (err) {
+        // Provenance is best-effort — imported items must still be created
+        // even if the shared SourceRecord write fails for any reason.
+        console.error("importStructuredCSV: createSourceRecord failed", err);
+      }
       await Promise.all(
         newTestPayloads.map((t) =>
           createItem(ctx, {
@@ -3244,6 +3343,7 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
             subject: t.subject,
             startDate: t.date,
             source: { type: "csv_import", sourceId: null },
+            ...(sourceRecordId ? { sourceRecordId } : {}),
           })
         )
       );
@@ -3268,6 +3368,84 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
       `  Unknown or invalid rows: ${summary.skipped.unknownType}`;
 
     return { ok: true, message, summary };
+  };
+
+  /* ------------------------- Photo ingestion: capture -> extract -> candidates -------------------------
+   * SourceRecord is created at capture time, before extraction, and walks a
+   * processingStatus lifecycle (captured -> processing -> extracted |
+   * no_candidates | failed) so a failed or empty capture still leaves
+   * provenance/diagnostic history — it is not cleaned up or hidden. An
+   * IngestionCandidate is only ever created on a successful "extracted"
+   * result; failed/empty extractions produce zero candidates.
+   */
+  const handleImageIngestionUpload = async (file) => {
+    if (!file || ingestionBusy) return;
+    setIngestionBusy(true);
+
+    let sourceRecord = null;
+    try {
+      sourceRecord = await createSourceRecord(ctx, {
+        sourceType: "image_capture",
+        title: file.name,
+        mimeType: file.type || "image/jpeg",
+        processingStatus: "captured",
+        createdByUid: ctx.uid,
+      });
+    } catch (err) {
+      alert(err?.message || "Couldn't start photo import — please try again.");
+      setIngestionBusy(false);
+      return;
+    }
+
+    try {
+      await updateSourceRecord(ctx, sourceRecord.id, { processingStatus: "processing" });
+
+      const { base64, mimeType } = await compressImageForUpload(file);
+      const result = await extractObligationsFromImage(base64, mimeType, file.name);
+
+      if (!result.ok) {
+        await updateSourceRecord(ctx, sourceRecord.id, { processingStatus: "failed" });
+        alert(result.error || "Couldn't read this photo. Please try again.");
+        return;
+      }
+
+      if (!result.obligations || result.obligations.length === 0) {
+        await updateSourceRecord(ctx, sourceRecord.id, { processingStatus: "no_candidates" });
+        alert("No homework details were found in that photo.");
+        return;
+      }
+
+      await updateSourceRecord(ctx, sourceRecord.id, { processingStatus: "extracted" });
+
+      const candidates = await Promise.all(
+        result.obligations.map((o) =>
+          createIngestionCandidate(ctx, {
+            sourceRecordId: sourceRecord.id,
+            proposedType: o.type,
+            title: o.title,
+            proposedChildName: o.childName,
+            date: o.date,
+            subject: o.subject,
+            academicTopic: o.academicTopic,
+            academicUnit: o.academicUnit,
+            preparationRequired: o.preparationRequired,
+            description: o.description,
+            extractionConfidence: o.extractionConfidence,
+            reviewStatus: "pending",
+          })
+        )
+      );
+      setIngestionCandidates(candidates);
+    } catch (err) {
+      try {
+        await updateSourceRecord(ctx, sourceRecord.id, { processingStatus: "failed" });
+      } catch {
+        // best-effort — the user-facing error below still fires either way
+      }
+      alert(err?.message || "Something went wrong processing this photo.");
+    } finally {
+      setIngestionBusy(false);
+    }
   };
 
   /* ------------------------- Parents: add items ------------------------- */
@@ -3784,9 +3962,21 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
     const grouped = groupByPattern(customPhonicsWords);
     const patterns = Object.keys(grouped).sort();
 
+    // Reached two ways: the normal Home -> "⚙️ Parents" click (back should
+    // return to this child's Home, existing behavior, unchanged), or
+    // directly from FamilyBoard's "Import from Photo / CSV" link (back
+    // should return to the Parent Page instead — landing back in this
+    // child's game Home would be a confusing dead end for a parent who
+    // never intended to open that child's game session).
+    const cameDirectlyForImport = initialView === "parents" && typeof onSwitchChild === "function";
+
     return (
       <div className="max-w-6xl mx-auto">
-        <BackButton onClick={() => setCurrentView("home")} label="Back to Home" className="mb-6" />
+        <BackButton
+          onClick={cameDirectlyForImport ? onSwitchChild : () => setCurrentView("home")}
+          label={cameDirectlyForImport ? "Back to Parent Page" : "Back to Home"}
+          className="mb-6"
+        />
 
         <h1 className="text-4xl font-extrabold text-gray-900 mb-6 text-center">Parents Page</h1>
 
@@ -4189,72 +4379,51 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
             </div>
           </div>
 
-          {/* Tests */}
+          {/* Photo Ingestion — vertical slice: a single image capture (gallery or
+              camera, same input) is downscaled client-side, sent to
+              api/extract-obligations.js, and any obligations found become
+              pending IngestionCandidates for this child to review below.
+              Nothing here creates a canonical item without an explicit
+              parent approval on each candidate. */}
           <div className="bg-white rounded-3xl shadow-md p-6 border border-gray-200">
-            <h2 className="text-2xl font-extrabold text-gray-900 mb-4 flex items-center gap-2">
-              <Calendar size={22} className="text-purple-800" />
-              Tests and Quizzes
-            </h2>
+            <h2 className="text-2xl font-extrabold text-gray-900 mb-2">Import from a Photo</h2>
+            <p className="text-gray-600 mb-4">
+              Snap or upload a photo of a homework sheet or teacher note — we'll pull out tests, assignments, and
+              events for you to review.
+            </p>
 
-            <div className="space-y-2 mb-4">
-              <input
-                type="text"
-                value={newTestName}
-                onChange={(e) => setNewTestName(e.target.value)}
-                placeholder="Test / Quiz name"
-                className="w-full px-4 py-2 border border-gray-200 rounded-2xl"
-              />
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              capture="environment"
+              disabled={ingestionBusy}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                await handleImageIngestionUpload(file);
+              }}
+              className="w-full px-4 py-3 border border-gray-200 rounded-2xl bg-white disabled:opacity-50"
+            />
 
-              <select
-                value={newTestSubject}
-                onChange={(e) => setNewTestSubject(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-200 rounded-2xl"
-              >
-                <option value="Math">Math</option>
-                <option value="Language Arts - Spelling">Language Arts - Spelling</option>
-                <option value="Language Arts - Reading/Comprehension">Language Arts - Reading/Comprehension</option>
-                <option value="Science">Science</option>
-                <option value="Social Studies">Social Studies</option>
-              </select>
-
-              <input
-                type="date"
-                value={newTestDate}
-                onChange={(e) => setNewTestDate(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-200 rounded-2xl"
-              />
-
-              <button onClick={addTest} className="w-full bg-purple-700 hover:bg-purple-800 text-white font-extrabold py-2 rounded-2xl">
-                Add Test/Quiz
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {items
-                .filter((it) => it.type === "test" || it.type === "quiz")
-                .slice()
-                .sort((a, b) => (a.startDate || "").localeCompare(b.startDate || ""))
-                .map((test) => (
-                  <div key={test.id} className="bg-gray-50 border border-gray-200 rounded-2xl p-3 relative">
-                    <button
-                      onClick={() => deleteTest(test.id)}
-                      className="absolute top-2 right-2 text-gray-400 hover:text-gray-900"
-                      aria-label="delete"
-                    >
-                      <X size={16} />
-                    </button>
-                    <p className="font-extrabold text-gray-900">{test.title}</p>
-                    <p className="text-sm text-gray-600">{test.subject}</p>
-                    <p className="text-sm text-purple-800 font-semibold">
-                      {test.startDate
-                        ? new Date(test.startDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
-                        : ""}
-                    </p>
-                  </div>
-                ))}
-            </div>
+            {ingestionBusy && <p className="mt-3 text-sm text-gray-600 font-semibold">Reading your photo…</p>}
           </div>
+
+          {/* The legacy Test/Quiz add/delete mini-form that used to live here has been
+              removed (Phase 1.5): ItemForm, reached from Parent Mode, is now the one
+              canonical way to create/edit/delete academic items — see
+              organizer/ParentOrganizer.jsx. This page itself is also no longer reachable
+              from a locked Child Mode device (see the deviceMode gating in renderHome). */}
         </div>
+
+        {ingestionCandidates.length > 0 && (
+          <CandidateReviewModal
+            ctx={ctx}
+            candidates={ingestionCandidates}
+            child={childId ? { id: childId, name: childName, emoji: childEmoji } : null}
+            onClose={() => setIngestionCandidates([])}
+          />
+        )}
       </div>
     );
   };
@@ -4292,12 +4461,25 @@ const HomeworkGamesApp = ({ uid, childId, isAdmin }) => {
           <p className="text-gray-700 font-semibold mt-1">A simple routine that turns practice into progress.</p>
         </div>
 
-        <button
-          onClick={() => setCurrentView("parents")}
-          className="text-sm text-purple-900 hover:text-purple-950 font-extrabold flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-200"
-        >
-          <Settings size={16} /> Parents
-        </button>
+        {/* Phase 1.5: a device locked to Child Mode must not be able to reach the
+            Parents Page (CSV import, weekly-game settings, word lists) without going
+            through Parent Unlock first — see AuthShell.jsx. Any other context
+            (deviceMode undefined/"parent"/"organizer") keeps today's behavior. */}
+        {deviceMode === "child" ? (
+          <button
+            onClick={() => onRequestParentUnlock?.()}
+            className="text-sm text-purple-900 hover:text-purple-950 font-extrabold flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-200"
+          >
+            🔓 Parent Unlock
+          </button>
+        ) : (
+          <button
+            onClick={() => setCurrentView("parents")}
+            className="text-sm text-purple-900 hover:text-purple-950 font-extrabold flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-200"
+          >
+            <Settings size={16} /> Parents
+          </button>
+        )}
       </div>
 
       <div className="mb-6 flex gap-3 flex-wrap items-center">

@@ -1,0 +1,176 @@
+/* ============================== IngestionCandidate Repository ==============================
+ * Proposed-but-not-yet-real structured data extracted from a SourceRecord
+ * capture (see sourceRecordsRepository.js), awaiting explicit parent review
+ * before it may become a canonical item (see itemsRepository.js). This
+ * module never writes canonical items itself — callers create the item only
+ * after an explicit approval, per the ingestion vertical-slice plan.
+ *
+ * Lives at users/{uid}/ingestionCandidates/{candidateId} in Firestore —
+ * covered by the existing users/{uid}/{document=**} rule, no rules change
+ * needed. Mirrors itemsRepository.js / sourceRecordsRepository.js's exact
+ * ctx = { uid, isAdmin } branching, guest localStorage fallback, and
+ * listener-notification pattern.
+ *
+ * reviewStatus lifecycle (see the vertical-slice plan for the full
+ * rationale):
+ *   "pending"   — awaiting parent review (initial state on creation)
+ *   "rejected"  — parent declined; no item created; kept for audit history
+ *   "approved"  — parent approved; item creation about to be/being attempted
+ *   "committed" — canonical item was created successfully
+ *
+ * Approval and commit are deliberately two separate states/writes: on
+ * approval the candidate is marked "approved" BEFORE createItem() is
+ * called, and only flipped to "committed" after createItem() succeeds. If
+ * createItem() fails, the candidate is left at "approved" (not reverted to
+ * "pending") so a retry can simply re-attempt createItem() without asking
+ * the parent to re-decide.
+ */
+import { collection, doc, addDoc, updateDoc, onSnapshot, getDoc, getDocs, serverTimestamp } from "firebase/firestore";
+import { db } from "../Firebase.js";
+
+const GUEST_CANDIDATES_KEY = "crestly_admin_ingestion_candidates";
+
+function readGuestCandidates() {
+  try {
+    const raw = localStorage.getItem(GUEST_CANDIDATES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeGuestCandidates(candidates) {
+  try {
+    localStorage.setItem(GUEST_CANDIDATES_KEY, JSON.stringify(candidates));
+  } catch {
+    // ignore — same best-effort behavior as the rest of the guest/local path
+  }
+}
+
+// Guest storage has no live Firestore-style listener, so subscribers are
+// notified manually whenever a guest write happens (create/update).
+const guestListeners = new Set();
+function notifyGuestListeners() {
+  const candidates = readGuestCandidates();
+  guestListeners.forEach((cb) => cb(candidates));
+}
+
+let guestIdSeq = 0;
+function genGuestId() {
+  guestIdSeq += 1;
+  return `local-cand-${Date.now().toString(36)}-${guestIdSeq}`;
+}
+
+function candidatesCollection(uid) {
+  return collection(db, "users", uid, "ingestionCandidates");
+}
+
+const EMPTY_DEFAULTS = {
+  sourceRecordId: null,
+  proposedType: null,
+  title: null,
+  proposedChildName: null,
+  date: null,
+  subject: null,
+  academicTopic: null,
+  academicUnit: null,
+  preparationRequired: null,
+  description: null,
+  extractionConfidence: null,
+  reviewStatus: "pending",
+};
+
+/**
+ * subscribeIngestionCandidates(ctx, filter, onChange) -> unsubscribe
+ * filter.sourceRecordId (optional) — when given, only candidates from that
+ * capture are delivered (used by the review UI to show only the candidates
+ * from the photo just uploaded).
+ */
+export function subscribeIngestionCandidates(ctx, filter, onChange) {
+  const applyFilter = (candidates) => {
+    if (!filter?.sourceRecordId) return candidates;
+    return candidates.filter((c) => c.sourceRecordId === filter.sourceRecordId);
+  };
+
+  if (ctx?.isAdmin) {
+    const listener = (candidates) => onChange(applyFilter(candidates));
+    guestListeners.add(listener);
+    listener(readGuestCandidates());
+    return () => guestListeners.delete(listener);
+  }
+
+  if (!db || !ctx?.uid) {
+    onChange([]);
+    return () => {};
+  }
+
+  const unsub = onSnapshot(
+    candidatesCollection(ctx.uid),
+    (snap) => {
+      const candidates = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      onChange(applyFilter(candidates));
+    },
+    (err) => {
+      console.error("ingestionCandidatesRepository: subscribeIngestionCandidates failed", err);
+      onChange([]);
+    }
+  );
+  return unsub;
+}
+
+export async function listIngestionCandidates(ctx, filter) {
+  let candidates;
+  if (ctx?.isAdmin) {
+    candidates = readGuestCandidates();
+  } else if (!db || !ctx?.uid) {
+    candidates = [];
+  } else {
+    const snap = await getDocs(candidatesCollection(ctx.uid));
+    candidates = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }
+  if (!filter?.sourceRecordId) return candidates;
+  return candidates.filter((c) => c.sourceRecordId === filter.sourceRecordId);
+}
+
+export async function getIngestionCandidate(ctx, candidateId) {
+  if (!candidateId) return null;
+  if (ctx?.isAdmin) {
+    return readGuestCandidates().find((c) => c.id === candidateId) || null;
+  }
+  if (!db || !ctx?.uid) return null;
+  const snap = await getDoc(doc(db, "users", ctx.uid, "ingestionCandidates", candidateId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function createIngestionCandidate(ctx, data) {
+  const payload = { ...EMPTY_DEFAULTS, ...data };
+
+  if (ctx?.isAdmin) {
+    const now = new Date().toISOString();
+    const candidate = { id: genGuestId(), ...payload, createdAt: now };
+    const candidates = readGuestCandidates();
+    candidates.push(candidate);
+    writeGuestCandidates(candidates);
+    notifyGuestListeners();
+    return candidate;
+  }
+
+  if (!db || !ctx?.uid) throw new Error("No signed-in account to save to.");
+  const ref = await addDoc(candidatesCollection(ctx.uid), {
+    ...payload,
+    createdAt: serverTimestamp(),
+  });
+  return { id: ref.id, ...payload };
+}
+
+export async function updateIngestionCandidate(ctx, candidateId, patch) {
+  if (ctx?.isAdmin) {
+    const candidates = readGuestCandidates().map((c) => (c.id === candidateId ? { ...c, ...patch } : c));
+    writeGuestCandidates(candidates);
+    notifyGuestListeners();
+    return;
+  }
+  if (!db || !ctx?.uid) return;
+  await updateDoc(doc(db, "users", ctx.uid, "ingestionCandidates", candidateId), patch);
+}
