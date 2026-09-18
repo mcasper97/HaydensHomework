@@ -4473,12 +4473,27 @@ const HomeworkGamesApp = ({
             🔓 Parent Unlock
           </button>
         ) : (
-          <button
-            onClick={() => setCurrentView("parents")}
-            className="text-sm text-purple-900 hover:text-purple-950 font-extrabold flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-200"
-          >
-            <Settings size={16} /> Parents
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Normal authenticated parent-device flow only (never rendered when
+                deviceMode==="child" — see the branch above, which shows Parent
+                Unlock instead). Navigation-only: resets AuthShell's selectedChild
+                so it falls back to the Parent Page / learner selector. Doesn't
+                touch deviceMode, auth session, or any child/family data. */}
+            {onSwitchChild && (
+              <button
+                onClick={() => onSwitchChild()}
+                className="text-sm text-purple-900 hover:text-purple-950 font-extrabold flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-200"
+              >
+                <ArrowLeft size={16} /> Back to Parent Page
+              </button>
+            )}
+            <button
+              onClick={() => setCurrentView("parents")}
+              className="text-sm text-purple-900 hover:text-purple-950 font-extrabold flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-200"
+            >
+              <Settings size={16} /> Parents
+            </button>
+          </div>
         )}
       </div>
 
