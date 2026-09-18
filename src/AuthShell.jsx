@@ -22,7 +22,8 @@ import {
 } from "./deviceMode.js";
 import { hasPin, setPin as savePin } from "./data/parentPin.js";
 import { fetchGmailStatus, startGmailConnect, disconnectGmail, checkGmailEmail } from "./data/gmailConnection.js";
-import { subscribeApprovedSenders, addApprovedSender, removeApprovedSender } from "./data/gmailApprovedSendersRepository.js";
+import { subscribeApprovedSenders, addApprovedSender, updateApprovedSenderTarget, removeApprovedSender } from "./data/gmailApprovedSendersRepository.js";
+import { buildSenderTargetOptions, parseSenderTargetValue, senderTargetToValue, getSenderTargetLabel } from "./data/gmailApprovedSenders.js";
 
 const CHILD_EMOJIS = ["🦁", "🐯", "🐺", "🦊", "🐻", "🐼", "🦄", "🐲", "🚀", "⭐", "🌈", "🔥"];
 
@@ -443,9 +444,10 @@ const LandingPage = ({ onSignIn, onEmailSignIn, onGuestEnter, loading, emailLoad
  * api/gmail-check-email.js — it validates preconditions and reports the
  * lookback window but does not read any mail yet.
  */
-const GmailApprovedSendersPanel = ({ ctx }) => {
+const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
   const [senders, setSenders] = useState([]);
   const [newEmail, setNewEmail] = useState("");
+  const [newTargetValue, setNewTargetValue] = useState("review");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [checkResult, setCheckResult] = useState(null);
@@ -457,13 +459,16 @@ const GmailApprovedSendersPanel = ({ ctx }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx.uid, ctx.isAdmin]);
 
+  const targetOptions = buildSenderTargetOptions(childProfiles);
+
   const handleAdd = async () => {
     setError("");
     setCheckResult(null);
     setBusy(true);
     try {
-      await addApprovedSender(ctx, newEmail);
+      await addApprovedSender(ctx, newEmail, parseSenderTargetValue(newTargetValue));
       setNewEmail("");
+      setNewTargetValue("review");
     } catch (e) {
       setError(e.message || "Could not add that address.");
     } finally {
@@ -475,6 +480,16 @@ const GmailApprovedSendersPanel = ({ ctx }) => {
     setError("");
     setCheckResult(null);
     await removeApprovedSender(ctx, senderId);
+  };
+
+  const handleChangeTarget = async (senderId, value) => {
+    setError("");
+    setCheckResult(null);
+    try {
+      await updateApprovedSenderTarget(ctx, senderId, parseSenderTargetValue(value));
+    } catch (e) {
+      setError(e.message || "Could not update that sender's target.");
+    }
   };
 
   const handleCheckEmail = async () => {
@@ -504,7 +519,20 @@ const GmailApprovedSendersPanel = ({ ctx }) => {
         <div className="space-y-2 mb-3">
           {senders.map((sender) => (
             <div key={sender.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl" style={{ background: "#1C1C1E" }}>
-              <span className="text-white text-sm break-all">{sender.email}</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-white text-sm break-all">{sender.email}</div>
+                <select
+                  value={senderTargetToValue(sender)}
+                  onChange={(e) => handleChangeTarget(sender.id, e.target.value)}
+                  aria-label={`Who ${sender.email} applies to (currently ${getSenderTargetLabel(sender, childProfiles)})`}
+                  className="mt-1 px-2 py-1 rounded-lg text-white text-xs border border-gray-600"
+                  style={{ background: "#2a2a2c" }}
+                >
+                  {targetOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
               <button
                 onClick={() => handleRemove(sender.id)}
                 className="text-red-400 hover:text-red-300 text-xs font-semibold shrink-0"
@@ -516,23 +544,35 @@ const GmailApprovedSendersPanel = ({ ctx }) => {
         </div>
       )}
 
-      <div className="flex gap-2 mb-3">
+      <div className="space-y-2 mb-3">
         <input
           type="email"
           value={newEmail}
           onChange={(e) => setNewEmail(e.target.value)}
           placeholder="teacher@school.edu"
-          className="flex-1 px-3 py-2 rounded-xl text-white text-sm border border-gray-600"
+          className="w-full px-3 py-2 rounded-xl text-white text-sm border border-gray-600"
           style={{ background: "#1C1C1E" }}
         />
-        <button
-          onClick={handleAdd}
-          disabled={busy || !newEmail.trim()}
-          className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition hover:opacity-90 disabled:opacity-50"
-          style={{ background: "linear-gradient(135deg, #2d6b3f, #1f4a2c)" }}
-        >
-          Add
-        </button>
+        <div className="flex gap-2">
+          <select
+            value={newTargetValue}
+            onChange={(e) => setNewTargetValue(e.target.value)}
+            className="flex-1 px-3 py-2 rounded-xl text-white text-sm border border-gray-600"
+            style={{ background: "#1C1C1E" }}
+          >
+            {targetOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <button
+            onClick={handleAdd}
+            disabled={busy || !newEmail.trim()}
+            className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition hover:opacity-90 disabled:opacity-50 shrink-0"
+            style={{ background: "linear-gradient(135deg, #2d6b3f, #1f4a2c)" }}
+          >
+            Add
+          </button>
+        </div>
       </div>
 
       <button
@@ -562,7 +602,7 @@ const GmailApprovedSendersPanel = ({ ctx }) => {
  * Parent Tools panel (see below), never on Family Board or any
  * child-facing page.
  */
-const GmailConnectionPanel = ({ ctx }) => {
+const GmailConnectionPanel = ({ ctx, childProfiles }) => {
   const [status, setStatus] = useState(null); // null = loading
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -633,7 +673,7 @@ const GmailConnectionPanel = ({ ctx }) => {
           >
             Disconnect
           </button>
-          <GmailApprovedSendersPanel ctx={ctx} />
+          <GmailApprovedSendersPanel ctx={ctx} childProfiles={childProfiles} />
         </>
       ) : (
         <>
@@ -851,7 +891,9 @@ const ChildSelector = ({
             account to attach a Gmail connection to (see api/_auth.js and
             GUEST_USER above), so no working controls are shown there and the
             server independently fails closed on every Gmail endpoint anyway. */}
-        {showParentTools && !user.isAdmin && <GmailConnectionPanel ctx={{ uid: user.uid, isAdmin: false }} />}
+        {showParentTools && !user.isAdmin && (
+          <GmailConnectionPanel ctx={{ uid: user.uid, isAdmin: false }} childProfiles={children} />
+        )}
 
         {loading ? (
           <div className="text-center py-12">
