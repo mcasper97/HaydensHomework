@@ -40,3 +40,19 @@ export async function startGmailConnect() {
 export async function disconnectGmail() {
   await authedFetch("/api/gmail-disconnect", { method: "POST" });
 }
+
+/**
+ * Manual "Check Email" action (#26, Commit 4 — shell only). Validates that
+ * Gmail is connected and at least one approved sender exists, and returns
+ * the lookback window that will be used — it does not read any mail yet.
+ */
+export async function checkGmailEmail() {
+  const data = await authedFetch("/api/gmail-check-email", { method: "POST" });
+  return {
+    ready: !!data.ready,
+    connectedEmail: data.connectedEmail || null,
+    senderCount: data.senderCount || 0,
+    lookbackDays: data.lookbackDays,
+    sinceIso: data.sinceIso || null,
+  };
+}

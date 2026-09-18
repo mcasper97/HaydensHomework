@@ -21,7 +21,8 @@ import {
   setRecoveryPending as persistRecoveryPending,
 } from "./deviceMode.js";
 import { hasPin, setPin as savePin } from "./data/parentPin.js";
-import { fetchGmailStatus, startGmailConnect, disconnectGmail } from "./data/gmailConnection.js";
+import { fetchGmailStatus, startGmailConnect, disconnectGmail, checkGmailEmail } from "./data/gmailConnection.js";
+import { subscribeApprovedSenders, addApprovedSender, removeApprovedSender } from "./data/gmailApprovedSendersRepository.js";
 
 const CHILD_EMOJIS = ["🦁", "🐯", "🐺", "🦊", "🐻", "🐼", "🦄", "🐲", "🚀", "⭐", "🌈", "🔥"];
 
@@ -435,14 +436,133 @@ const LandingPage = ({ onSignIn, onEmailSignIn, onGuestEnter, loading, emailLoad
   );
 };
 
-/* ─────────────────────── Gmail Connection panel (Parent Tools only) ───────────────────────
- * Connection-only for now (#26, Commit 3): shows Connected / Disconnected /
- * Reconnect-required status and lets a parent start or end a Gmail
- * connection. No mail is read here — that's a later, separately-approved
- * commit. Deliberately rendered only from within ChildSelector's Parent
- * Tools panel (see below), never on Family Board or any child-facing page.
+/* ─────────────────────── Approved Gmail senders + Check Email (Commit 4, shell) ───────────────────────
+ * Only rendered once Gmail is connected (see GmailConnectionPanel below).
+ * Manages the exact-address allow-list and offers a manual "Check Email"
+ * action. Check Email is deliberately a shell right now — see
+ * api/gmail-check-email.js — it validates preconditions and reports the
+ * lookback window but does not read any mail yet.
  */
-const GmailConnectionPanel = () => {
+const GmailApprovedSendersPanel = ({ ctx }) => {
+  const [senders, setSenders] = useState([]);
+  const [newEmail, setNewEmail] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [checkResult, setCheckResult] = useState(null);
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    const unsub = subscribeApprovedSenders(ctx, setSenders);
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.uid, ctx.isAdmin]);
+
+  const handleAdd = async () => {
+    setError("");
+    setCheckResult(null);
+    setBusy(true);
+    try {
+      await addApprovedSender(ctx, newEmail);
+      setNewEmail("");
+    } catch (e) {
+      setError(e.message || "Could not add that address.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRemove = async (senderId) => {
+    setError("");
+    setCheckResult(null);
+    await removeApprovedSender(ctx, senderId);
+  };
+
+  const handleCheckEmail = async () => {
+    setError("");
+    setCheckResult(null);
+    setChecking(true);
+    try {
+      const result = await checkGmailEmail();
+      setCheckResult(result);
+    } catch (e) {
+      setError(e.message || "Could not check email.");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 pt-4 border-t border-gray-700">
+      <h4 className="text-white font-semibold text-sm mb-2">Approved senders</h4>
+      <p className="text-gray-400 text-xs mb-3">
+        Only email from these exact addresses will ever be checked.
+      </p>
+
+      {senders.length === 0 ? (
+        <p className="text-gray-400 text-sm mb-3">No approved senders yet.</p>
+      ) : (
+        <div className="space-y-2 mb-3">
+          {senders.map((sender) => (
+            <div key={sender.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl" style={{ background: "#1C1C1E" }}>
+              <span className="text-white text-sm break-all">{sender.email}</span>
+              <button
+                onClick={() => handleRemove(sender.id)}
+                className="text-red-400 hover:text-red-300 text-xs font-semibold shrink-0"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2 mb-3">
+        <input
+          type="email"
+          value={newEmail}
+          onChange={(e) => setNewEmail(e.target.value)}
+          placeholder="teacher@school.edu"
+          className="flex-1 px-3 py-2 rounded-xl text-white text-sm border border-gray-600"
+          style={{ background: "#1C1C1E" }}
+        />
+        <button
+          onClick={handleAdd}
+          disabled={busy || !newEmail.trim()}
+          className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition hover:opacity-90 disabled:opacity-50"
+          style={{ background: "linear-gradient(135deg, #2d6b3f, #1f4a2c)" }}
+        >
+          Add
+        </button>
+      </div>
+
+      <button
+        onClick={handleCheckEmail}
+        disabled={checking || senders.length === 0}
+        className="w-full px-4 py-2 rounded-xl font-semibold text-white text-sm transition hover:opacity-90 disabled:opacity-50 border border-gray-600"
+        style={{ background: "#1C1C1E" }}
+      >
+        {checking ? "Checking…" : "Check Email"}
+      </button>
+
+      {checkResult?.ready && (
+        <p className="text-gray-400 text-xs mt-2">
+          Ready — {checkResult.senderCount} approved sender{checkResult.senderCount === 1 ? "" : "s"}, last {checkResult.lookbackDays} days.
+          Full email checking is coming in a future update.
+        </p>
+      )}
+      {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
+    </div>
+  );
+};
+
+/* ─────────────────────── Gmail Connection panel (Parent Tools only) ───────────────────────
+ * Connection status (Commit 3) plus approved-sender management and a
+ * manual Check Email shell (Commit 4) once connected. No mail is actually
+ * read here yet. Deliberately rendered only from within ChildSelector's
+ * Parent Tools panel (see below), never on Family Board or any
+ * child-facing page.
+ */
+const GmailConnectionPanel = ({ ctx }) => {
   const [status, setStatus] = useState(null); // null = loading
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -513,6 +633,7 @@ const GmailConnectionPanel = () => {
           >
             Disconnect
           </button>
+          <GmailApprovedSendersPanel ctx={ctx} />
         </>
       ) : (
         <>
@@ -730,7 +851,7 @@ const ChildSelector = ({
             account to attach a Gmail connection to (see api/_auth.js and
             GUEST_USER above), so no working controls are shown there and the
             server independently fails closed on every Gmail endpoint anyway. */}
-        {showParentTools && !user.isAdmin && <GmailConnectionPanel />}
+        {showParentTools && !user.isAdmin && <GmailConnectionPanel ctx={{ uid: user.uid, isAdmin: false }} />}
 
         {loading ? (
           <div className="text-center py-12">
