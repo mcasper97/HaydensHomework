@@ -24,6 +24,7 @@ import { hasPin, setPin as savePin } from "./data/parentPin.js";
 import { fetchGmailStatus, startGmailConnect, disconnectGmail, checkGmailEmail } from "./data/gmailConnection.js";
 import { subscribeApprovedSenders, addApprovedSender, updateApprovedSenderTarget, removeApprovedSender } from "./data/gmailApprovedSendersRepository.js";
 import { buildSenderTargetOptions, parseSenderTargetValue, senderTargetToValue, getSenderTargetLabel } from "./data/gmailApprovedSenders.js";
+import { getParentToolsOpen, setParentToolsOpen } from "./data/parentToolsPreference.js";
 
 const CHILD_EMOJIS = ["🦁", "🐯", "🐺", "🦊", "🐻", "🐼", "🦄", "🐲", "🚀", "⭐", "🌈", "🔥"];
 
@@ -722,6 +723,26 @@ const ChildSelector = ({
   const [editingName, setEditingName] = useState(false);
   const [savingName, setSavingName] = useState(false);
 
+  // Restores whether Parent Tools was left open, but ONLY for a real
+  // authenticated parent (see data/parentToolsPreference.js) — guest/local
+  // mode never persists this and always starts closed, unchanged from
+  // before. Reacts to user.uid/isAdmin (not just mount) because this
+  // component isn't remounted on sign-out/sign-in-as-a-different-parent
+  // (no `key` prop at its render site), so a lazy useState initializer
+  // alone would leak the previous parent's in-memory preference into the
+  // next one's first render on the same device.
+  useEffect(() => {
+    setShowParentTools(user?.isAdmin ? false : getParentToolsOpen(user?.uid));
+  }, [user?.uid, user?.isAdmin]);
+
+  const toggleParentTools = () => {
+    setShowParentTools((prev) => {
+      const next = !prev;
+      if (!user?.isAdmin) setParentToolsOpen(user?.uid, next);
+      return next;
+    });
+  };
+
   useEffect(() => {
     // Shared tail: resolve the loaded child list, then either auto-forward into
     // a locked Child Mode device's child (Phase 1.5 — "returns to the locked
@@ -853,7 +874,7 @@ const ChildSelector = ({
             opens a learner picker leading to that child's management/import
             page. */}
         <button
-          onClick={() => setShowParentTools((v) => !v)}
+          onClick={toggleParentTools}
           className="w-full flex items-center gap-3 p-4 rounded-2xl mb-6 transition hover:opacity-90 font-extrabold text-white"
           style={{ background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}
         >
