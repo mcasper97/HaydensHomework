@@ -15,5 +15,25 @@ service cloud.firestore {
       allow read, write: if request.auth != null
                          && request.auth.uid == uid;
     }
+
+    // Server-private: Gmail OAuth refresh tokens (see
+    // api/_gmailConnectionsStore.js). Deliberately a top-level collection,
+    // not beneath users/{uid}/..., specifically so no existing or future
+    // users/{uid}-style rule can accidentally grant the browser access to
+    // it. No rule above matches this path, so Firestore's default deny-all
+    // already blocks every client read/write here — only the Admin SDK
+    // (server-only, bypasses security rules entirely) can reach it. This
+    // explicit `if false` is not strictly required; it documents that
+    // omission as an intentional security boundary rather than something
+    // to "fix" later by adding a matching rule.
+    match /gmailConnections/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Server-private: short-lived Gmail OAuth `state` records (same
+    // module, same reasoning as gmailConnections above).
+    match /gmailOAuthStates/{document=**} {
+      allow read, write: if false;
+    }
   }
 }
