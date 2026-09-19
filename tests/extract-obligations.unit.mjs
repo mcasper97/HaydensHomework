@@ -179,5 +179,24 @@ try {
   ok("Obligations list is capped at 20 even if the model returns more", r.obligations.length === 20);
 }
 
+// ============ sourceUrl passthrough (#26, Commit 5 correction — email-led ingestion's
+// per-obligation source attribution; additive, only ever set by api/_emailExtraction.js) ============
+{
+  const result = sanitizeObligationsResponse({ obligations: [{ type: "assignment", title: "X", sourceUrl: "https://school.edu/page" }] });
+  ok("A valid sourceUrl string passes through", result.obligations[0].sourceUrl === "https://school.edu/page");
+}
+{
+  const result = sanitizeObligationsResponse({ obligations: [{ type: "assignment", title: "X" }] });
+  ok("Missing sourceUrl (the photo pipeline's case — it never sets this field) normalizes to null", result.obligations[0].sourceUrl === null);
+}
+{
+  const result = sanitizeObligationsResponse({ obligations: [{ type: "assignment", title: "X", sourceUrl: 12345 }] });
+  ok("A non-string sourceUrl is dropped to null, not coerced", result.obligations[0].sourceUrl === null);
+}
+{
+  const result = sanitizeObligationsResponse({ obligations: [{ type: "assignment", title: "X", sourceUrl: "" }] });
+  ok("An empty-string sourceUrl normalizes to null", result.obligations[0].sourceUrl === null);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

@@ -19,7 +19,7 @@
  * Usage: node tests/gmail-approved-senders.unit.mjs
  */
 import { normalizeSenderEmail, isValidSenderEmail } from "../src/data/gmailApprovedSenders.js";
-import { listApprovedSenderEmails } from "../api/_gmailApprovedSendersStore.js";
+import { listApprovedSenderEmails, listApprovedSenders } from "../api/_gmailApprovedSendersStore.js";
 import { LOOKBACK_DAYS, computeLookbackSinceIso } from "../api/gmail-check-email.js";
 
 let pass = 0, fail = 0;
@@ -114,6 +114,33 @@ function createFakeDb() {
   await db.collection("users").doc("uid-4").collection("gmailApprovedSenders").doc("s1").set({});
   const emails = await listApprovedSenderEmails("uid-4", { db });
   ok("Filters out a doc with no email field at all", emails.length === 0);
+}
+
+// ============ listApprovedSenders (#26, Commit 5 — full records, target-normalized) ============
+{
+  const db = createFakeDb();
+  await db.collection("users").doc("uid-5").collection("gmailApprovedSenders").doc("s1").set({ email: "teacherA@school.org", targetType: "child", childId: "hayden-1" });
+  await db.collection("users").doc("uid-5").collection("gmailApprovedSenders").doc("s2").set({ email: "principal@school.org", targetType: "family", childId: null });
+  await db.collection("users").doc("uid-5").collection("gmailApprovedSenders").doc("s3").set({ email: "noreply@school.org" }); // legacy — no targetType at all
+  const senders = await listApprovedSenders("uid-5", { db });
+  ok("Returns every approved sender's full record", senders.length === 3);
+  const a = senders.find((s) => s.email === "teacherA@school.org");
+  ok("A child-targeted sender keeps its targetType and childId", a?.targetType === "child" && a?.childId === "hayden-1");
+  const p = senders.find((s) => s.email === "principal@school.org");
+  ok("A family-targeted sender keeps its targetType with a null childId", p?.targetType === "family" && p?.childId === null);
+  const legacy = senders.find((s) => s.email === "noreply@school.org");
+  ok("A legacy sender (no targetType field at all) normalizes to review/null, same as the client repository's own read-time normalization", legacy?.targetType === "review" && legacy?.childId === null);
+}
+{
+  const db = createFakeDb();
+  await db.collection("users").doc("uid-6").collection("gmailApprovedSenders").doc("s1").set({ notEmail: "malformed" });
+  const senders = await listApprovedSenders("uid-6", { db });
+  ok("listApprovedSenders also filters out a malformed doc missing an email field", senders.length === 0);
+}
+{
+  const db = createFakeDb();
+  const senders = await listApprovedSenders("uid-7", { db });
+  ok("listApprovedSenders returns an empty array when nothing is stored", senders.length === 0);
 }
 
 // ============ gmail-check-email.js: lookback window ============

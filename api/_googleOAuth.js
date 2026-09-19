@@ -105,6 +105,38 @@ export async function exchangeCodeForTokens({ code, codeVerifier, fetchFn = fetc
 }
 
 /**
+ * Exchanges a stored refresh token for a fresh access token (#26, Commit 5
+ * — needed to actually call the Gmail API). Returns Google's raw response
+ * ({ access_token, expires_in, scope, token_type } — no new refresh_token
+ * is issued on a refresh grant). Throws on failure; the caller (see
+ * gmail-check-email.js) is expected to treat an "invalid_grant" error as
+ * "this connection needs to be reconnected" and set needsReconnect
+ * accordingly, rather than a generic failure.
+ */
+export async function refreshAccessToken(refreshToken, { fetchFn = fetch } = {}) {
+  const { clientId, clientSecret } = getOAuthConfig();
+  const body = new URLSearchParams({
+    refresh_token: refreshToken,
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: "refresh_token",
+  });
+  const res = await fetchFn(TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    const err = new Error(json?.error_description || json?.error || "Token refresh failed");
+    err.tokenError = json;
+    err.isInvalidGrant = json?.error === "invalid_grant";
+    throw err;
+  }
+  return json;
+}
+
+/**
  * Best-effort revoke. Never throws — a failed remote revocation must never
  * block the local credential from being deleted (see gmail-disconnect.js).
  */

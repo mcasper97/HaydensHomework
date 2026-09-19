@@ -25,6 +25,9 @@ import { fetchGmailStatus, startGmailConnect, disconnectGmail, checkGmailEmail }
 import { subscribeApprovedSenders, addApprovedSender, updateApprovedSenderTarget, removeApprovedSender } from "./data/gmailApprovedSendersRepository.js";
 import { buildSenderTargetOptions, parseSenderTargetValue, senderTargetToValue, getSenderTargetLabel } from "./data/gmailApprovedSenders.js";
 import { getParentToolsOpen, setParentToolsOpen } from "./data/parentToolsPreference.js";
+import { createSourceRecord } from "./data/sourceRecordsRepository.js";
+import { createIngestionCandidate } from "./data/ingestionCandidatesRepository.js";
+import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
 
 const CHILD_EMOJIS = ["🦁", "🐯", "🐺", "🦊", "🐻", "🐼", "🦄", "🐲", "🚀", "⭐", "🌈", "🔥"];
 
@@ -453,6 +456,7 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
   const [busy, setBusy] = useState(false);
   const [checkResult, setCheckResult] = useState(null);
   const [checking, setChecking] = useState(false);
+  const [ingestionCandidates, setIngestionCandidates] = useState([]);
 
   useEffect(() => {
     const unsub = subscribeApprovedSenders(ctx, setSenders);
@@ -500,6 +504,109 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
     try {
       const result = await checkGmailEmail();
       setCheckResult(result);
+
+      // Mirrors App.jsx's handleImageIngestionUpload — the server only
+      // ever returns validated extraction results; SourceRecord and
+      // IngestionCandidate creation, and the mandatory parent review
+      // before anything becomes a canonical Item, stay entirely
+      // client-side here too.
+      //
+      // Two-tier provenance (#26, Commit 5 correction): one "gmail_email"
+      // SourceRecord per qualifying email, plus one "webpage" SourceRecord
+      // per qualifying linked page (whether it was successfully fetched or
+      // not — a failed fetch is still recorded, same "kept, not discarded"
+      // philosophy as every other capture type's processingStatus), linked
+      // back via metadata.parentEmailSourceRecordId. Each obligation is
+      // attributed to whichever one it actually came from via its
+      // sourceUrl (see api/_emailExtraction.js) — the email's own
+      // SourceRecord when null/unmatched, or the matching webpage's.
+      const newCandidates = [];
+      for (const emailResult of result.results) {
+        let emailSourceRecord;
+        try {
+          emailSourceRecord = await createSourceRecord(ctx, {
+            sourceType: "gmail_email",
+            title: emailResult.subject || "(no subject)",
+            processingStatus: emailResult.extractionFailed
+              ? "failed"
+              : emailResult.obligations.length === 0
+              ? "no_candidates"
+              : "extracted",
+            metadata: {
+              gmailMessageId: emailResult.gmailMessageId,
+              gmailThreadId: emailResult.gmailThreadId,
+              senderEmail: emailResult.senderEmail,
+              subject: emailResult.subject,
+              receivedAt: emailResult.receivedAt,
+              targetType: emailResult.targetType,
+              targetChildId: emailResult.targetChildId,
+              linkedUrls: emailResult.linkedUrls,
+              googleDocUrls: emailResult.googleDocUrls,
+            },
+          });
+        } catch (err) {
+          // Provenance is best-effort — one email's SourceRecord failing
+          // to save must never block the rest of this batch.
+          console.error("Check Email: createSourceRecord (email) failed", err);
+          continue;
+        }
+
+        // One webpage SourceRecord per qualifying link, fetched or not.
+        const webpageSourceRecordIdByUrl = new Map();
+        for (const page of emailResult.webpagePages || []) {
+          const obligationsFromThisPage = emailResult.obligations.filter((o) => o.sourceUrl === page.url);
+          try {
+            const webpageSourceRecord = await createSourceRecord(ctx, {
+              sourceType: "webpage",
+              title: page.url,
+              processingStatus: !page.fetched ? "failed" : obligationsFromThisPage.length === 0 ? "no_candidates" : "extracted",
+              metadata: {
+                sourceUrl: page.url,
+                parentEmailSourceRecordId: emailSourceRecord.id,
+              },
+            });
+            webpageSourceRecordIdByUrl.set(page.url, webpageSourceRecord.id);
+          } catch (err) {
+            console.error("Check Email: createSourceRecord (webpage) failed", page.url, err);
+            // No entry in the map for this URL — any obligation attributed
+            // to it below falls back to the email's own SourceRecord
+            // rather than being lost.
+          }
+        }
+
+        for (const o of emailResult.obligations) {
+          const sourceRecordId = o.sourceUrl && webpageSourceRecordIdByUrl.has(o.sourceUrl)
+            ? webpageSourceRecordIdByUrl.get(o.sourceUrl)
+            : emailSourceRecord.id;
+          try {
+            const candidate = await createIngestionCandidate(ctx, {
+              sourceRecordId,
+              proposedType: o.type,
+              title: o.title,
+              proposedChildName: o.childName,
+              date: o.date,
+              subject: o.subject,
+              academicTopic: o.academicTopic,
+              academicUnit: o.academicUnit,
+              preparationRequired: o.preparationRequired,
+              description: o.description,
+              extractionConfidence: o.extractionConfidence,
+              // The sender's configured target — never the AI's own guess
+              // (o.childName above is informational only, same as photo
+              // ingestion; see candidateToDraftItem.js).
+              targetType: emailResult.targetType,
+              targetChildId: emailResult.targetChildId,
+            });
+            newCandidates.push(candidate);
+          } catch (err) {
+            console.error("Check Email: createIngestionCandidate failed", err);
+          }
+        }
+      }
+
+      if (newCandidates.length > 0) {
+        setIngestionCandidates(newCandidates);
+      }
     } catch (e) {
       setError(e.message || "Could not check email.");
     } finally {
@@ -585,13 +692,23 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
         {checking ? "Checking…" : "Check Email"}
       </button>
 
-      {checkResult?.ready && (
+      {checkResult && (
         <p className="text-gray-400 text-xs mt-2">
-          Ready — {checkResult.senderCount} approved sender{checkResult.senderCount === 1 ? "" : "s"}, last {checkResult.lookbackDays} days.
-          Full email checking is coming in a future update.
+          {checkResult.results.length === 0
+            ? `No new emails found from your ${checkResult.senderCount} approved sender${checkResult.senderCount === 1 ? "" : "s"} in the last ${checkResult.lookbackDays} days.`
+            : `Checked ${checkResult.results.length} new email${checkResult.results.length === 1 ? "" : "s"} from the last ${checkResult.lookbackDays} days — review below.`}
         </p>
       )}
       {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
+
+      {ingestionCandidates.length > 0 && (
+        <CandidateReviewModal
+          ctx={ctx}
+          candidates={ingestionCandidates}
+          familyChildren={childProfiles}
+          onClose={() => setIngestionCandidates([])}
+        />
+      )}
     </div>
   );
 };

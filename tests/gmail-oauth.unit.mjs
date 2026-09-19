@@ -28,6 +28,7 @@ import {
   generatePkcePair,
   buildAuthorizationUrl,
   exchangeCodeForTokens,
+  refreshAccessToken,
   revokeToken,
   fetchGmailProfile,
 } from "../api/_googleOAuth.js";
@@ -35,6 +36,7 @@ import {
   getGmailConnection,
   upsertGmailConnection,
   deleteGmailConnection,
+  markGmailConnectionNeedsReconnect,
   sanitizeGmailConnectionForClient,
   createOAuthState,
   consumeOAuthState,
@@ -273,6 +275,57 @@ function createFakeDb() {
 {
   ok("consumeOAuthState fails closed on a non-string state (e.g. an array from a repeated query param)", (await consumeOAuthState(["x", "y"], { db: createFakeDb() })) === null);
   ok("consumeOAuthState fails closed on an empty state", (await consumeOAuthState("", { db: createFakeDb() })) === null);
+}
+
+// ============ refreshAccessToken (#26, Commit 5) ============
+{
+  let capturedBody = null;
+  const fetchFn = async (url, options) => {
+    capturedBody = new URLSearchParams(options.body);
+    return { ok: true, json: async () => ({ access_token: "new-at", expires_in: 3600, scope: "gmail.readonly", token_type: "Bearer" }) };
+  };
+  const result = await refreshAccessToken("stored-refresh-token", { fetchFn });
+  ok("Sends grant_type=refresh_token", capturedBody.get("grant_type") === "refresh_token");
+  ok("Sends the stored refresh token", capturedBody.get("refresh_token") === "stored-refresh-token");
+  ok("Returns the new access token on success", result.access_token === "new-at");
+}
+{
+  const fetchFn = async () => ({ ok: false, json: async () => ({ error: "invalid_grant", error_description: "Token has been expired or revoked." }) });
+  let caught = null;
+  try {
+    await refreshAccessToken("revoked-token", { fetchFn });
+  } catch (err) {
+    caught = err;
+  }
+  ok("Throws when Google reports invalid_grant", caught !== null);
+  ok("Flags the error as isInvalidGrant so the caller can distinguish it from a transient failure", caught?.isInvalidGrant === true);
+}
+{
+  const fetchFn = async () => ({ ok: false, json: async () => ({ error: "server_error" }) });
+  let caught = null;
+  try {
+    await refreshAccessToken("token", { fetchFn });
+  } catch (err) {
+    caught = err;
+  }
+  ok("A non-invalid_grant failure is NOT flagged isInvalidGrant (so it isn't mistaken for a needs-reconnect case)", caught !== null && !caught.isInvalidGrant);
+}
+
+// ============ markGmailConnectionNeedsReconnect (#26, Commit 5) ============
+{
+  const db = createFakeDb();
+  await upsertGmailConnection("uid-10", { refreshToken: "rt-10", emailAddress: "a@example.com", connectedAt: "2026-01-01T00:00:00.000Z" }, { db });
+  await markGmailConnectionNeedsReconnect("uid-10", { db });
+  const conn = await getGmailConnection("uid-10", { db });
+  ok("Flags an existing connection's needsReconnect as true", conn.needsReconnect === true);
+  ok("Never touches the stored refresh token", conn.refreshToken === "rt-10");
+  ok("Never touches the stored email address", conn.emailAddress === "a@example.com");
+}
+{
+  const db = createFakeDb();
+  // No connection exists for this uid at all.
+  await markGmailConnectionNeedsReconnect("uid-11", { db });
+  ok("Never creates a connection that didn't already exist (no-op)", (await getGmailConnection("uid-11", { db })) === null);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

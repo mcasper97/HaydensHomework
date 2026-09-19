@@ -1,5 +1,8 @@
 import React, { useState } from "react";
 import { FORM_TYPES, ITEM_TYPE_META, ACADEMIC_TYPES, SUBJECT_OPTIONS } from "../data/itemTypes.js";
+import { canSubmitItemForm } from "./itemFormValidation.js";
+
+export { canSubmitItemForm };
 
 // Which fields a given type shows *by default* — per Phase 1 decision, dates
 // are never made mutually exclusive by type; this only controls which inputs
@@ -43,6 +46,18 @@ const showsField = (type, field) => {
  * behavior when omitted. Purely presentational — this form has no idea why
  * a caller wants different wording (e.g. reviewing an ingestion candidate),
  * it just displays whatever string it's given.
+ *
+ * allowFamilyWide — opt-in only (default false), set by
+ * CandidateReviewModal.jsx exclusively for an email candidate whose
+ * approved sender is configured as "Family" (#26, Commit 5 correction).
+ * When true, a "Whole family" toggle appears (defaulting ON) that lets the
+ * parent approve the item with zero children selected — a genuinely
+ * household-wide item (childIds: []), the app's own existing convention
+ * for that (see itemsRepository.js's migrateLegacyFamilyEvents). No other
+ * caller ever passes this, so every existing use of ItemForm (manual
+ * "+ Add", photo/CSV ingestion review, and an email candidate whose sender
+ * is "Family" is NOT the case for "Ask during review") keeps its exact
+ * prior behavior: a parent must pick at least one child to submit.
  */
 const ItemForm = ({
   children = [],
@@ -52,10 +67,12 @@ const ItemForm = ({
   onSubmit,
   onCancel,
   submitLabel = null,
+  allowFamilyWide = false,
 }) => {
   const [type, setType] = useState(existingItem?.type || initialType);
   const [title, setTitle] = useState(existingItem?.title || "");
   const [childIds, setChildIds] = useState(existingItem?.childIds || (children[0] ? [children[0].id] : []));
+  const [familyWide, setFamilyWide] = useState(!!allowFamilyWide);
   const [subject, setSubject] = useState(existingItem?.subject || SUBJECT_OPTIONS[0]);
   const [academicTopic, setAcademicTopic] = useState(existingItem?.academicTopic || "");
   const [academicUnit, setAcademicUnit] = useState(existingItem?.academicUnit || "");
@@ -77,14 +94,19 @@ const ItemForm = ({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!title.trim() || childIds.length === 0 || saving) return;
+    if (!canSubmitItemForm({ title, childIds, familyWide }) || saving) return;
     setSaving(true);
     setError("");
 
     const payload = {
       type,
       title: title.trim(),
-      childIds,
+      // Family-wide is forced to childIds: [] regardless of the pill
+      // picker's own state — the picker itself is hidden while familyWide
+      // is checked (see below), so there is never a conflicting selection
+      // to reconcile; this is just the explicit, no-ambiguity version of
+      // that same invariant.
+      childIds: familyWide ? [] : childIds,
       subject: showsField(type, "subject") ? subject : null,
       academicTopic: showsField(type, "academicTopic") && academicTopic.trim() ? academicTopic.trim() : null,
       academicUnit: showsField(type, "academicUnit") && academicUnit.trim() ? academicUnit.trim() : null,
@@ -142,20 +164,28 @@ const ItemForm = ({
       {children.length > 0 && (
         <div>
           <label className="text-xs font-bold text-gray-500 uppercase">For</label>
-          <div className="flex flex-wrap gap-2 mt-1">
-            {children.map((c) => (
-              <button
-                type="button"
-                key={c.id}
-                onClick={() => toggleChild(c.id)}
-                className={`px-3 py-1.5 rounded-full text-sm font-bold border transition ${
-                  childIds.includes(c.id) ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-600 border-gray-300"
-                }`}
-              >
-                {c.emoji} {c.name}
-              </button>
-            ))}
-          </div>
+          {allowFamilyWide && (
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mt-1">
+              <input type="checkbox" checked={familyWide} onChange={(e) => setFamilyWide(e.target.checked)} />
+              👪 Whole family (not a specific learner)
+            </label>
+          )}
+          {!familyWide && (
+            <div className="flex flex-wrap gap-2 mt-1">
+              {children.map((c) => (
+                <button
+                  type="button"
+                  key={c.id}
+                  onClick={() => toggleChild(c.id)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-bold border transition ${
+                    childIds.includes(c.id) ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-600 border-gray-300"
+                  }`}
+                >
+                  {c.emoji} {c.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -268,7 +298,7 @@ const ItemForm = ({
       <div className="flex gap-2">
         <button
           type="submit"
-          disabled={!title.trim() || childIds.length === 0 || saving}
+          disabled={!canSubmitItemForm({ title, childIds, familyWide }) || saving}
           className="flex-1 bg-purple-700 hover:bg-purple-800 disabled:opacity-50 text-white font-extrabold py-2 rounded-2xl"
         >
           {saving ? "Saving..." : submitLabel || (existingItem ? "Save changes" : "Add")}

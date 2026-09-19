@@ -67,6 +67,21 @@ export async function deleteGmailConnection(uid, { db = defaultDb() } = {}) {
 }
 
 /**
+ * Flags an existing connection as needing reconnect — called when
+ * refreshing the access token fails with "invalid_grant" (the refresh
+ * token has been revoked or expired; see api/gmail-check-email.js).
+ * Targeted update, not a full upsertGmailConnection: it must never touch
+ * refreshToken/emailAddress/connectedAt, and must never create a
+ * connection that doesn't already exist (a no-op if it doesn't).
+ */
+export async function markGmailConnectionNeedsReconnect(uid, { db = defaultDb() } = {}) {
+  const ref = db.collection("gmailConnections").doc(uid);
+  const existing = await ref.get();
+  if (!existing.exists) return;
+  await ref.set({ ...existing.data(), needsReconnect: true });
+}
+
+/**
  * Sanitized view safe to send to the browser — never includes refreshToken
  * or any other credential material, by construction (it is built as an
  * explicit allow-list of fields, not by stripping keys from the stored doc).

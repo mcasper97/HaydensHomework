@@ -137,6 +137,13 @@ function sanitizeObligation(value) {
     preparationRequired: typeof value.preparationRequired === "boolean" ? value.preparationRequired : null,
     description: isCleanString(value.description, MAX_STRING_LENGTH) ? value.description.trim() : null,
     extractionConfidence: confidence,
+    // Optional, additive — only ever set by the email pipeline (see
+    // api/_emailExtraction.js), which uses it to attribute this
+    // obligation to the email body or a specific linked webpage's
+    // SourceRecord. The photo pipeline's prompt never produces this
+    // field, so value.sourceUrl is always undefined there and this
+    // resolves to null — zero behavior change for image_capture/csv_import.
+    sourceUrl: isCleanString(value.sourceUrl, 2000) ? value.sourceUrl.trim() : null,
   };
 }
 

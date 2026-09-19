@@ -1,10 +1,13 @@
 /* ============================== Gmail connection (client) ==============================
- * Thin client wrapper around the Commit 3 Gmail-connection API endpoints
- * (api/gmail-oauth-start.js, api/gmail-status.js, api/gmail-disconnect.js).
- * The client never talks to Firestore or Google directly for any of
- * this — every call goes through our own server, which is the only thing
- * that ever holds the OAuth credential (see api/_gmailConnectionsStore.js).
- * No mail-reading capability lives here yet — status/connect/disconnect only.
+ * Thin client wrapper around the Gmail-connection API endpoints
+ * (api/gmail-oauth-start.js, api/gmail-status.js, api/gmail-disconnect.js,
+ * api/gmail-check-email.js). The client never talks to Google directly for
+ * any of this — every call goes through our own server, which is the only
+ * thing that ever holds the OAuth credential (see
+ * api/_gmailConnectionsStore.js). The client DOES talk to Firestore
+ * directly to persist what the server returns (SourceRecords,
+ * IngestionCandidates) — see src/AuthShell.jsx — exactly like the existing
+ * photo-ingestion flow.
  */
 import { auth } from "../Firebase.js";
 
@@ -16,7 +19,9 @@ async function authedFetch(path, options = {}) {
   });
   const data = await res.json().catch(() => null);
   if (!res.ok || !data?.ok) {
-    throw new Error(data?.error || "Request failed");
+    const err = new Error(data?.error || "Request failed");
+    if (data?.needsReconnect) err.needsReconnect = true;
+    throw err;
   }
   return data;
 }
@@ -42,17 +47,20 @@ export async function disconnectGmail() {
 }
 
 /**
- * Manual "Check Email" action (#26, Commit 4 — shell only). Validates that
- * Gmail is connected and at least one approved sender exists, and returns
- * the lookback window that will be used — it does not read any mail yet.
+ * Manual "Check Email" action (#26, Commit 5). Runs the full server-side
+ * pipeline (Gmail fetch, link discovery, safe webpage fetch, extraction)
+ * and returns one result per qualifying, not-yet-processed email — the
+ * caller (see src/AuthShell.jsx) is responsible for turning each result
+ * into a SourceRecord + IngestionCandidate(s) and opening the review
+ * modal; this function never writes to Firestore itself.
  */
 export async function checkGmailEmail() {
   const data = await authedFetch("/api/gmail-check-email", { method: "POST" });
   return {
-    ready: !!data.ready,
     connectedEmail: data.connectedEmail || null,
     senderCount: data.senderCount || 0,
     lookbackDays: data.lookbackDays,
     sinceIso: data.sinceIso || null,
+    results: Array.isArray(data.results) ? data.results : [],
   };
 }

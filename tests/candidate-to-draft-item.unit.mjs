@@ -54,6 +54,36 @@ for (const type of ["test", "quiz", "school_event", "family_event", "reminder"])
   ok("No child in scope at all: never throws, selection stays empty (nothing to pre-select)", draft.childIds.length === 0);
 }
 
+// ============ Configured sender target (#26, Commit 5 — email ingestion) takes
+// precedence over the single-in-scope-child case, and is never overridden by
+// the AI's own proposedChildName guess. ============
+{
+  const draft = candidateToDraftItem(
+    { proposedType: "test", title: "X", proposedChildName: "Someone Else Entirely", targetType: "child", targetChildId: "hayden-1" },
+    child // an ambient "in scope" child is present too — the configured target must win
+  );
+  ok("targetType child: pre-selects the CONFIGURED child, ignoring the AI's proposedChildName guess", draft.childIds.length === 1 && draft.childIds[0] === "hayden-1");
+  ok("targetType child: does NOT fall back to the ambient in-scope child when a target is configured", draft.childIds[0] !== "child-1");
+}
+{
+  const draft = candidateToDraftItem({ proposedType: "school_event", title: "X", targetType: "family", targetChildId: null }, child);
+  ok("targetType family: childIds is empty — the app's existing household-wide convention, no Item model change", draft.childIds.length === 0);
+}
+{
+  const draft = candidateToDraftItem({ proposedType: "reminder", title: "X", targetType: "review", targetChildId: null }, child);
+  ok("targetType review: childIds is left empty for the parent to resolve during review", draft.childIds.length === 0);
+}
+{
+  // A candidate predating Commit 5 (photo/CSV ingestion) has no targetType
+  // at all — behavior must be identical to before this field existed.
+  const draft = candidateToDraftItem({ proposedType: "test", title: "X" }, child);
+  ok("No targetType at all (legacy/photo/CSV candidate): falls back to the ambient in-scope child, unchanged", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
+}
+{
+  const draft = candidateToDraftItem({ proposedType: "test", title: "X", targetType: "child", targetChildId: null }, child);
+  ok("targetType child with no targetChildId (shouldn't happen, but fails safe): falls through rather than assigning nothing meaningful", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
+}
+
 // ============ Field passthrough ============
 {
   const draft = candidateToDraftItem(

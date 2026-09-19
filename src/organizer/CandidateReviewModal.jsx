@@ -3,19 +3,30 @@ import ItemForm from "./ItemForm.jsx";
 import { updateIngestionCandidate } from "../data/ingestionCandidatesRepository.js";
 import { createItem } from "../data/itemsRepository.js";
 import { candidateToDraftItem } from "./candidateToDraftItem.js";
+import { getSenderTargetLabel } from "../data/gmailApprovedSenders.js";
 
 /**
  * Transient, single-purpose review surface for the candidates produced by
- * one photo upload — not the full Review Inbox (out of scope for this
- * vertical slice). Steps through candidates one at a time; each is resolved
- * independently (approving one never auto-resolves the others).
+ * one capture (a photo upload, or now a Gmail Check Email run) — not the
+ * full Review Inbox (out of scope). Steps through candidates one at a
+ * time; each is resolved independently (approving one never auto-resolves
+ * the others).
  *
- * ctx = { uid, isAdmin } (see itemsRepository.js). child = the one child in
- * scope on this device's Parents Page ({ id, name, emoji } or null) — used
- * only to offer/pre-check a match against the AI's proposed child name,
- * never to silently assign an item.
+ * ctx = { uid, isAdmin } (see itemsRepository.js).
+ *
+ * child = the one child in scope on this device's Parents Page
+ * ({ id, name, emoji } or null) — photo/CSV ingestion's case, where review
+ * only ever happens for a single child.
+ *
+ * familyChildren = the full family's children ([{ id, name, emoji }, ...])
+ * — email ingestion's case (#26, Commit 5): Check Email runs from the
+ * Parent Page, not any one child's page, and different senders can target
+ * different children in the same batch, so review needs the whole family
+ * available to pick from. When provided, this takes precedence over
+ * `child` for what ItemForm offers; candidateToDraftItem.js still decides
+ * the actual prefill from each candidate's own configured target.
  */
-const CandidateReviewModal = ({ ctx, candidates, child, onClose }) => {
+const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose }) => {
   const [queue, setQueue] = useState(candidates);
   const [error, setError] = useState("");
 
@@ -56,7 +67,7 @@ const CandidateReviewModal = ({ ctx, candidates, child, onClose }) => {
       <div className="bg-white rounded-3xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-xl font-extrabold text-gray-900">
-            Review photo import
+            {familyChildren ? "Review email import" : "Review photo import"}
             {candidates.length > 1 ? ` (${resolvedCount + 1} of ${candidates.length})` : ""}
           </h2>
           <button
@@ -68,18 +79,31 @@ const CandidateReviewModal = ({ ctx, candidates, child, onClose }) => {
             &times;
           </button>
         </div>
-        <p className="text-sm text-gray-600 mb-4">
-          Found in your photo — review, edit anything that's wrong, confirm the child, then add it.
+        <p className="text-sm text-gray-600 mb-2">
+          {familyChildren
+            ? "Found in an approved sender's email — review, edit anything that's wrong, confirm who it's for, then add it."
+            : "Found in your photo — review, edit anything that's wrong, confirm the child, then add it."}
         </p>
+        {familyChildren && current.targetType && (
+          <p className="text-sm text-indigo-700 font-semibold mb-2">
+            Configured for: {getSenderTargetLabel({ targetType: current.targetType, childId: current.targetChildId }, familyChildren)}
+          </p>
+        )}
 
         {error && <p className="text-red-600 text-sm font-semibold mb-2">{error}</p>}
 
         <ItemForm
           key={current.id}
-          children={child ? [child] : []}
+          children={familyChildren || (child ? [child] : [])}
           candidateParentItems={[]}
           initialType={current.proposedType}
           existingItem={candidateToDraftItem(current, child)}
+          // Only a "family"-targeted email candidate ever allows a
+          // zero-child, genuinely household-wide approval — a
+          // "review"-targeted candidate must still require the parent to
+          // pick a child before it can be approved (see ItemForm.jsx's
+          // canSubmitItemForm).
+          allowFamilyWide={current.targetType === "family"}
           onSubmit={async (payload) => {
             try {
               await handleApprove(payload);

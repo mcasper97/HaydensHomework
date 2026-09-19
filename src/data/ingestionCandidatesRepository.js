@@ -79,6 +79,14 @@ const EMPTY_DEFAULTS = {
   description: null,
   extractionConfidence: null,
   reviewStatus: "pending",
+  // Email-led ingestion (#26, Commit 5) — the sender's CONFIGURED
+  // assignment (see src/data/gmailApprovedSenders.js), never the AI's own
+  // guess. null/"review" for every pre-Commit-5 candidate (photo/CSV),
+  // which have no sender to configure a target for. targetType is one of
+  // "child" | "family" | "review" (or null for a candidate that predates
+  // this field); targetChildId is set only when targetType is "child".
+  targetType: null,
+  targetChildId: null,
 };
 
 /**
