@@ -521,6 +521,14 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
       // sourceUrl (see api/_emailExtraction.js) — the email's own
       // SourceRecord when null/unmatched, or the matching webpage's.
       const newCandidates = [];
+      // Persistence failures (item #5, live-validation persistence defect
+      // investigation): previously only console.error'd — invisible to the
+      // parent, who would see either a normal or a silently-incomplete
+      // result with no way to tell the difference. Now surfaced as a
+      // visible banner alongside whatever candidates DID make it through,
+      // so a real write failure (permission/network/quota) is diagnosable
+      // from the UI itself instead of requiring devtools.
+      let hadPersistenceError = false;
       for (const emailResult of result.results) {
         let emailSourceRecord;
         try {
@@ -552,8 +560,10 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
           });
         } catch (err) {
           // Provenance is best-effort — one email's SourceRecord failing
-          // to save must never block the rest of this batch.
+          // to save must never block the rest of this batch — but it must
+          // no longer be invisible (see hadPersistenceError above).
           console.error("Check Email: createSourceRecord (email) failed", err);
+          hadPersistenceError = true;
           continue;
         }
 
@@ -578,6 +588,7 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
             webpageSourceRecordIdByUrl.set(page.url, webpageSourceRecord.id);
           } catch (err) {
             console.error("Check Email: createSourceRecord (webpage) failed", page.url, err);
+            hadPersistenceError = true;
             // No entry in the map for this URL — any obligation attributed
             // to it below falls back to the email's own SourceRecord
             // rather than being lost.
@@ -612,12 +623,20 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
             newCandidates.push(candidate);
           } catch (err) {
             console.error("Check Email: createIngestionCandidate failed", err);
+            hadPersistenceError = true;
           }
         }
       }
 
       if (newCandidates.length > 0) {
         setIngestionCandidates(newCandidates);
+      }
+      if (hadPersistenceError) {
+        setError(
+          newCandidates.length > 0
+            ? "Some items couldn't be saved and are missing from review below — please try Check Email again in a moment."
+            : "Couldn't save what was found — please try Check Email again in a moment."
+        );
       }
     } catch (e) {
       setError(e.message || "Could not check email.");
