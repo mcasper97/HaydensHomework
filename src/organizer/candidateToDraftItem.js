@@ -3,6 +3,7 @@
  * contains JSX) so it can be unit-tested directly in plain Node without a
  * React/JSX runtime — same rationale as keeping itemTypes.js import-free.
  */
+import { todayStr } from "./itemBuckets.js";
 
 // Types whose primary date is a "due" date in ItemForm's showsField() rules
 // (see organizer/ItemForm.jsx) — everything else treats a single extracted
@@ -21,6 +22,14 @@ const DUE_DATE_TYPES = ["assignment", "project", "study_task"];
  */
 export function candidateToDraftItem(candidate, child) {
   const isDue = DUE_DATE_TYPES.includes(candidate.proposedType);
+  // Recurring obligations (recurring-obligations increment) — advisory
+  // only; this is a PRE-FILL for ItemForm's Repeats section, never trusted
+  // as final. `active` defaults true (nothing has deactivated it yet — the
+  // parent hasn't even approved it). The suggestion's own weekdays/timeMode
+  // are carried through as-is; ItemForm.jsx's own submit logic is what
+  // actually re-validates/normalizes whatever the parent ends up with.
+  const suggestion = candidate.recurrenceSuggestion;
+  const isRecurring = !!suggestion?.recurring;
 
   return {
     type: candidate.proposedType,
@@ -57,8 +66,18 @@ export function candidateToDraftItem(candidate, child) {
     academicTopic: candidate.academicTopic || null,
     academicUnit: candidate.academicUnit || null,
     preparationRequired: candidate.preparationRequired,
-    startDate: isDue ? null : candidate.date || null,
-    dueDate: isDue ? candidate.date || null : null,
+    // A recurring obligation owns its date/time signal entirely through
+    // `schedule` below — startDate becomes the recurrence's effective
+    // start boundary (see itemBuckets.js's isRecurringDueOn), never a
+    // one-time due/start/occurrence date, regardless of the type's usual
+    // due-vs-start routing. If the source gave an explicit date, it's
+    // preserved as-is; if not, this defaults to today (household/local —
+    // see itemBuckets.js's todayStr) as the app/parent's own operational
+    // choice of when the recurrence starts. This is never presented as
+    // something the teacher said — it's a UI default the parent can freely
+    // change before (or after) approving.
+    startDate: isRecurring ? candidate.date || todayStr() : isDue ? null : candidate.date || null,
+    dueDate: isRecurring ? null : isDue ? candidate.date || null : null,
     // Time fields (#26, Commit 5 review-UX fix) — only ever populated by
     // the email pipeline, and only when the source text explicitly stated
     // a time (see api/_emailExtraction.js's "never fabricate" rule). For
@@ -66,11 +85,26 @@ export function candidateToDraftItem(candidate, child) {
     // field (there's no analogous "end" for a due date). For everything
     // else, allDay is derived from whether any time was actually
     // extracted — never fabricated true/false, just reflecting what the
-    // extraction genuinely found.
-    dueTime: isDue && candidate.startTime ? candidate.startTime : null,
-    startTime: !isDue && candidate.startTime ? candidate.startTime : null,
-    endTime: !isDue && candidate.endTime ? candidate.endTime : null,
-    allDay: isDue ? true : !(candidate.startTime || candidate.endTime),
+    // extraction genuinely found. A recurring obligation's time lives
+    // entirely in `schedule` instead (daypart/exact — see below); these
+    // flat fields stay null/true for it, same as any other all-day item.
+    dueTime: !isRecurring && isDue && candidate.startTime ? candidate.startTime : null,
+    startTime: !isRecurring && !isDue && candidate.startTime ? candidate.startTime : null,
+    endTime: !isRecurring && !isDue && candidate.endTime ? candidate.endTime : null,
+    allDay: isRecurring ? true : isDue ? true : !(candidate.startTime || candidate.endTime),
     notes: candidate.description || "",
+    // Recurring obligations — advisory pre-fill only (see above). null for
+    // every non-recurring candidate, exactly like every other optional
+    // field on this draft when the source didn't produce it.
+    schedule: isRecurring
+      ? {
+          recurring: true,
+          weekdays: Array.isArray(suggestion.weekdays) ? suggestion.weekdays : [],
+          timeMode: suggestion.timeMode || null,
+          daypart: suggestion.daypart || null,
+          time: suggestion.time || null,
+          active: true,
+        }
+      : null,
   };
 }

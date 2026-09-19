@@ -98,6 +98,8 @@ const MAX_TITLE_LENGTH = 200;
 const MAX_STRING_LENGTH = 500;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^\d{2}:\d{2}$/;
+const VALID_WEEKDAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
+const VALID_DAYPARTS = new Set(["morning", "evening"]);
 
 function isCleanString(value, maxLength = MAX_STRING_LENGTH) {
   return typeof value === "string" && value.trim().length > 0 && value.length <= maxLength;
@@ -121,6 +123,33 @@ function sanitizeObligation(value) {
     value.extractionConfidence <= 1
       ? value.extractionConfidence
       : null;
+
+  // Recurring-obligation fields — optional, additive, only ever produced
+  // by the email pipeline's prompt (see api/_emailExtraction.js); the
+  // photo pipeline's prompt never produces them, so they resolve to
+  // false/[]/null there — zero behavior change for image_capture/csv_import.
+  // `recurring` is only ever true when at least one valid weekday is also
+  // present — "recurring" with no days at all isn't a usable schedule, so
+  // it's normalized to non-recurring rather than trusted as-is. The
+  // timeMode invariant (daypart XOR exact time XOR neither) is enforced
+  // here, not just relied upon from the prompt — untrusted output is
+  // validated, never trusted merely because the model was asked nicely.
+  const weekdays = Array.isArray(value.weekdays)
+    ? [...new Set(value.weekdays.filter((d) => Number.isInteger(d) && VALID_WEEKDAYS.has(d)))].sort((a, b) => a - b)
+    : [];
+  const recurring = value.recurring === true && weekdays.length > 0;
+  let timeMode = null;
+  let daypart = null;
+  let time = null;
+  if (recurring) {
+    if (value.timeMode === "daypart" && VALID_DAYPARTS.has(value.daypart)) {
+      timeMode = "daypart";
+      daypart = value.daypart;
+    } else if (value.timeMode === "exact" && isCleanString(value.time, 5) && TIME_RE.test(value.time)) {
+      timeMode = "exact";
+      time = value.time;
+    }
+  }
 
   return {
     type: value.type,
@@ -153,6 +182,11 @@ function sanitizeObligation(value) {
     // null there — zero behavior change for image_capture/csv_import.
     startTime: isCleanString(value.startTime, 5) && TIME_RE.test(value.startTime) ? value.startTime : null,
     endTime: isCleanString(value.endTime, 5) && TIME_RE.test(value.endTime) ? value.endTime : null,
+    recurring,
+    weekdays: recurring ? weekdays : [],
+    timeMode,
+    daypart,
+    time,
   };
 }
 

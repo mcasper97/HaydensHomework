@@ -1,6 +1,9 @@
 import React, { useState } from "react";
 import { FORM_TYPES, ITEM_TYPE_META, ACADEMIC_TYPES, SUBJECT_OPTIONS } from "../data/itemTypes.js";
 import { canSubmitItemForm, resolveSubmittedChildIds } from "./itemFormValidation.js";
+import { normalizeSchedule } from "./itemBuckets.js";
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]; // index 0-6, JS Date.getDay() convention
 
 export { canSubmitItemForm };
 
@@ -78,6 +81,22 @@ const showsField = (type, field) => {
  * are untouched elsewhere — this is a review-surface simplification, not a
  * model change), and an End Time field appears next to Start Time whenever
  * the item isn't all-day. Every other caller is unaffected.
+ *
+ * showRecurrence — opt-in only (default false), set by ParentOrganizer.jsx
+ * and CandidateReviewModal.jsx (recurring-obligations increment). When
+ * true and the type shows a start date, a "Repeats" section appears
+ * letting the parent mark the item as a recurring obligation (weekdays +
+ * optional daypart/exact time) instead of a one-time occurrence — see
+ * itemBuckets.js's normalizeSchedule/isRecurringDueOn for how this is
+ * evaluated. A source-derived recurrenceSuggestion (see
+ * candidateToDraftItem.js) only ever pre-fills this section's initial
+ * state via existingItem.schedule; it's never authoritative, and the
+ * parent can freely change or discard it before (or after) approving.
+ * When the item is set to recurring, the existing Start-date field becomes
+ * the recurrence's effective start boundary ("Starts on") and its own
+ * Start Time / End-date / All-day inputs are hidden, since a recurring
+ * item's time lives entirely in `schedule` and it has no single
+ * start/end occurrence.
  */
 const ItemForm = ({
   children = [],
@@ -90,6 +109,7 @@ const ItemForm = ({
   allowFamilyWide = false,
   initialFamilyWide = false,
   compactDateTime = false,
+  showRecurrence = false,
 }) => {
   const [type, setType] = useState(existingItem?.type || initialType);
   const [title, setTitle] = useState(existingItem?.title || "");
@@ -108,12 +128,24 @@ const ItemForm = ({
   const [allDay, setAllDay] = useState(existingItem?.allDay ?? true);
   const [notes, setNotes] = useState(existingItem?.notes || "");
   const [parentItemId, setParentItemId] = useState(existingItem?.parentItemId || "");
+  const [recurring, setRecurring] = useState(!!existingItem?.schedule?.recurring);
+  const [recurWeekdays, setRecurWeekdays] = useState(existingItem?.schedule?.weekdays || []);
+  const [recurTimeMode, setRecurTimeMode] = useState(existingItem?.schedule?.timeMode || null);
+  const [recurDaypart, setRecurDaypart] = useState(existingItem?.schedule?.daypart || null);
+  const [recurTime, setRecurTime] = useState(existingItem?.schedule?.time || "");
+  const [recurActive, setRecurActive] = useState(existingItem?.schedule?.active ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const toggleChild = (id) => {
     setChildIds((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
   };
+
+  const toggleWeekday = (day) => {
+    setRecurWeekdays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b)));
+  };
+
+  const showRepeats = showRecurrence && showsField(type, "startDate");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -130,14 +162,25 @@ const ItemForm = ({
       academicUnit: showsField(type, "academicUnit") && academicUnit.trim() ? academicUnit.trim() : null,
       preparationRequired: showsField(type, "preparationRequired") ? preparationRequired : null,
       startDate: showsField(type, "startDate") && startDate ? startDate : null,
-      startTime: showsField(type, "startDate") && startDate && startTime ? startTime : null,
-      endTime: showsField(type, "startDate") && startDate && endTime ? endTime : null,
+      startTime: showsField(type, "startDate") && startDate && startTime && !(showRepeats && recurring) ? startTime : null,
+      endTime: showsField(type, "startDate") && startDate && endTime && !(showRepeats && recurring) ? endTime : null,
       dueDate: showsField(type, "dueDate") && dueDate ? dueDate : null,
       dueTime: showsField(type, "dueDate") && dueDate && dueTime ? dueTime : null,
-      endDate: showsField(type, "endDate") && endDate ? endDate : null,
-      allDay: showsField(type, "allDay") ? allDay : true,
+      endDate: showsField(type, "endDate") && endDate && !(showRepeats && recurring) ? endDate : null,
+      allDay: showsField(type, "allDay") ? (showRepeats && recurring ? true : allDay) : true,
       notes: notes.trim(),
       parentItemId: showsField(type, "parentItemId") && parentItemId ? parentItemId : null,
+      schedule:
+        showRepeats && recurring
+          ? normalizeSchedule({
+              recurring: true,
+              weekdays: recurWeekdays,
+              timeMode: recurTimeMode,
+              daypart: recurDaypart,
+              time: recurTime || null,
+              active: recurActive,
+            })
+          : null,
     };
 
     try {
@@ -244,13 +287,15 @@ const ItemForm = ({
       {showsField(type, "startDate") && (
         <div>
           <label className="text-xs font-bold text-gray-500 uppercase">
-            {compactDateTime
+            {showRepeats && recurring
+              ? "Starts on"
+              : compactDateTime
               ? "Date"
               : type === "test" || type === "quiz" ? "Date" : type === "project" || type === "study_task" ? "Scheduled / start date" : "Start"}
           </label>
           <div className="flex gap-2 mt-1">
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="flex-1 px-4 py-2 border border-gray-200 rounded-2xl" />
-            {!allDay && (
+            {!allDay && !(showRepeats && recurring) && (
               <input
                 type="time"
                 value={startTime}
@@ -259,7 +304,7 @@ const ItemForm = ({
                 className="w-32 px-4 py-2 border border-gray-200 rounded-2xl"
               />
             )}
-            {compactDateTime && !allDay && (
+            {compactDateTime && !allDay && !(showRepeats && recurring) && (
               <input
                 type="time"
                 value={endTime}
@@ -272,6 +317,117 @@ const ItemForm = ({
         </div>
       )}
 
+      {showRepeats && (
+        <div>
+          <label className="text-xs font-bold text-gray-500 uppercase">Repeats</label>
+          <div className="flex gap-2 mt-1">
+            <button
+              type="button"
+              onClick={() => setRecurring(false)}
+              className={`px-3 py-1.5 rounded-full text-sm font-bold border transition ${
+                !recurring ? "bg-purple-700 text-white border-purple-700" : "bg-white text-gray-600 border-gray-300"
+              }`}
+            >
+              One-time
+            </button>
+            <button
+              type="button"
+              onClick={() => setRecurring(true)}
+              className={`px-3 py-1.5 rounded-full text-sm font-bold border transition ${
+                recurring ? "bg-purple-700 text-white border-purple-700" : "bg-white text-gray-600 border-gray-300"
+              }`}
+            >
+              🔁 Recurring
+            </button>
+          </div>
+
+          {recurring && (
+            <div className="mt-2 space-y-2">
+              <div className="flex flex-wrap gap-1.5">
+                {WEEKDAY_LABELS.map((label, day) => (
+                  <button
+                    type="button"
+                    key={day}
+                    onClick={() => toggleWeekday(day)}
+                    className={`w-10 h-9 rounded-xl text-xs font-bold border transition ${
+                      recurWeekdays.includes(day) ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-600 border-gray-300"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecurTimeMode(null);
+                    setRecurDaypart(null);
+                    setRecurTime("");
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold border transition ${
+                    !recurTimeMode ? "bg-purple-700 text-white border-purple-700" : "bg-white text-gray-600 border-gray-300"
+                  }`}
+                >
+                  No specific time
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecurTimeMode("daypart");
+                    setRecurDaypart(recurDaypart || "morning");
+                    setRecurTime("");
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold border transition ${
+                    recurTimeMode === "daypart" ? "bg-purple-700 text-white border-purple-700" : "bg-white text-gray-600 border-gray-300"
+                  }`}
+                >
+                  Morning/Evening
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecurTimeMode("exact");
+                    setRecurDaypart(null);
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold border transition ${
+                    recurTimeMode === "exact" ? "bg-purple-700 text-white border-purple-700" : "bg-white text-gray-600 border-gray-300"
+                  }`}
+                >
+                  Exact time
+                </button>
+              </div>
+
+              {recurTimeMode === "daypart" && (
+                <select
+                  value={recurDaypart || "morning"}
+                  onChange={(e) => setRecurDaypart(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-2xl"
+                >
+                  <option value="morning">Morning</option>
+                  <option value="evening">Evening</option>
+                </select>
+              )}
+
+              {recurTimeMode === "exact" && (
+                <input
+                  type="time"
+                  value={recurTime}
+                  onChange={(e) => setRecurTime(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-2xl"
+                />
+              )}
+
+              <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                <input type="checkbox" checked={recurActive} onChange={(e) => setRecurActive(e.target.checked)} />
+                Active
+              </label>
+            </div>
+          )}
+        </div>
+      )}
+
       {showsField(type, "preparationRequired") && (
         <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
           <input type="checkbox" checked={preparationRequired} onChange={(e) => setPreparationRequired(e.target.checked)} />
@@ -279,14 +435,14 @@ const ItemForm = ({
         </label>
       )}
 
-      {showsField(type, "endDate") && !compactDateTime && (
+      {showsField(type, "endDate") && !compactDateTime && !(showRepeats && recurring) && (
         <div>
           <label className="text-xs font-bold text-gray-500 uppercase">End</label>
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full px-4 py-2 border border-gray-200 rounded-2xl mt-1" />
         </div>
       )}
 
-      {showsField(type, "allDay") && (
+      {showsField(type, "allDay") && !(showRepeats && recurring) && (
         <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
           <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} />
           All day

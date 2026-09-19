@@ -27,6 +27,8 @@ import { buildSenderTargetOptions, parseSenderTargetValue, senderTargetToValue, 
 import { getParentToolsOpen, setParentToolsOpen } from "./data/parentToolsPreference.js";
 import { createSourceRecord } from "./data/sourceRecordsRepository.js";
 import { createIngestionCandidate } from "./data/ingestionCandidatesRepository.js";
+import { listItems } from "./data/itemsRepository.js";
+import { buildObligationSignature, canReconcile } from "./organizer/recurringObligationMatch.js";
 import { summarizeGoogleDocOutcomes } from "./organizer/googleDocCheckSummary.js";
 import { summarizeCheckEmailResult } from "./organizer/checkEmailSummary.js";
 import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
@@ -525,6 +527,27 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
       // api/_emailExtraction.js) — the email's own SourceRecord when
       // null/unmatched, or the matching linked page's.
       const newCandidates = [];
+      // Recurring-obligation reconciliation (recurring-obligations
+      // increment) — fetched once per Check Email run, not per obligation.
+      // `existingRecurringSignatures` compares a new recurring obligation
+      // against every already-approved recurring Item in this household;
+      // `runRecurringSignatures` additionally catches the same standing
+      // instruction appearing twice within this one run (e.g. repeated in
+      // both an email body and a linked page). Both only ever apply to
+      // obligations that are themselves recurring — a one-time obligation
+      // never touches this logic, so existing dedupe (Gmail message-id) and
+      // one-time candidate creation are completely unaffected.
+      let existingRecurringItems = [];
+      try {
+        existingRecurringItems = (await listItems(ctx)).filter((it) => it.schedule?.recurring);
+      } catch (err) {
+        console.error("Check Email: listItems (recurring reconciliation) failed", err);
+      }
+      const existingRecurringSignatures = existingRecurringItems.map((it) => ({
+        itemId: it.id,
+        signature: buildObligationSignature({ type: it.type, title: it.title, recurring: true, target: { childIds: it.childIds } }),
+      }));
+      const runRecurringSignatures = [];
       // Persistence failures (item #5, live-validation persistence defect
       // investigation): previously only console.error'd — invisible to the
       // parent, who would see either a normal or a silently-incomplete
@@ -612,6 +635,34 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
           const sourceRecordId = o.sourceUrl && linkedSourceRecordIdByUrl.has(o.sourceUrl)
             ? linkedSourceRecordIdByUrl.get(o.sourceUrl)
             : emailSourceRecord.id;
+
+          // Recurring-obligation reconciliation — only ever applied to an
+          // obligation the extraction itself marked recurring; a one-time
+          // obligation falls straight through to the unchanged path below.
+          let reconciledItemId = null;
+          let skipAsRunDuplicate = false;
+          if (o.recurring) {
+            const target = { targetType: emailResult.targetType, targetChildId: emailResult.targetChildId };
+            const signature = buildObligationSignature({ type: o.type, title: o.title, recurring: true, target });
+            const existingMatch = existingRecurringSignatures.find((s) => canReconcile(signature, s.signature));
+            if (existingMatch) {
+              reconciledItemId = existingMatch.itemId;
+            } else if (runRecurringSignatures.some((s) => canReconcile(signature, s))) {
+              // Same standing instruction already produced a candidate
+              // earlier in this same run (e.g. repeated across an email
+              // body and a linked page) — never ask the parent to approve
+              // the same recurring obligation twice in one review batch.
+              skipAsRunDuplicate = true;
+            } else {
+              runRecurringSignatures.push(signature);
+            }
+          }
+          if (skipAsRunDuplicate) continue;
+
+          const recurrenceSuggestion = o.recurring
+            ? { recurring: true, weekdays: o.weekdays || [], timeMode: o.timeMode || null, daypart: o.daypart || null, time: o.time || null }
+            : null;
+
           try {
             const candidate = await createIngestionCandidate(ctx, {
               sourceRecordId,
@@ -632,8 +683,21 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
               // ingestion; see candidateToDraftItem.js).
               targetType: emailResult.targetType,
               targetChildId: emailResult.targetChildId,
+              recurrenceSuggestion,
+              // A corroborated candidate preserves full provenance (this
+              // SourceRecord + candidate both persist) without ever
+              // entering the parent's review queue or writing to the
+              // already-approved Item it corroborates — the parent's own
+              // chosen schedule is never touched by a later source update.
+              // reviewStatus is omitted (not set to undefined) for a
+              // non-corroborated candidate so it keeps createIngestionCandidate's
+              // own "pending" default rather than overwriting it.
+              ...(reconciledItemId ? { reviewStatus: "corroborated", reconciledItemId } : {}),
             });
-            newCandidates.push(candidate);
+            // Corroborated candidates are deliberately never added to the
+            // review queue — see ingestionCandidatesRepository.js's
+            // reviewStatus lifecycle doc comment.
+            if (!reconciledItemId) newCandidates.push(candidate);
           } catch (err) {
             console.error("Check Email: createIngestionCandidate failed", err);
             hadPersistenceError = true;

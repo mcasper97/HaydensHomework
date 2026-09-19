@@ -94,6 +94,16 @@ const EMPTY_DEFAULTS = {
   // sourceRecordId is purely additive and defaults to null/absent for every
   // pre-existing item.
   sourceRecordId: null,
+  // Recurring reminders — optional, additive. null/absent means exactly
+  // today's existing one-time behavior (startDate/dueDate as a single
+  // occurrence), completely unchanged. When present, shape is
+  // { recurring: true, weekdays: [0-6,...], timeMode: "daypart"|"exact"|null,
+  // daypart: "morning"|"evening"|null, time: "HH:MM"|null, active: true } —
+  // see src/organizer/itemBuckets.js's normalizeSchedule/isRecurringDueOn,
+  // the single place this shape is validated/evaluated. The item's own
+  // existing startDate field doubles as the recurrence's effective start
+  // boundary (see isRecurringDueOn) — no new date field was added for this.
+  schedule: null,
 };
 
 /**

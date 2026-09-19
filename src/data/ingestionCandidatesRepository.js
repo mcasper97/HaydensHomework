@@ -13,10 +13,23 @@
  *
  * reviewStatus lifecycle (see the vertical-slice plan for the full
  * rationale):
- *   "pending"   — awaiting parent review (initial state on creation)
- *   "rejected"  — parent declined; no item created; kept for audit history
- *   "approved"  — parent approved; item creation about to be/being attempted
- *   "committed" — canonical item was created successfully
+ *   "pending"      — awaiting parent review (initial state on creation)
+ *   "rejected"     — parent declined; no item created; kept for audit history
+ *   "approved"     — parent approved; item creation about to be/being attempted
+ *   "committed"    — canonical item was created successfully
+ *   "corroborated" — recurring-obligations increment: this candidate was
+ *                    recognized as describing the SAME standing obligation
+ *                    as an existing recurring Item (see
+ *                    src/organizer/recurringObligationMatch.js). Set once,
+ *                    at creation, never transitioned into from any other
+ *                    state. Preserves full provenance (this candidate and
+ *                    its SourceRecord both exist and are queryable) without
+ *                    ever entering the parent's review queue and without
+ *                    ever writing to the existing Item — see
+ *                    reconciledItemId below. No caller filters/queries
+ *                    candidates by reviewStatus today (confirmed before
+ *                    adding this value), so this is a safe additive enum
+ *                    entry with no existing consumer to update.
  *
  * Approval and commit are deliberately two separate states/writes: on
  * approval the candidate is marked "approved" BEFORE createItem() is
@@ -94,6 +107,21 @@ const EMPTY_DEFAULTS = {
   // obligation with no stated time.
   startTime: null,
   endTime: null,
+  // Recurring reminders — optional, additive, advisory only. Same shape as
+  // Item.schedule (minus `active` — a not-yet-approved suggestion has no
+  // on/off concept), but this is NEVER authoritative: it only pre-fills
+  // ItemForm's Repeats section (see candidateToDraftItem.js) before the
+  // parent reviews/edits it. The Item's own parent-approved `schedule`,
+  // written only at approval time, is what actually controls behavior.
+  recurrenceSuggestion: null,
+  // Set only when this candidate was recognized (see
+  // src/organizer/recurringObligationMatch.js, wired in src/AuthShell.jsx)
+  // as corroborating an EXISTING recurring Item rather than describing a
+  // new one — reviewStatus is "corroborated" in that case (see the
+  // reviewStatus lifecycle doc above), and this points at the Item it
+  // corroborates. Provenance only: creating this candidate never writes
+  // anything onto that Item.
+  reconciledItemId: null,
 };
 
 /**

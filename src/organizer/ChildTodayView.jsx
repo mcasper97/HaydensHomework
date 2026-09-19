@@ -70,6 +70,7 @@ const ChildTodayView = ({ uid, childId, isAdmin }) => {
             return (
               <div key={item.id} className={`rounded-2xl p-3 border ${overdue ? "border-red-300 bg-red-50" : "border-gray-200 bg-gray-50"}`}>
                 <div className="font-extrabold text-gray-900 text-sm">
+                  {item.schedule?.recurring ? "🔁 " : ""}
                   {meta.icon} {item.title}
                 </div>
                 {(item.subject || item.academicTopic || item.academicUnit) && (

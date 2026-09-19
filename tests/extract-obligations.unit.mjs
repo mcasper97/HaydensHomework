@@ -221,5 +221,91 @@ try {
   ok("An explicit null endTime stays null", result.obligations[0].endTime === null);
 }
 
+// ============ recurring/weekdays/timeMode/daypart/time sanitization
+// (recurring-obligations increment; additive, only ever set by
+// api/_emailExtraction.js — the photo pipeline's prompt never produces
+// these fields) ============
+{
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "reminder", title: "Send a healthy snack daily", recurring: true, weekdays: [1, 2, 3, 4, 5] }],
+  });
+  const o = result.obligations[0];
+  ok("recurring:true with valid weekdays is preserved", o.recurring === true);
+  ok("weekdays array is preserved, sorted", JSON.stringify(o.weekdays) === JSON.stringify([1, 2, 3, 4, 5]));
+  ok("No timeMode given -> timeMode/daypart/time are all null (never fabricated)", o.timeMode === null && o.daypart === null && o.time === null);
+}
+{
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "test", title: "X" }],
+  });
+  const o = result.obligations[0];
+  ok("The photo pipeline's case (no recurring fields at all) normalizes to recurring:false", o.recurring === false);
+  ok("...with an empty weekdays array", JSON.stringify(o.weekdays) === JSON.stringify([]));
+  ok("...and no time signal", o.timeMode === null && o.daypart === null && o.time === null);
+}
+{
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "reminder", title: "X", recurring: true, weekdays: [] }],
+  });
+  ok("recurring:true with zero weekdays normalizes to recurring:false — not a usable schedule, never trusted as-is", result.obligations[0].recurring === false);
+}
+{
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "reminder", title: "X", recurring: true, weekdays: [1, 1, 8, -1, 3] }],
+  });
+  ok("Out-of-range/duplicate weekday values are dropped/de-duplicated, not trusted as-is", JSON.stringify(result.obligations[0].weekdays) === JSON.stringify([1, 3]));
+}
+{
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "reminder", title: "X", recurring: "yes", weekdays: [1] }],
+  });
+  ok("A non-boolean-true recurring value never coerces to true", result.obligations[0].recurring === false);
+}
+{
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "reminder", title: "Review study guides nightly", recurring: true, weekdays: [1, 2, 3, 4, 5], timeMode: "daypart", daypart: "evening" }],
+  });
+  const o = result.obligations[0];
+  ok("Valid daypart timeMode is preserved", o.timeMode === "daypart" && o.daypart === "evening");
+  ok("daypart mode leaves time null (XOR invariant enforced at the boundary, not just relied on from the prompt)", o.time === null);
+}
+{
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "reminder", title: "Gold folder returns Monday", recurring: true, weekdays: [1], timeMode: "exact", time: "07:45" }],
+  });
+  const o = result.obligations[0];
+  ok("Valid exact timeMode is preserved", o.timeMode === "exact" && o.time === "07:45");
+  ok("exact mode leaves daypart null (XOR invariant)", o.daypart === null);
+}
+{
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "reminder", title: "X", recurring: true, weekdays: [1], timeMode: "daypart", daypart: "afternoon" }],
+  });
+  ok("An invalid daypart value ('afternoon' — not morning/evening) falls back to no time signal, never trusted as-is", result.obligations[0].timeMode === null);
+}
+{
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "reminder", title: "X", recurring: true, weekdays: [1], timeMode: "exact", time: "7:45am" }],
+  });
+  ok("A malformed exact time string falls back to no time signal, never coerced", result.obligations[0].timeMode === null);
+}
+{
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "reminder", title: "X", recurring: true, weekdays: [1], timeMode: "exact", time: "07:45", daypart: "morning" }],
+  });
+  const o = result.obligations[0];
+  ok("timeMode governs which of daypart/time is kept — both given never both survive", o.timeMode === "exact" && o.time === "07:45" && o.daypart === null);
+}
+{
+  // Non-recurring obligations must never carry a time-signal artifact even
+  // if the model mistakenly included one.
+  const result = sanitizeObligationsResponse({
+    obligations: [{ type: "assignment", title: "X", recurring: false, weekdays: [1], timeMode: "exact", time: "07:45" }],
+  });
+  const o = result.obligations[0];
+  ok("A non-recurring obligation never carries a timeMode/daypart/time, even if the model set one", o.timeMode === null && o.daypart === null && o.time === null);
+  ok("...and its weekdays array is empty, not whatever the model happened to send", JSON.stringify(o.weekdays) === JSON.stringify([]));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

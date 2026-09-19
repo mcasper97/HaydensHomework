@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { subscribeItems } from "../data/itemsRepository.js";
-import { calendarAnchorDate, choresDueToday, todayStr } from "./itemBuckets.js";
+import { calendarAnchorDate, choresDueToday, todayStr, isRecurringDueOn } from "./itemBuckets.js";
 import { ITEM_TYPE_META } from "../data/itemTypes.js";
 
 const CHILD_COLORS = ["#7C3AED", "#0EA5A0", "#D97706", "#DB2777", "#2563EB", "#059669", "#DC2626"];
@@ -32,14 +32,23 @@ const OrganizerCalendar = ({ ctx, children = [], choreTemplates = {}, choreCompl
     [today]
   );
 
+  // Recurring items (recurring-obligations increment) are excluded from the
+  // one-time anchor-date map and projected separately per weekDates date via
+  // isRecurringDueOn below — the same canonical Item would otherwise need a
+  // single calendarAnchorDate, which doesn't make sense for something that
+  // recurs on multiple weekdays.
+  const recurringItems = useMemo(() => items.filter((it) => it.schedule?.recurring), [items]);
+
   const agendaByDate = useMemo(() => {
     const map = {};
-    items.forEach((item) => {
-      const date = calendarAnchorDate(item);
-      if (!date) return;
-      if (!map[date]) map[date] = [];
-      map[date].push(item);
-    });
+    items
+      .filter((it) => !it.schedule?.recurring)
+      .forEach((item) => {
+        const date = calendarAnchorDate(item);
+        if (!date) return;
+        if (!map[date]) map[date] = [];
+        map[date].push(item);
+      });
     return map;
   }, [items]);
 
@@ -63,7 +72,7 @@ const OrganizerCalendar = ({ ctx, children = [], choreTemplates = {}, choreCompl
           const d = new Date(date + "T00:00:00");
           const weekday = d.toLocaleDateString(undefined, { weekday: "short" });
           const dayNum = d.getDate();
-          const dayItems = agendaByDate[date] || [];
+          const dayItems = [...(agendaByDate[date] || []), ...recurringItems.filter((it) => isRecurringDueOn(it, date))];
           const choreGroups = isToday
             ? children
                 .map((c) => ({ child: c, chores: choresDueToday(choreTemplates, choreCompletions, c.id) }))
@@ -100,6 +109,7 @@ const OrganizerCalendar = ({ ctx, children = [], choreTemplates = {}, choreCompl
                   return (
                     <div key={item.id} className={`rounded-xl p-2.5 border ${urgency}`} style={{ borderLeftWidth: 3, borderLeftColor: color }}>
                       <div className="font-extrabold text-gray-900 text-xs leading-snug">
+                        {item.schedule?.recurring ? "🔁 " : ""}
                         {meta.icon} {item.title}
                       </div>
                       {item.subject && <div className="text-gray-600 text-[11px] mt-0.5">{item.subject}</div>}

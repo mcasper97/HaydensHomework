@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { subscribeItems, createItem, updateItem, deleteItem, setItemStatus } from "../data/itemsRepository.js";
 import { createSourceRecord } from "../data/sourceRecordsRepository.js";
-import { bucketItems, choresDueToday } from "./itemBuckets.js";
+import { subscribeItemCompletions, setItemCompletion } from "../data/itemCompletionsRepository.js";
+import { bucketItems, choresDueToday, todayStr, isOccurrenceCompleted } from "./itemBuckets.js";
 import { ITEM_TYPE_META, FORM_TYPES, ACADEMIC_TYPES } from "../data/itemTypes.js";
 import ItemForm from "./ItemForm.jsx";
 
@@ -31,6 +32,7 @@ const ParentOrganizer = ({
   allowComplete = true,
 }) => {
   const [items, setItems] = useState([]);
+  const [completions, setCompletions] = useState([]);
   const [filterChild, setFilterChild] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -38,6 +40,12 @@ const ParentOrganizer = ({
 
   useEffect(() => {
     const unsub = subscribeItems(ctx, {}, setItems);
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.uid, ctx.isAdmin]);
+
+  useEffect(() => {
+    const unsub = subscribeItemCompletions(ctx, setCompletions);
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx.uid, ctx.isAdmin]);
@@ -99,14 +107,23 @@ const ParentOrganizer = ({
     setEditingItem(null);
   };
 
-  const handleComplete = (item) => setItemStatus(ctx, item.id, item.status === "completed" ? "open" : "completed");
+  const handleComplete = (item) => {
+    if (item.schedule?.recurring) {
+      const today = todayStr();
+      const done = isOccurrenceCompleted(item.id, today, completions);
+      setItemCompletion(ctx, { itemId: item.id, occurrenceDate: today, completed: !done });
+      return;
+    }
+    setItemStatus(ctx, item.id, item.status === "completed" ? "open" : "completed");
+  };
   const handleDelete = (item) => {
     if (window.confirm(`Delete "${item.title}"?`)) deleteItem(ctx, item.id);
   };
 
   const renderItemRow = (item) => {
     const meta = ITEM_TYPE_META[item.type] || {};
-    const isDone = item.status === "completed";
+    const isRecurring = !!item.schedule?.recurring;
+    const isDone = isRecurring ? isOccurrenceCompleted(item.id, todayStr(), completions) : item.status === "completed";
     const dateLabel = item.dueDate || item.startDate;
     return (
       <div key={item.id} className="flex items-center gap-3 p-3 rounded-2xl bg-white border border-gray-200">
@@ -122,6 +139,7 @@ const ParentOrganizer = ({
         </button>
         <div className="flex-1 min-w-0">
           <div className={`font-bold text-gray-900 text-sm truncate ${isDone ? "line-through opacity-50" : ""}`}>
+            {isRecurring ? "🔁 " : ""}
             {meta.icon} {item.title}
           </div>
           <div className="text-xs text-gray-500 truncate">
@@ -133,7 +151,7 @@ const ParentOrganizer = ({
             {[item.academicTopic, item.academicUnit].filter(Boolean).length > 0
               ? ` · ${[item.academicTopic, item.academicUnit].filter(Boolean).join(" · ")}`
               : ""}
-            {dateLabel ? ` · ${dateLabel}` : ""}
+            {isRecurring ? "" : dateLabel ? ` · ${dateLabel}` : ""}
           </div>
         </div>
         {allowManage && (
@@ -196,6 +214,7 @@ const ParentOrganizer = ({
             initialType={formType}
             existingItem={editingItem}
             onSubmit={handleFormSubmit}
+            showRecurrence
             onCancel={() => {
               setShowForm(false);
               setEditingItem(null);

@@ -171,6 +171,7 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
           // ever passed by the Gmail flow); photo/CSV review keeps the
           // full manual Start/End-date entry UI, completely unchanged.
           compactDateTime={!!familyChildren}
+          showRecurrence
           onSubmit={async (payload) => {
             try {
               await handleApprove(payload);

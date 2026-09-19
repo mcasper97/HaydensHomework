@@ -7,6 +7,7 @@
  * Usage: node tests/candidate-to-draft-item.unit.mjs
  */
 import { candidateToDraftItem } from "../src/organizer/candidateToDraftItem.js";
+import { todayStr } from "../src/organizer/itemBuckets.js";
 
 let pass = 0, fail = 0;
 function ok(name, cond) {
@@ -146,7 +147,7 @@ for (const type of ["test", "quiz", "school_event", "family_event", "reminder"])
   const draft = candidateToDraftItem(emailCandidate, null);
   const draftKeys = Object.keys(draft);
   const forbidden = ["senderEmail", "senderName", "emailSubjectLine", "receivedAt", "gmailMessageId", "sourceUrl", "pageTitle"];
-  ok("The draft item's keys are exactly the expected Item fields, nothing extra", JSON.stringify(draftKeys.sort()) === JSON.stringify(["academicTopic", "academicUnit", "allDay", "childIds", "dueDate", "dueTime", "endTime", "notes", "preparationRequired", "startDate", "startTime", "subject", "title", "type"].sort()));
+  ok("The draft item's keys are exactly the expected Item fields, nothing extra", JSON.stringify(draftKeys.sort()) === JSON.stringify(["academicTopic", "academicUnit", "allDay", "childIds", "dueDate", "dueTime", "endTime", "notes", "preparationRequired", "schedule", "startDate", "startTime", "subject", "title", "type"].sort()));
   ok("No sender/subject-line/received/source/webpage field ever appears on the draft item", forbidden.every((key) => !(key in draft)));
   ok("The draft's own 'subject' field is still correctly the Item's academic subject (unaffected, legitimately passed through)", draft.subject === "Language Arts - Reading/Comprehension");
 }
@@ -223,6 +224,65 @@ for (const type of ["assignment", "project", "study_task"]) {
   ok("Uses the canonical Item field name startTime (not e.g. 'time' or 'start')", "startTime" in draft);
   ok("Uses the canonical Item field name endTime (not e.g. 'endTimeOfDay')", "endTime" in draft);
   ok("Uses the canonical Item field name allDay", "allDay" in draft);
+}
+
+// ============ Recurring obligations (recurring-obligations increment) —
+// recurrenceSuggestion is an ADVISORY-ONLY pre-fill for ItemForm's Repeats
+// section, never trusted as final. ============
+{
+  const draft = candidateToDraftItem(
+    { proposedType: "reminder", title: "Send a healthy snack daily", date: "2026-09-14", recurrenceSuggestion: { recurring: true, weekdays: [1, 2, 3, 4, 5], timeMode: null, daypart: null, time: null } },
+    null
+  );
+  ok("A recurring suggestion produces a schedule object with recurring:true", draft.schedule?.recurring === true);
+  ok("The suggested weekdays are carried through as-is", JSON.stringify(draft.schedule.weekdays) === JSON.stringify([1, 2, 3, 4, 5]));
+  ok("A newly-suggested recurring item's schedule.active defaults to true (nothing has deactivated it — the parent hasn't even approved it yet)", draft.schedule.active === true);
+  ok("The source-given date becomes the recurrence's effective start boundary (startDate), not a one-time occurrence date", draft.startDate === "2026-09-14");
+  ok("A recurring draft never sets dueDate", draft.dueDate === null);
+  ok("A recurring draft's own date/time fields (startTime/endTime) stay null — time lives entirely in schedule", draft.startTime === null && draft.endTime === null);
+  ok("A recurring draft defaults allDay to true (same as any other all-day item)", draft.allDay === true);
+}
+{
+  // No source date at all -> defaults to today (household/local, the
+  // app/parent's own operational choice, never presented as something the
+  // teacher said).
+  const draft = candidateToDraftItem(
+    { proposedType: "reminder", title: "Review study guides nightly", date: null, recurrenceSuggestion: { recurring: true, weekdays: [1, 2, 3, 4, 5] } },
+    null
+  );
+  ok("A recurring suggestion with no source date defaults startDate to today", draft.startDate === todayStr());
+}
+{
+  // Daypart suggestion carried through.
+  const draft = candidateToDraftItem(
+    { proposedType: "reminder", title: "Gold folder review", date: "2026-09-14", recurrenceSuggestion: { recurring: true, weekdays: [1], timeMode: "daypart", daypart: "evening" } },
+    null
+  );
+  ok("A daypart timeMode suggestion is carried through", draft.schedule.timeMode === "daypart" && draft.schedule.daypart === "evening");
+  ok("daypart mode leaves time null on the draft", draft.schedule.time === null);
+}
+{
+  // Exact-time suggestion carried through.
+  const draft = candidateToDraftItem(
+    { proposedType: "reminder", title: "Agenda initialing", date: "2026-09-14", recurrenceSuggestion: { recurring: true, weekdays: [1], timeMode: "exact", time: "19:30" } },
+    null
+  );
+  ok("An exact timeMode suggestion is carried through", draft.schedule.timeMode === "exact" && draft.schedule.time === "19:30");
+  ok("exact mode leaves daypart null on the draft", draft.schedule.daypart === null);
+}
+{
+  // No recurrenceSuggestion at all (every existing candidate type: photo,
+  // CSV, and any non-recurring email obligation) -> schedule stays null,
+  // completely unaffected by this increment.
+  const draft = candidateToDraftItem({ proposedType: "test", title: "Spelling Test", date: "2026-09-20" }, null);
+  ok("A candidate with no recurrenceSuggestion at all produces a null schedule (unaffected, pre-existing behavior)", draft.schedule === null);
+  ok("...and is routed through the original non-recurring date logic (a non-due type's date is a startDate)", draft.startDate === "2026-09-20");
+}
+{
+  // recurrenceSuggestion.recurring explicitly false is treated the same as
+  // absent — never produces a truthy schedule.
+  const draft = candidateToDraftItem({ proposedType: "reminder", title: "X", date: "2026-09-20", recurrenceSuggestion: { recurring: false } }, null);
+  ok("recurrenceSuggestion.recurring: false produces a null schedule, same as no suggestion at all", draft.schedule === null);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
