@@ -114,5 +114,42 @@ for (const type of ["test", "quiz", "school_event", "family_event", "reminder"])
   ok("Missing date defaults to null on the relevant date field", draft.startDate === null);
 }
 
+// ============ No source/provenance metadata leaks into the canonical Item draft
+// (#26, Commit 5 live-validation fix — the review UI's new "Source" section is
+// read directly from SourceRecord provenance; candidateToDraftItem.js's output
+// is exactly what becomes the Item, so it must never carry sender/subject/page
+// fields, even though the candidate it was given may itself have them). ============
+{
+  // NOTE: candidate.subject is the Item's own ACADEMIC subject (e.g.
+  // "Language Arts") — a real, existing, unrelated field. The provenance
+  // fields probed as "forbidden" below (senderEmail, senderName, an
+  // email's subject LINE, receivedAt, gmailMessageId, sourceUrl,
+  // pageTitle) live only on SourceRecord.metadata / the transient Check
+  // Email response — AuthShell.jsx's createIngestionCandidate call never
+  // copies any of them onto an IngestionCandidate in the first place, so
+  // they can never legitimately reach this function at all. Included
+  // anyway here as a defensive contamination probe.
+  const emailCandidate = {
+    proposedType: "school_event",
+    title: "Back to School Night",
+    subject: "Language Arts - Reading/Comprehension",
+    targetType: "review",
+    targetChildId: null,
+    senderEmail: "mmanson@school.org",
+    senderName: "Michelle Manson",
+    emailSubjectLine: "Weekly Classroom Update",
+    receivedAt: "2026-09-18T15:30:00.000Z",
+    gmailMessageId: "gmail-msg-123",
+    sourceUrl: "https://school.edu/signup",
+    pageTitle: "Ms. Rivera's Classroom",
+  };
+  const draft = candidateToDraftItem(emailCandidate, null);
+  const draftKeys = Object.keys(draft);
+  const forbidden = ["senderEmail", "senderName", "emailSubjectLine", "receivedAt", "gmailMessageId", "sourceUrl", "pageTitle"];
+  ok("The draft item's keys are exactly the expected Item fields, nothing extra", JSON.stringify(draftKeys.sort()) === JSON.stringify(["academicTopic", "academicUnit", "childIds", "dueDate", "notes", "preparationRequired", "startDate", "subject", "title", "type"].sort()));
+  ok("No sender/subject-line/received/source/webpage field ever appears on the draft item", forbidden.every((key) => !(key in draft)));
+  ok("The draft's own 'subject' field is still correctly the Item's academic subject (unaffected, legitimately passed through)", draft.subject === "Language Arts - Reading/Comprehension");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

@@ -536,6 +536,12 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
               gmailMessageId: emailResult.gmailMessageId,
               gmailThreadId: emailResult.gmailThreadId,
               senderEmail: emailResult.senderEmail,
+              // Display name only (e.g. "Michelle Manson") — null when the
+              // From header had no separate display name (see
+              // api/_gmailMime.js). Purely cosmetic, for the review UI's
+              // compact source context; sender approval/matching is
+              // address-only and unaffected by this field.
+              senderName: emailResult.senderName,
               subject: emailResult.subject,
               receivedAt: emailResult.receivedAt,
               targetType: emailResult.targetType,
@@ -558,7 +564,11 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
           try {
             const webpageSourceRecord = await createSourceRecord(ctx, {
               sourceType: "webpage",
-              title: page.url,
+              // The page's actual <title> when one was found; null
+              // otherwise (a failed fetch, or a page with no <title>) —
+              // the review UI falls back to displaying the URL's
+              // hostname in that case (see sourceContext.js).
+              title: page.title || null,
               processingStatus: !page.fetched ? "failed" : obligationsFromThisPage.length === 0 ? "no_candidates" : "extracted",
               metadata: {
                 sourceUrl: page.url,

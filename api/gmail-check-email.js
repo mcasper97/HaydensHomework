@@ -51,7 +51,7 @@ import { buildGmailSearchQuery, listGmailMessageIds, getGmailMessage } from "./_
 import { decodeGmailMessage } from "./_gmailMime.js";
 import { extractQualifyingLinks, extractLinksFromPlainText } from "./_extractLinks.js";
 import { safeFetch } from "./_urlSafety.js";
-import { htmlToReadableText } from "./_htmlToText.js";
+import { htmlToReadableText, extractPageTitle } from "./_htmlToText.js";
 import { extractObligationsFromEmail } from "./_emailExtraction.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -175,8 +175,11 @@ export default async function handler(req, res) {
         try {
           const fetchResult = await safeFetch(link.url);
           if (fetchResult.ok) {
-            pages.push({ url: link.url, text: htmlToReadableText(fetchResult.body.toString("utf8"), { maxLength: MAX_PAGE_TEXT_LENGTH }) });
-            webpagePages.push({ url: link.url, fetched: true });
+            const rawHtml = fetchResult.body.toString("utf8");
+            pages.push({ url: link.url, text: htmlToReadableText(rawHtml, { maxLength: MAX_PAGE_TEXT_LENGTH }) });
+            // Cosmetic only (the review UI's compact source context) —
+            // never used for extraction or anything else.
+            webpagePages.push({ url: link.url, fetched: true, title: extractPageTitle(rawHtml) });
           } else {
             webpagePages.push({ url: link.url, fetched: false });
           }
@@ -208,6 +211,7 @@ export default async function handler(req, res) {
         gmailMessageId: decoded.gmailMessageId,
         gmailThreadId: decoded.gmailThreadId,
         senderEmail: decoded.senderEmail,
+        senderName: decoded.senderName,
         subject: decoded.subject,
         receivedAt: decoded.receivedAt,
         targetType: sender.targetType,

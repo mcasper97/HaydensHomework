@@ -1,10 +1,12 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import ItemForm from "./ItemForm.jsx";
 import { updateIngestionCandidate } from "../data/ingestionCandidatesRepository.js";
 import { createItem } from "../data/itemsRepository.js";
+import { getSourceRecord } from "../data/sourceRecordsRepository.js";
 import { candidateToDraftItem } from "./candidateToDraftItem.js";
 import { getSenderTargetLabel } from "../data/gmailApprovedSenders.js";
 import { resolveFamilyWideOption } from "./itemFormValidation.js";
+import { buildSourceContext } from "./sourceContext.js";
 
 /**
  * Transient, single-purpose review surface for the candidates produced by
@@ -30,9 +32,36 @@ import { resolveFamilyWideOption } from "./itemFormValidation.js";
 const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose }) => {
   const [queue, setQueue] = useState(candidates);
   const [error, setError] = useState("");
+  const [sourceContext, setSourceContext] = useState(null);
 
   const current = queue[0];
   const resolvedCount = candidates.length - queue.length;
+
+  // Compact "Source" context (#26, Commit 5 live-validation fix) — reads
+  // persisted SourceRecord provenance, not the transient Check Email
+  // response, so it works correctly even if this modal is ever reopened
+  // later. Only fetched for email-sourced review (familyChildren is only
+  // ever passed by the Gmail flow) — photo/CSV ingestion never triggers
+  // this effect at all, so it stays exactly as it was before this fix.
+  useEffect(() => {
+    let cancelled = false;
+    setSourceContext(null);
+    if (!familyChildren || !current?.sourceRecordId) return undefined;
+    (async () => {
+      const record = await getSourceRecord(ctx, current.sourceRecordId);
+      if (cancelled || !record) return;
+      let parentRecord = null;
+      if (record.sourceType === "webpage" && record.metadata?.parentEmailSourceRecordId) {
+        parentRecord = await getSourceRecord(ctx, record.metadata.parentEmailSourceRecordId);
+      }
+      if (cancelled) return;
+      setSourceContext(buildSourceContext(record, parentRecord));
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.sourceRecordId, familyChildren]);
 
   if (!current) return null;
 
@@ -89,6 +118,30 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
           <p className="text-sm text-indigo-700 font-semibold mb-2">
             Configured for: {getSenderTargetLabel({ targetType: current.targetType, childId: current.targetChildId }, familyChildren)}
           </p>
+        )}
+
+        {/* Compact, read-only review context — plain text only (React
+            text content is always escaped, never rendered as HTML), no
+            link-out, no OAuth/Gmail internals. This is provenance a
+            parent may need to decide who an "Ask during review" item
+            belongs to — not a provenance dashboard. */}
+        {sourceContext && (
+          <div className="text-xs text-gray-500 bg-gray-50 rounded-xl p-2 mb-3 border border-gray-200">
+            <div className="font-bold uppercase tracking-wide text-gray-400 mb-0.5">Source</div>
+            {sourceContext.kind === "email" ? (
+              <>
+                <div>Email from {sourceContext.senderLine || "unknown sender"}</div>
+                {sourceContext.subject && <div>Subject: {sourceContext.subject}</div>}
+                {sourceContext.receivedDate && <div>Received: {sourceContext.receivedDate}</div>}
+              </>
+            ) : (
+              <>
+                <div>Teacher webpage: {sourceContext.pageTitle || "unknown page"}</div>
+                <div>Linked from email by {sourceContext.senderLine || "unknown sender"}</div>
+                {sourceContext.subject && <div>Subject: {sourceContext.subject}</div>}
+              </>
+            )}
+          </div>
         )}
 
         {error && <p className="text-red-600 text-sm font-semibold mb-2">{error}</p>}

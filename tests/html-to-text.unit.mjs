@@ -6,7 +6,7 @@
  *
  * Usage: node tests/html-to-text.unit.mjs
  */
-import { htmlToReadableText } from "../api/_htmlToText.js";
+import { htmlToReadableText, extractPageTitle } from "../api/_htmlToText.js";
 
 let pass = 0, fail = 0;
 function ok(name, cond) {
@@ -128,6 +128,17 @@ function ok(name, cond) {
   const html = "<p>Same input, twice.</p>";
   ok("Output is deterministic for the same input", htmlToReadableText(html) === htmlToReadableText(html));
 }
+
+// ============ extractPageTitle (#26, Commit 5 live-validation fix — compact source context) ============
+ok("Extracts a plain <title>", extractPageTitle("<html><head><title>Ms. Rivera's Classroom</title></head><body></body></html>") === "Ms. Rivera's Classroom");
+ok("Decodes HTML entities inside the title", extractPageTitle("<title>Tom &amp; Jerry</title>") === "Tom & Jerry");
+ok("Collapses excess whitespace inside the title", extractPageTitle("<title>  Weekly    Update  </title>") === "Weekly Update");
+ok("Returns null when there's no <title> tag at all", extractPageTitle("<html><body><p>No title here</p></body></html>") === null);
+ok("Returns null for an empty <title></title>", extractPageTitle("<title></title>") === null);
+ok("Returns null for a whitespace-only <title>", extractPageTitle("<title>   </title>") === null);
+ok("Handles a <title> with attributes", extractPageTitle('<title lang="en">Classroom Page</title>') === "Classroom Page");
+ok("Empty string input returns null", extractPageTitle("") === null);
+ok("Non-string input returns null, without throwing", extractPageTitle(null) === null);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

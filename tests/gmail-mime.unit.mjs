@@ -147,5 +147,28 @@ function headers(list) {
   ok("A From header with no @ at all still returns something rather than throwing (best-effort, lowercased)", decoded.senderEmail === "not-a-valid-header-format");
 }
 
+// ============ senderName extraction (#26, Commit 5 live-validation fix — compact source context) ============
+{
+  const message = {
+    id: "msg-name-1",
+    payload: { headers: headers([["From", "Michelle Manson <mmanson@school.org>"]]) },
+  };
+  const decoded = decodeGmailMessage(message);
+  ok("Extracts the display name from a \"Name <address>\" From header", decoded.senderName === "Michelle Manson");
+  ok("senderEmail is still the bare, lowercased address", decoded.senderEmail === "mmanson@school.org");
+}
+{
+  const message = { id: "msg-name-2", payload: { headers: headers([["From", '"Manson, Michelle" <mmanson@school.org>']]) } };
+  ok("Strips surrounding quotes from a quoted display name (handles a comma inside it)", decodeGmailMessage(message).senderName === "Manson, Michelle");
+}
+{
+  const message = { id: "msg-name-3", payload: { headers: headers([["From", "teacher@school.edu"]]) } };
+  ok("A bare address with no display name: senderName is null (not the address, not an empty string)", decodeGmailMessage(message).senderName === null);
+}
+{
+  const message = { id: "msg-name-4", payload: { headers: [] } };
+  ok("No From header at all: senderName is null, without throwing", decodeGmailMessage(message).senderName === null);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

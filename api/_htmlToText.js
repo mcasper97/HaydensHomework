@@ -151,3 +151,22 @@ export function htmlToReadableText(html, options = {}) {
 
   return text;
 }
+
+/**
+ * extractPageTitle(html) -> string | null
+ *
+ * Reads a page's <title> content, for the review UI's compact source
+ * context (#26, Commit 5 live-validation fix — "Teacher webpage: <page
+ * title if available, otherwise hostname>"). Purely cosmetic, read-only
+ * display text: never used for anything else, and — like the rest of this
+ * module — never executes anything or follows any reference the HTML
+ * contains. Returns null when there's no non-empty <title>, so the caller
+ * can fall back to the page's hostname.
+ */
+export function extractPageTitle(html) {
+  if (typeof html !== "string" || html.length === 0) return null;
+  const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  if (!match) return null;
+  const title = collapseWhitespace(decodeEntities(match[1]));
+  return title.length > 0 ? title : null;
+}

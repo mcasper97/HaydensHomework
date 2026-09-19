@@ -67,9 +67,30 @@ function extractAddress(fromHeader) {
 }
 
 /**
+ * Extracts the display name from a "Display Name <address@host>" From
+ * header (e.g. "Michelle Manson"), for the review UI's compact source
+ * context (#26, Commit 5 live-validation fix) — never used for sender
+ * matching/approval, which is address-only (see extractAddress above).
+ * Returns null when there's no separate display name at all (a bare
+ * "address@host" From header), matching the sanctioned fallback: show the
+ * email address alone.
+ */
+function extractSenderName(fromHeader) {
+  if (typeof fromHeader !== "string") return null;
+  const match = ANGLE_ADDRESS_RE.exec(fromHeader);
+  if (!match) return null;
+  const namePart = fromHeader
+    .slice(0, match.index)
+    .trim()
+    .replace(/^"(.*)"$/, "$1")
+    .trim();
+  return namePart.length > 0 ? namePart : null;
+}
+
+/**
  * decodeGmailMessage(message) -> {
- *   gmailMessageId, gmailThreadId, senderEmail, subject, receivedAt (ISO),
- *   htmlBody, textBody
+ *   gmailMessageId, gmailThreadId, senderEmail, senderName, subject,
+ *   receivedAt (ISO), htmlBody, textBody
  * }
  * `htmlBody`/`textBody` are "" (not null) when absent, so callers never
  * need a null check before checking `.length`.
@@ -82,10 +103,13 @@ export function decodeGmailMessage(message) {
   const internalDateMs = Number(message?.internalDate);
   const receivedAt = Number.isFinite(internalDateMs) && internalDateMs > 0 ? new Date(internalDateMs).toISOString() : null;
 
+  const fromHeader = getHeader(headers, "From");
+
   return {
     gmailMessageId: typeof message?.id === "string" ? message.id : null,
     gmailThreadId: typeof message?.threadId === "string" ? message.threadId : null,
-    senderEmail: extractAddress(getHeader(headers, "From")),
+    senderEmail: extractAddress(fromHeader),
+    senderName: extractSenderName(fromHeader),
     subject: getHeader(headers, "Subject") || null,
     receivedAt,
     htmlBody: found.html || "",
