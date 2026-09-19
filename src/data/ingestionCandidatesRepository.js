@@ -87,6 +87,13 @@ const EMPTY_DEFAULTS = {
   // this field); targetChildId is set only when targetType is "child".
   targetType: null,
   targetChildId: null,
+  // Optional, additive (#26, Commit 5 review-UX fix) — HH:MM 24-hour
+  // strings, only ever populated by the email pipeline when the source
+  // text explicitly states a time (see api/_emailExtraction.js). null for
+  // every pre-existing candidate type (photo/CSV) and for any email
+  // obligation with no stated time.
+  startTime: null,
+  endTime: null,
 };
 
 /**

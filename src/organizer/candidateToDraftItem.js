@@ -59,6 +59,18 @@ export function candidateToDraftItem(candidate, child) {
     preparationRequired: candidate.preparationRequired,
     startDate: isDue ? null : candidate.date || null,
     dueDate: isDue ? candidate.date || null : null,
+    // Time fields (#26, Commit 5 review-UX fix) — only ever populated by
+    // the email pipeline, and only when the source text explicitly stated
+    // a time (see api/_emailExtraction.js's "never fabricate" rule). For
+    // due-date types, a stated start time maps onto the existing dueTime
+    // field (there's no analogous "end" for a due date). For everything
+    // else, allDay is derived from whether any time was actually
+    // extracted — never fabricated true/false, just reflecting what the
+    // extraction genuinely found.
+    dueTime: isDue && candidate.startTime ? candidate.startTime : null,
+    startTime: !isDue && candidate.startTime ? candidate.startTime : null,
+    endTime: !isDue && candidate.endTime ? candidate.endTime : null,
+    allDay: isDue ? true : !(candidate.startTime || candidate.endTime),
     notes: candidate.description || "",
   };
 }

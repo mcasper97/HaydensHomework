@@ -210,5 +210,43 @@ function fakeClient(responseJson, { capture } = {}) {
   ok("The prompt instructs the model how to set sourceUrl correctly", captured.system.toLowerCase().includes("sourceurl"));
 }
 
+// ============ startTime/endTime passthrough + prompt content (#26, Commit 5 review-UX fix) ============
+{
+  const client = fakeClient({
+    obligations: [
+      { type: "school_event", title: "Back to School Night", date: "2026-09-15", startTime: "18:00", endTime: "19:30" },
+    ],
+  });
+  const result = await extractObligationsFromEmail({ client, emailBodyText: "Back to School Night is 6:00 PM - 7:30 PM on Sept 15.", pages: [] });
+  ok("startTime passes through the shared sanitization contract unchanged", result.obligations[0].startTime === "18:00");
+  ok("endTime passes through the shared sanitization contract unchanged", result.obligations[0].endTime === "19:30");
+}
+{
+  // No time mentioned in the source at all — sanitizeObligation (shared
+  // with the photo pipeline) already defaults missing/invalid fields to
+  // null; nothing in this module invents a value.
+  const client = fakeClient({ obligations: [{ type: "test", title: "Spelling Test", date: "2026-09-20" }] });
+  const result = await extractObligationsFromEmail({ client, emailBodyText: "Spelling test Friday.", pages: [] });
+  ok("No fabricated startTime when the source gives none", result.obligations[0].startTime === null);
+  ok("No fabricated endTime when the source gives none", result.obligations[0].endTime === null);
+}
+{
+  // A malformed/non-HH:MM time from the model is dropped, never trusted
+  // as-is (same defensive posture as every other sanitized field).
+  const client = fakeClient({ obligations: [{ type: "school_event", title: "X", startTime: "6pm", endTime: "not-a-time" }] });
+  const result = await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+  ok("A malformed startTime is dropped to null rather than trusted as-is", result.obligations[0].startTime === null);
+  ok("A malformed endTime is dropped to null rather than trusted as-is", result.obligations[0].endTime === null);
+}
+{
+  let captured;
+  const client = fakeClient({ obligations: [] }, { capture: (p) => (captured = p) });
+  await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+  ok("The prompt's JSON schema documents startTime", captured.system.includes('"startTime"'));
+  ok("The prompt's JSON schema documents endTime", captured.system.includes('"endTime"'));
+  ok("The prompt explicitly instructs never to infer/guess a time", captured.system.toLowerCase().includes("never infer"));
+  ok("The prompt explicitly instructs not to set endTime from a single start time alone", captured.system.includes("endTime stays null"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

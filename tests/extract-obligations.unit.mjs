@@ -198,5 +198,28 @@ try {
   ok("An empty-string sourceUrl normalizes to null", result.obligations[0].sourceUrl === null);
 }
 
+// ============ startTime/endTime passthrough (#26, Commit 5 review-UX fix — email-led
+// ingestion's optional time fields; additive, only ever set by api/_emailExtraction.js) ============
+{
+  const result = sanitizeObligationsResponse({ obligations: [{ type: "school_event", title: "X", startTime: "18:00", endTime: "19:30" }] });
+  ok("A valid HH:MM startTime passes through", result.obligations[0].startTime === "18:00");
+  ok("A valid HH:MM endTime passes through", result.obligations[0].endTime === "19:30");
+}
+{
+  const result = sanitizeObligationsResponse({ obligations: [{ type: "test", title: "X" }] });
+  ok("Missing startTime (the photo pipeline's case — it never sets this field) normalizes to null", result.obligations[0].startTime === null);
+  ok("Missing endTime normalizes to null", result.obligations[0].endTime === null);
+}
+{
+  const result = sanitizeObligationsResponse({ obligations: [{ type: "school_event", title: "X", startTime: "6pm", endTime: "18:5" }] });
+  ok("A startTime not matching HH:MM is dropped to null, not coerced", result.obligations[0].startTime === null);
+  ok("An endTime not matching HH:MM (wrong digit count) is dropped to null", result.obligations[0].endTime === null);
+}
+{
+  const result = sanitizeObligationsResponse({ obligations: [{ type: "school_event", title: "X", startTime: 1800, endTime: null }] });
+  ok("A non-string startTime is dropped to null, not coerced", result.obligations[0].startTime === null);
+  ok("An explicit null endTime stays null", result.obligations[0].endTime === null);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

@@ -65,6 +65,19 @@ const showsField = (type, field) => {
  * (preserve the sender's configured intent by default); false for a
  * "review"-targeted one (nothing pre-selected — the parent must
  * affirmatively choose a child or Family before Approve & Add enables).
+ *
+ * compactDateTime — opt-in only (default false), set by
+ * CandidateReviewModal.jsx for email-import review (#26, Commit 5 review-UX
+ * fix). The manual "+ Add" form and photo-ingestion review expose separate
+ * Start/End date fields plus a Start Time (per showsField's existing
+ * per-type rules) — appropriate for entering an item from scratch, but more
+ * than a parent needs when just confirming an already-extracted email
+ * obligation. When true: the Date field is always labeled "Date" (not
+ * "Start"/"Scheduled / start date"), the separate End-date field is not
+ * shown at all (the canonical endDate field and its full manual-entry UI
+ * are untouched elsewhere — this is a review-surface simplification, not a
+ * model change), and an End Time field appears next to Start Time whenever
+ * the item isn't all-day. Every other caller is unaffected.
  */
 const ItemForm = ({
   children = [],
@@ -76,6 +89,7 @@ const ItemForm = ({
   submitLabel = null,
   allowFamilyWide = false,
   initialFamilyWide = false,
+  compactDateTime = false,
 }) => {
   const [type, setType] = useState(existingItem?.type || initialType);
   const [title, setTitle] = useState(existingItem?.title || "");
@@ -90,6 +104,7 @@ const ItemForm = ({
   const [dueDate, setDueDate] = useState(existingItem?.dueDate || "");
   const [dueTime, setDueTime] = useState(existingItem?.dueTime || "");
   const [endDate, setEndDate] = useState(existingItem?.endDate || "");
+  const [endTime, setEndTime] = useState(existingItem?.endTime || "");
   const [allDay, setAllDay] = useState(existingItem?.allDay ?? true);
   const [notes, setNotes] = useState(existingItem?.notes || "");
   const [parentItemId, setParentItemId] = useState(existingItem?.parentItemId || "");
@@ -116,6 +131,7 @@ const ItemForm = ({
       preparationRequired: showsField(type, "preparationRequired") ? preparationRequired : null,
       startDate: showsField(type, "startDate") && startDate ? startDate : null,
       startTime: showsField(type, "startDate") && startDate && startTime ? startTime : null,
+      endTime: showsField(type, "startDate") && startDate && endTime ? endTime : null,
       dueDate: showsField(type, "dueDate") && dueDate ? dueDate : null,
       dueTime: showsField(type, "dueDate") && dueDate && dueTime ? dueTime : null,
       endDate: showsField(type, "endDate") && endDate ? endDate : null,
@@ -228,12 +244,29 @@ const ItemForm = ({
       {showsField(type, "startDate") && (
         <div>
           <label className="text-xs font-bold text-gray-500 uppercase">
-            {type === "test" || type === "quiz" ? "Date" : type === "project" || type === "study_task" ? "Scheduled / start date" : "Start"}
+            {compactDateTime
+              ? "Date"
+              : type === "test" || type === "quiz" ? "Date" : type === "project" || type === "study_task" ? "Scheduled / start date" : "Start"}
           </label>
           <div className="flex gap-2 mt-1">
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="flex-1 px-4 py-2 border border-gray-200 rounded-2xl" />
             {!allDay && (
-              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-32 px-4 py-2 border border-gray-200 rounded-2xl" />
+              <input
+                type="time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                placeholder={compactDateTime ? "Start time" : undefined}
+                className="w-32 px-4 py-2 border border-gray-200 rounded-2xl"
+              />
+            )}
+            {compactDateTime && !allDay && (
+              <input
+                type="time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                placeholder="End time"
+                className="w-32 px-4 py-2 border border-gray-200 rounded-2xl"
+              />
             )}
           </div>
         </div>
@@ -246,7 +279,7 @@ const ItemForm = ({
         </label>
       )}
 
-      {showsField(type, "endDate") && (
+      {showsField(type, "endDate") && !compactDateTime && (
         <div>
           <label className="text-xs font-bold text-gray-500 uppercase">End</label>
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full px-4 py-2 border border-gray-200 rounded-2xl mt-1" />

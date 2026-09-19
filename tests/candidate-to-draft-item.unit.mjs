@@ -146,9 +146,83 @@ for (const type of ["test", "quiz", "school_event", "family_event", "reminder"])
   const draft = candidateToDraftItem(emailCandidate, null);
   const draftKeys = Object.keys(draft);
   const forbidden = ["senderEmail", "senderName", "emailSubjectLine", "receivedAt", "gmailMessageId", "sourceUrl", "pageTitle"];
-  ok("The draft item's keys are exactly the expected Item fields, nothing extra", JSON.stringify(draftKeys.sort()) === JSON.stringify(["academicTopic", "academicUnit", "childIds", "dueDate", "notes", "preparationRequired", "startDate", "subject", "title", "type"].sort()));
+  ok("The draft item's keys are exactly the expected Item fields, nothing extra", JSON.stringify(draftKeys.sort()) === JSON.stringify(["academicTopic", "academicUnit", "allDay", "childIds", "dueDate", "dueTime", "endTime", "notes", "preparationRequired", "startDate", "startTime", "subject", "title", "type"].sort()));
   ok("No sender/subject-line/received/source/webpage field ever appears on the draft item", forbidden.every((key) => !(key in draft)));
   ok("The draft's own 'subject' field is still correctly the Item's academic subject (unaffected, legitimately passed through)", draft.subject === "Language Arts - Reading/Comprehension");
+}
+
+// ============ Date/time review-UX simplification (#26, Commit 5 review-UX fix) ============
+// Scenario: single-day timed event (e.g. "Back to School Night, Sept 15,
+// 6:00 PM - 7:30 PM"). The compact review UI (ItemForm's compactDateTime
+// prop) shows Date + Start Time + End Time for this — allDay must default
+// to false so the time fields are actually visible.
+{
+  const draft = candidateToDraftItem({ proposedType: "school_event", title: "Back to School Night", date: "2026-09-15", startTime: "18:00", endTime: "19:30" }, null);
+  ok("Date + start/end time: startDate is set", draft.startDate === "2026-09-15");
+  ok("Date + start/end time: startTime is set", draft.startTime === "18:00");
+  ok("Date + start/end time: endTime is set", draft.endTime === "19:30");
+  ok("Date + start/end time: allDay is false so the time fields are shown", draft.allDay === false);
+}
+
+// Scenario: date + a start time but no end time (source gave one time, not
+// a range) — endTime must stay null rather than being fabricated to match
+// startTime or defaulted to anything.
+{
+  const draft = candidateToDraftItem({ proposedType: "school_event", title: "Assembly", date: "2026-10-01", startTime: "09:00" }, null);
+  ok("Date + start time only: startTime is set", draft.startTime === "09:00");
+  ok("Date + start time only: endTime is NOT fabricated, stays null", draft.endTime === null);
+  ok("Date + start time only: allDay is still false (a real time was extracted)", draft.allDay === false);
+}
+
+// Scenario: single-day all-day event — no time at all extracted for a
+// school/family event. Existing All Day behavior is retained (allDay true).
+{
+  const draft = candidateToDraftItem({ proposedType: "family_event", title: "No School Day", date: "2026-11-03" }, null);
+  ok("All-day event: date is set", draft.startDate === "2026-11-03");
+  ok("All-day event: no fabricated startTime", draft.startTime === null);
+  ok("All-day event: no fabricated endTime", draft.endTime === null);
+  ok("All-day event: allDay defaults to true, matching the existing All Day convention", draft.allDay === true);
+}
+
+// Scenario: test/assignment/reminder with only a date — normally Date
+// only, since no time was ever extracted.
+for (const type of ["test", "quiz", "reminder"]) {
+  const draft = candidateToDraftItem({ proposedType: type, title: "X", date: "2026-09-20" }, null);
+  ok(`${type}: date-only obligation has no fabricated startTime`, draft.startTime === null);
+  ok(`${type}: date-only obligation has no fabricated endTime`, draft.endTime === null);
+  ok(`${type}: date-only obligation defaults to allDay true (Date only, no time UI needed)`, draft.allDay === true);
+}
+// ...unless the extracted item genuinely has a time (e.g. a test period
+// starting at a specific time) — never suppressed just because of type.
+{
+  const draft = candidateToDraftItem({ proposedType: "test", title: "Timed Test", date: "2026-09-22", startTime: "08:30" }, null);
+  ok("A non-event type WITH a genuinely extracted time still surfaces it (allDay false)", draft.allDay === false && draft.startTime === "08:30");
+}
+
+// Scenario: due-date types (assignment/project/study_task) map a stated
+// start time onto dueTime (there's no "end" concept for a due date), and
+// never populate startTime/endTime/allDay-as-false — those fields belong
+// to the non-due-date review layout only.
+for (const type of ["assignment", "project", "study_task"]) {
+  const draft = candidateToDraftItem({ proposedType: type, title: "X", date: "2026-09-25", startTime: "23:59", endTime: "23:59" }, null);
+  ok(`${type}: a stated time maps to dueTime, not startTime`, draft.dueTime === "23:59" && draft.startTime === null);
+  ok(`${type}: endTime is never set for a due-date type (no "end" concept for a deadline)`, draft.endTime === null);
+  ok(`${type}: allDay is always true for a due-date type (time UI lives in the separate Due date field, unaffected)`, draft.allDay === true);
+}
+{
+  const draft = candidateToDraftItem({ proposedType: "assignment", title: "X", date: "2026-09-25" }, null);
+  ok("Due-date type with no stated time: dueTime is not fabricated", draft.dueTime === null);
+}
+
+// Submitted-values-map-correctly-to-the-existing-Item-model shape proof:
+// the draft's date/time keys are exactly itemsRepository.js's own field
+// names (startDate/startTime/dueDate/dueTime/endTime/allDay) — no
+// renaming, no new top-level shape.
+{
+  const draft = candidateToDraftItem({ proposedType: "school_event", title: "X", date: "2026-09-15", startTime: "18:00", endTime: "19:30" }, null);
+  ok("Uses the canonical Item field name startTime (not e.g. 'time' or 'start')", "startTime" in draft);
+  ok("Uses the canonical Item field name endTime (not e.g. 'endTimeOfDay')", "endTime" in draft);
+  ok("Uses the canonical Item field name allDay", "allDay" in draft);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

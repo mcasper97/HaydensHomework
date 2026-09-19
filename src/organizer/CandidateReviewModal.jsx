@@ -160,6 +160,11 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
           // candidates (targetType is never set) get neither prop —
           // completely unchanged from before this fix.
           {...resolveFamilyWideOption(current.targetType)}
+          // Compact Date / Start Time / End Time review UI (#26, Commit 5
+          // review-UX fix) — only for email review (familyChildren is only
+          // ever passed by the Gmail flow); photo/CSV review keeps the
+          // full manual Start/End-date entry UI, completely unchanged.
+          compactDateTime={!!familyChildren}
           onSubmit={async (payload) => {
             try {
               await handleApprove(payload);

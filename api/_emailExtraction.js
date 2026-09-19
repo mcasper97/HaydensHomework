@@ -43,7 +43,9 @@ Return ONLY valid JSON with this exact shape — no markdown, no explanation:
       "academicUnit": "string or null",
       "preparationRequired": true/false/null,
       "description": "string or null",
-      "sourceUrl": "string or null"
+      "sourceUrl": "string or null",
+      "startTime": "HH:MM (24-hour) or null",
+      "endTime": "HH:MM (24-hour) or null"
     }
   ]
 }
@@ -58,6 +60,7 @@ Rules:
 - preparationRequired: true only for test/quiz-like obligations that need studying; otherwise null.
 - description: a short plain-language summary of any instructions/details not captured by the other fields; otherwise null.
 - sourceUrl: if this specific obligation's information came from a linked page's text (not the email body itself), set this to that exact page's URL, copied character-for-character from its "--- LINKED PAGE: <url> ---" label. If the obligation came from the email body itself (or you are not sure which source it came from), set this to null. Never invent a URL that wasn't given to you.
+- startTime / endTime: only output a specific clock time, in 24-hour "HH:MM" format (e.g. "18:00" for 6:00 PM), if a specific time is explicitly stated in the source text; otherwise null. Never infer, estimate, or guess a time from vague context (e.g. do not assume "evening" or "after school" means any particular time). endTime must only be set when the source explicitly gives an end time or a time range (e.g. "6:00 PM to 7:30 PM" or "6:00-7:30 PM"); a single start time alone means endTime stays null. A date-only obligation with no time mentioned at all must leave both startTime and endTime null.
 - The email body is the primary source. Linked page text, when provided, is supporting context that may explain something the email only references (e.g. "see the signup form linked below"). A linked page's text may be missing entirely if it could not be safely retrieved — never invent what an unavailable page might have said; rely on the email body alone in that case.
 - If several linked pages are provided, each is clearly labeled with its own URL — treat them as independent sources, not one merged document.
 - If the email (and any linked pages) contain no useful obligations, return { "obligations": [] }.

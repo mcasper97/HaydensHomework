@@ -97,6 +97,7 @@ const MAX_OBLIGATIONS = 20;
 const MAX_TITLE_LENGTH = 200;
 const MAX_STRING_LENGTH = 500;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^\d{2}:\d{2}$/;
 
 function isCleanString(value, maxLength = MAX_STRING_LENGTH) {
   return typeof value === "string" && value.trim().length > 0 && value.length <= maxLength;
@@ -144,6 +145,14 @@ function sanitizeObligation(value) {
     // field, so value.sourceUrl is always undefined there and this
     // resolves to null — zero behavior change for image_capture/csv_import.
     sourceUrl: isCleanString(value.sourceUrl, 2000) ? value.sourceUrl.trim() : null,
+    // Optional, additive — only ever set by the email pipeline (#26,
+    // Commit 5 review-UX fix), which extracts an explicit clock time only
+    // when the source text states one. HH:MM 24-hour format, matching the
+    // app's existing <input type="time"> value convention. The photo
+    // pipeline's prompt never produces these fields, so they resolve to
+    // null there — zero behavior change for image_capture/csv_import.
+    startTime: isCleanString(value.startTime, 5) && TIME_RE.test(value.startTime) ? value.startTime : null,
+    endTime: isCleanString(value.endTime, 5) && TIME_RE.test(value.endTime) ? value.endTime : null,
   };
 }
 

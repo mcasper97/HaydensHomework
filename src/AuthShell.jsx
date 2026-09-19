@@ -601,6 +601,8 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
               preparationRequired: o.preparationRequired,
               description: o.description,
               extractionConfidence: o.extractionConfidence,
+              startTime: o.startTime,
+              endTime: o.endTime,
               // The sender's configured target — never the AI's own guess
               // (o.childName above is informational only, same as photo
               // ingestion; see candidateToDraftItem.js).
