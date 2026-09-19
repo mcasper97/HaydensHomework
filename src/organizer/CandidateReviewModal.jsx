@@ -4,6 +4,7 @@ import { updateIngestionCandidate } from "../data/ingestionCandidatesRepository.
 import { createItem } from "../data/itemsRepository.js";
 import { candidateToDraftItem } from "./candidateToDraftItem.js";
 import { getSenderTargetLabel } from "../data/gmailApprovedSenders.js";
+import { resolveFamilyWideOption } from "./itemFormValidation.js";
 
 /**
  * Transient, single-purpose review surface for the candidates produced by
@@ -98,12 +99,14 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
           candidateParentItems={[]}
           initialType={current.proposedType}
           existingItem={candidateToDraftItem(current, child)}
-          // Only a "family"-targeted email candidate ever allows a
-          // zero-child, genuinely household-wide approval — a
-          // "review"-targeted candidate must still require the parent to
-          // pick a child before it can be approved (see ItemForm.jsx's
-          // canSubmitItemForm).
-          allowFamilyWide={current.targetType === "family"}
+          // Both "family" and "review" targeted email candidates offer a
+          // Family option — a school-wide event from an unmapped
+          // ("review") sender must be assignable to the whole family, not
+          // just to one child. See resolveFamilyWideOption's doc comment
+          // for exactly what each targetType starts with. Photo/CSV
+          // candidates (targetType is never set) get neither prop —
+          // completely unchanged from before this fix.
+          {...resolveFamilyWideOption(current.targetType)}
           onSubmit={async (payload) => {
             try {
               await handleApprove(payload);

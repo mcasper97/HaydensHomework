@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { FORM_TYPES, ITEM_TYPE_META, ACADEMIC_TYPES, SUBJECT_OPTIONS } from "../data/itemTypes.js";
-import { canSubmitItemForm } from "./itemFormValidation.js";
+import { canSubmitItemForm, resolveSubmittedChildIds } from "./itemFormValidation.js";
 
 export { canSubmitItemForm };
 
@@ -48,16 +48,23 @@ const showsField = (type, field) => {
  * it just displays whatever string it's given.
  *
  * allowFamilyWide — opt-in only (default false), set by
- * CandidateReviewModal.jsx exclusively for an email candidate whose
- * approved sender is configured as "Family" (#26, Commit 5 correction).
- * When true, a "Whole family" toggle appears (defaulting ON) that lets the
- * parent approve the item with zero children selected — a genuinely
- * household-wide item (childIds: []), the app's own existing convention
- * for that (see itemsRepository.js's migrateLegacyFamilyEvents). No other
- * caller ever passes this, so every existing use of ItemForm (manual
- * "+ Add", photo/CSV ingestion review, and an email candidate whose sender
- * is "Family" is NOT the case for "Ask during review") keeps its exact
- * prior behavior: a parent must pick at least one child to submit.
+ * CandidateReviewModal.jsx for an email candidate whose approved sender is
+ * configured as "Family" OR "Ask during review" (#26, Commit 5 correction
+ * — a "review" candidate needs the SAME Family option a "family" one does;
+ * a parent reviewing a school-wide event from an unmapped sender must be
+ * able to say "this is for the whole family," not just pick one child).
+ * When true, a "Whole family" toggle appears that lets the parent approve
+ * the item with zero children selected — a genuinely household-wide item
+ * (childIds: []), the app's own existing convention for that (see
+ * itemsRepository.js's migrateLegacyFamilyEvents). No other caller ever
+ * passes this, so manual "+ Add" and photo/CSV ingestion review keep their
+ * exact prior behavior: a parent must pick at least one child to submit.
+ *
+ * initialFamilyWide — only meaningful when allowFamilyWide is true; whether
+ * the toggle starts checked. true for a "family"-targeted candidate
+ * (preserve the sender's configured intent by default); false for a
+ * "review"-targeted one (nothing pre-selected — the parent must
+ * affirmatively choose a child or Family before Approve & Add enables).
  */
 const ItemForm = ({
   children = [],
@@ -68,11 +75,12 @@ const ItemForm = ({
   onCancel,
   submitLabel = null,
   allowFamilyWide = false,
+  initialFamilyWide = false,
 }) => {
   const [type, setType] = useState(existingItem?.type || initialType);
   const [title, setTitle] = useState(existingItem?.title || "");
   const [childIds, setChildIds] = useState(existingItem?.childIds || (children[0] ? [children[0].id] : []));
-  const [familyWide, setFamilyWide] = useState(!!allowFamilyWide);
+  const [familyWide, setFamilyWide] = useState(!!initialFamilyWide);
   const [subject, setSubject] = useState(existingItem?.subject || SUBJECT_OPTIONS[0]);
   const [academicTopic, setAcademicTopic] = useState(existingItem?.academicTopic || "");
   const [academicUnit, setAcademicUnit] = useState(existingItem?.academicUnit || "");
@@ -101,12 +109,7 @@ const ItemForm = ({
     const payload = {
       type,
       title: title.trim(),
-      // Family-wide is forced to childIds: [] regardless of the pill
-      // picker's own state — the picker itself is hidden while familyWide
-      // is checked (see below), so there is never a conflicting selection
-      // to reconcile; this is just the explicit, no-ambiguity version of
-      // that same invariant.
-      childIds: familyWide ? [] : childIds,
+      childIds: resolveSubmittedChildIds({ childIds, familyWide }),
       subject: showsField(type, "subject") ? subject : null,
       academicTopic: showsField(type, "academicTopic") && academicTopic.trim() ? academicTopic.trim() : null,
       academicUnit: showsField(type, "academicUnit") && academicUnit.trim() ? academicUnit.trim() : null,

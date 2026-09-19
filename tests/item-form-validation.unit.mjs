@@ -17,7 +17,8 @@
  *
  * Usage: node tests/item-form-validation.unit.mjs
  */
-import { canSubmitItemForm } from "../src/organizer/itemFormValidation.js";
+import { canSubmitItemForm, resolveFamilyWideOption, resolveSubmittedChildIds } from "../src/organizer/itemFormValidation.js";
+import { candidateToDraftItem } from "../src/organizer/candidateToDraftItem.js";
 
 let pass = 0, fail = 0;
 function ok(name, cond) {
@@ -52,6 +53,74 @@ ok("familyWide true with missing childIds entirely (undefined) still submittable
     const newRule = canSubmitItemForm(c);
     ok(`Matches the original pre-fix rule exactly for title=${JSON.stringify(c.title)}, childIds.length=${c.childIds.length}`, oldRule === newRule);
   }
+}
+
+// ============ Live-validation defect fix (#26, Commit 5 correction): "review"-targeted
+// candidates must offer Family, not just specific children ============
+const CHILDREN = [
+  { id: "hayden-1", name: "Hayden", emoji: "🦁" },
+  { id: "payton-2", name: "Payton", emoji: "🐯" },
+];
+
+// 1. review-target candidate starts with neither child nor Family selected
+{
+  const draft = candidateToDraftItem({ proposedType: "school_event", title: "Back to School Night", targetType: "review", targetChildId: null }, null);
+  const { allowFamilyWide, initialFamilyWide } = resolveFamilyWideOption("review");
+  ok("A review-target candidate's draft starts with zero children selected", draft.childIds.length === 0);
+  ok("A review-target candidate offers the Family option at all", allowFamilyWide === true);
+  ok("A review-target candidate's Family option does NOT start checked", initialFamilyWide === false);
+}
+
+// 2. Approve & Add disabled initially (title present, but nothing assigned yet)
+ok("Initial review-target state (childIds: [], familyWide: false) is NOT submittable", !canSubmitItemForm({ title: "Back to School Night", childIds: [], familyWide: false }));
+
+// 3. selecting a child enables approval
+ok("Picking a specific child makes it submittable", canSubmitItemForm({ title: "Back to School Night", childIds: ["hayden-1"], familyWide: false }));
+
+// 4. selecting Family enables approval
+ok("Checking Family makes it submittable, with zero children picked", canSubmitItemForm({ title: "Back to School Night", childIds: [], familyWide: true }));
+
+// 5. Family saves with childIds: []
+ok("Submitting with Family checked always resolves to childIds: []", JSON.stringify(resolveSubmittedChildIds({ childIds: [], familyWide: true })) === "[]");
+ok("Family checked forces childIds: [] even if the (hidden) pill picker somehow still had a stale selection", JSON.stringify(resolveSubmittedChildIds({ childIds: ["hayden-1"], familyWide: true })) === "[]");
+ok("Family-wide submission is never every current child — it's an explicit empty array, not CHILDREN.map(c => c.id)", resolveSubmittedChildIds({ childIds: [], familyWide: true }).length !== CHILDREN.length);
+
+// 6. child selection saves with that childId
+ok("Submitting with a specific child picked (Family unchecked) saves exactly that child", JSON.stringify(resolveSubmittedChildIds({ childIds: ["payton-2"], familyWide: false })) === '["payton-2"]');
+
+// 7. family-target candidate defaults to Family
+{
+  const { allowFamilyWide, initialFamilyWide } = resolveFamilyWideOption("family");
+  ok("A family-target candidate offers the Family option", allowFamilyWide === true);
+  ok("A family-target candidate's Family option starts checked by default", initialFamilyWide === true);
+}
+
+// 8. child-target candidate defaults to the configured child (and never offers Family)
+{
+  const draft = candidateToDraftItem({ proposedType: "test", title: "Spelling Test", targetType: "child", targetChildId: "hayden-1" }, null);
+  const { allowFamilyWide } = resolveFamilyWideOption("child");
+  ok("A child-target candidate's draft is preselected to the CONFIGURED child", draft.childIds.length === 1 && draft.childIds[0] === "hayden-1");
+  ok("A child-target candidate never offers the Family option", allowFamilyWide === false);
+}
+{
+  // AI's own childName guess must never override the configured child —
+  // already proven in candidate-to-draft-item.unit.mjs; re-asserted here
+  // in this defect's own context for completeness.
+  const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "Someone Else", targetType: "child", targetChildId: "hayden-1" }, null);
+  ok("The AI's proposedChildName guess never overrides the sender-configured child", draft.childIds[0] === "hayden-1");
+}
+
+// 9. photo-ingestion review behavior remains unchanged
+{
+  // Photo/CSV candidates never set targetType at all.
+  const { allowFamilyWide, initialFamilyWide } = resolveFamilyWideOption(undefined);
+  ok("A candidate with no targetType (photo/CSV ingestion) never offers Family", allowFamilyWide === false);
+  ok("...and its Family option (moot, since it's never offered) is not checked either", initialFamilyWide === false);
+
+  const photoChild = { id: "child-1", name: "Ava", emoji: "🦁" };
+  const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "Ava" }, photoChild);
+  ok("Photo ingestion's single-in-scope-child prefill is completely unaffected by this fix", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
+  ok("Photo ingestion's submit rule is unaffected: zero children (no ambient child) still blocks submit, exactly as before", !canSubmitItemForm({ title: "X", childIds: [] }));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
