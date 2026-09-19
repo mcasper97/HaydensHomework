@@ -237,7 +237,18 @@ export default async function handler(req, res) {
         });
         obligations = extraction.obligations;
       } catch (err) {
-        console.error("gmail-check-email: extraction failed", decoded.gmailMessageId, err);
+        // Structured, content-free logging only — a controlled failure
+        // code (see api/_emailExtraction.js's ExtractionError) plus the
+        // Gmail message id and stop_reason when available. Deliberately
+        // never logs the raw error object, the built prompt, the email
+        // body, or any linked/Google-Doc text — none of those are read
+        // here at all.
+        console.error("gmail-check-email: extraction failed", {
+          gmailMessageId: decoded.gmailMessageId,
+          code: err?.code || err?.name || "unknown_error",
+          stopReason: err?.stopReason ?? null,
+          message: err?.message || null,
+        });
         extractionFailed = true;
       }
 

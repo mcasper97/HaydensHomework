@@ -28,6 +28,7 @@ import { getParentToolsOpen, setParentToolsOpen } from "./data/parentToolsPrefer
 import { createSourceRecord } from "./data/sourceRecordsRepository.js";
 import { createIngestionCandidate } from "./data/ingestionCandidatesRepository.js";
 import { summarizeGoogleDocOutcomes } from "./organizer/googleDocCheckSummary.js";
+import { summarizeCheckEmailResult } from "./organizer/checkEmailSummary.js";
 import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
 
 const CHILD_EMOJIS = ["🦁", "🐯", "🐺", "🦊", "🐻", "🐼", "🦄", "🐲", "🚀", "⭐", "🌈", "🔥"];
@@ -735,13 +736,12 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
         {checking ? "Checking…" : "Check Email"}
       </button>
 
-      {checkResult && (
-        <p className="text-gray-400 text-xs mt-2">
-          {checkResult.results.length === 0
-            ? `No new emails found from your ${checkResult.senderCount} approved sender${checkResult.senderCount === 1 ? "" : "s"} in the last ${checkResult.lookbackDays} days.`
-            : `Checked ${checkResult.results.length} new email${checkResult.results.length === 1 ? "" : "s"} from the last ${checkResult.lookbackDays} days — review below.`}
-        </p>
-      )}
+      {/* Only ever says "review below" when a real obligation was
+          actually found somewhere in this run (live-failure follow-up
+          fix) — previously this said "review below" for any email found
+          at all, even one whose extraction failed or that had zero
+          actionable obligations. See checkEmailSummary.js. */}
+      {checkResult && <p className="text-gray-400 text-xs mt-2">{summarizeCheckEmailResult(checkResult)}</p>}
       {/* Google Doc access/fetch-failure summary (#26, Commit 6) — a
           concise sentence, not an error dashboard; a doc that fetched
           successfully (with or without obligations) needs no mention

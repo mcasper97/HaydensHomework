@@ -1,6 +1,7 @@
 /* ============================== Email-led obligation extraction ==============================
  * Text-only counterpart to api/extract-obligations.js's photo pipeline
- * (#26, Commit 5; Google Doc text added in Commit 6). Given an approved
+ * (#26, Commit 5; Google Doc text added in Commit 6; forced tool use
+ * added in the live-failure follow-up fix below). Given an approved
  * sender's email body (already reduced to readable text via
  * api/_htmlToText.js) plus the readable text of up to several linked
  * pages — ordinary webpages (via api/_htmlToText.js) or public Google
@@ -14,18 +15,34 @@
  *
  * Reuses api/extract-obligations.js's sanitizeObligationsResponse
  * directly — same enum/length validation, same untrusted-output boundary
- * discipline — rather than duplicating it. Only the prompt differs (no
- * vision/handwriting instructions; instead: email-plus-linked-pages
- * context, and explicit instructions not to invent content for a page
- * that failed to load).
+ * discipline — rather than duplicating it. Only the prompt/output
+ * mechanism differs (no vision/handwriting instructions; instead:
+ * email-plus-linked-pages context, explicit instructions not to invent
+ * content for a page that failed to load, and — unlike the photo
+ * pipeline — forced tool use instead of free-text JSON).
  *
- * The model here has no tool access, no OAuth credentials, and cannot
- * fetch anything itself — every byte of untrusted email/webpage content is
- * passed as inert text in a single user-turn content block, never
- * interpreted as instructions to this module or given any way to cause a
- * network request. Its JSON output is never trusted directly; it only
- * ever becomes a review-gated IngestionCandidate after
- * sanitizeObligationsResponse validates it (see api/gmail-check-email.js).
+ * Live failure fix: a production Vercel log showed "Model output was not
+ * valid JSON" thrown from this module's old JSON.parse(message.content[0]
+ * .text) approach. Free-text JSON is fragile to leading/trailing prose and
+ * to truncation (a long email + a full Google Doc's worth of linked text
+ * makes a longer model reply more likely to hit the token cap mid-object).
+ * Forced tool use (tools + tool_choice: {type:"tool", name:
+ * "extract_obligations"}) makes the Anthropic Messages API itself return
+ * an already-parsed input object on a tool_use content block — there is no
+ * free-form text to JSON.parse, and no markdown-fence-stripping regex
+ * needed at all anymore.
+ *
+ * The model here has no tool access beyond this one structured-output
+ * tool (which is never actually "called" — it's the mechanism used to
+ * shape output, not a capability the model exercises), no OAuth
+ * credentials, and cannot fetch anything itself — every byte of untrusted
+ * email/webpage/doc content is passed as inert text in a single user-turn
+ * content block, never interpreted as instructions to this module or
+ * given any way to cause a network request. Its output is still never
+ * trusted directly just because the SDK handed back a parsed object
+ * instead of a string — sanitizeObligationsResponse's exact same
+ * enum/length validation still runs before anything becomes a
+ * review-gated IngestionCandidate (see api/gmail-check-email.js).
  */
 import { FORM_TYPES, SUBJECT_OPTIONS } from "../src/data/itemTypes.js";
 import { sanitizeObligationsResponse } from "./extract-obligations.js";
@@ -33,28 +50,59 @@ import { sanitizeObligationsResponse } from "./extract-obligations.js";
 const TYPE_ENUM_LIST = FORM_TYPES.join(" | ");
 const SUBJECT_ENUM_LIST = SUBJECT_OPTIONS.join(" | ");
 
-const SYSTEM_PROMPT = `You are a homework/school-communication parser for a family organizer app.
-You will be given the text of one email from a school contact the parent has explicitly approved, and — when available — the readable text of pages that email links to (ordinary webpages, or the full text of a linked Google Doc). Read everything provided carefully and extract every distinct obligation (something a parent/student needs to know, do, or prepare for) into structured JSON.
+// Controlled failure codes (live failure fix) — distinct from a generic
+// thrown Error, so api/gmail-check-email.js's catch block can log a
+// specific, useful reason instead of an opaque "wasn't valid JSON".
+// Never carries email/doc content — see the ExtractionError class below.
+export const EXTRACTION_ERROR_CODES = {
+  TRUNCATED: "MODEL_OUTPUT_TRUNCATED",
+  TOOL_OUTPUT_MISSING: "MODEL_TOOL_OUTPUT_MISSING",
+};
 
-Return ONLY valid JSON with this exact shape — no markdown, no explanation:
-{
-  "obligations": [
-    {
-      "type": "${TYPE_ENUM_LIST}",
-      "title": "string",
-      "childName": "string or null",
-      "date": "YYYY-MM-DD or null",
-      "subject": "${SUBJECT_ENUM_LIST} | null",
-      "academicTopic": "string or null",
-      "academicUnit": "string or null",
-      "preparationRequired": true/false/null,
-      "description": "string or null",
-      "sourceUrl": "string or null",
-      "startTime": "HH:MM (24-hour) or null",
-      "endTime": "HH:MM (24-hour) or null"
-    }
-  ]
+export class ExtractionError extends Error {
+  constructor(code, message, { stopReason = null } = {}) {
+    super(message || code);
+    this.name = "ExtractionError";
+    this.code = code;
+    this.stopReason = stopReason;
+  }
 }
+
+const EXTRACT_OBLIGATIONS_TOOL = {
+  name: "extract_obligations",
+  description:
+    "Records every distinct actionable obligation (something a parent/student needs to know, do, or prepare for) found in the provided email and any linked page text.",
+  input_schema: {
+    type: "object",
+    properties: {
+      obligations: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: FORM_TYPES },
+            title: { type: "string" },
+            childName: { type: ["string", "null"] },
+            date: { type: ["string", "null"] },
+            subject: { type: ["string", "null"], enum: [...SUBJECT_OPTIONS, null] },
+            academicTopic: { type: ["string", "null"] },
+            academicUnit: { type: ["string", "null"] },
+            preparationRequired: { type: ["boolean", "null"] },
+            description: { type: ["string", "null"] },
+            sourceUrl: { type: ["string", "null"] },
+            startTime: { type: ["string", "null"] },
+            endTime: { type: ["string", "null"] },
+          },
+          required: ["type", "title"],
+        },
+      },
+    },
+    required: ["obligations"],
+  },
+};
+
+const SYSTEM_PROMPT = `You are a homework/school-communication parser for a family organizer app.
+You will be given the text of one email from a school contact the parent has explicitly approved, and — when available — the readable text of pages that email links to (ordinary webpages, or the full text of a linked Google Doc). Read everything provided carefully and extract every distinct obligation (something a parent/student needs to know, do, or prepare for) using the extract_obligations tool.
 
 Rules:
 - type must be one of: ${TYPE_ENUM_LIST}. If unsure, pick the closest match.
@@ -70,7 +118,7 @@ Rules:
 - A linked page (including a Google Doc) may be pure reference/learning material — a worksheet, a reading passage, study notes, a study guide — with no actionable obligation in it at all. That is not automatically an obligation: extract one only if the page itself states something actionable (a due date, an event, a task to do or prepare for). Do not create an obligation merely to "preserve" or summarize a document's content — if a linked page contains no actionable date or task, it simply contributes no obligations, even if the rest of the email produces some.
 - The email body is the primary source. Linked page text, when provided, is supporting context that may explain something the email only references (e.g. "see the signup form linked below"). A linked page's text may be missing entirely if it could not be safely retrieved — never invent what an unavailable page might have said; rely on the email body alone in that case.
 - If several linked pages are provided, each is clearly labeled with its own URL — treat them as independent sources, not one merged document.
-- If the email (and any linked pages) contain no useful obligations, return { "obligations": [] }.
+- If the email (and any linked pages) contain no useful obligations, call the tool with an empty obligations list.
 - Do not invent obligations that aren't actually present in the provided text.`;
 
 function buildUserContent({ todayIso, senderEmail, subject, receivedAt, emailBodyText, pages }) {
@@ -100,6 +148,14 @@ function buildUserContent({ todayIso, senderEmail, subject, receivedAt, emailBod
  * extractObligationsFromEmail({ client, ... }) -> { obligations: [...] }
  * (sanitized, per sanitizeObligationsResponse). `client` is an Anthropic
  * SDK instance, injected so this is testable without a live API key.
+ *
+ * Throws an ExtractionError (see EXTRACTION_ERROR_CODES) for either
+ * controlled failure mode below — the caller (api/gmail-check-email.js)
+ * catches it the same way it caught the old generic Error, but can now
+ * log a specific `.code`/`.stopReason` instead of an opaque message. No
+ * regex/prose repair is attempted for either case — a truncated or
+ * missing tool response is reported as exactly that, not silently
+ * patched or guessed at.
  */
 export async function extractObligationsFromEmail({
   client,
@@ -114,22 +170,35 @@ export async function extractObligationsFromEmail({
 
   const message = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 2048,
+    max_tokens: 4096,
     system: SYSTEM_PROMPT,
+    tools: [EXTRACT_OBLIGATIONS_TOOL],
+    tool_choice: { type: "tool", name: "extract_obligations" },
     messages: [{ role: "user", content: [{ type: "text", text: userText }] }],
   });
 
-  const raw = message.content[0].text.trim();
-  const jsonStr = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
-
-  let parsed;
-  try {
-    parsed = JSON.parse(jsonStr);
-  } catch {
-    throw new Error("Model output was not valid JSON");
+  // Checked BEFORE looking at content at all — a truncated response may
+  // still contain a tool_use block, but its `input` cannot be trusted to
+  // be the model's actual complete/intended output. Reported as a
+  // specific, distinguishable failure rather than however sanitization or
+  // a missing-block check would happen to fail on partial data.
+  if (message.stop_reason === "max_tokens") {
+    throw new ExtractionError(EXTRACTION_ERROR_CODES.TRUNCATED, "Gmail extraction: model output was truncated at max_tokens", {
+      stopReason: message.stop_reason,
+    });
   }
 
-  const sanitized = sanitizeObligationsResponse(parsed);
+  const toolUseBlock = (message.content || []).find((block) => block?.type === "tool_use" && block?.name === "extract_obligations");
+  if (!toolUseBlock || typeof toolUseBlock.input !== "object" || toolUseBlock.input === null) {
+    throw new ExtractionError(EXTRACTION_ERROR_CODES.TOOL_OUTPUT_MISSING, "Gmail extraction: model did not return the expected extract_obligations tool_use block", {
+      stopReason: message.stop_reason ?? null,
+    });
+  }
+
+  // Still untrusted output — the SDK handing back an already-parsed
+  // object (rather than a JSON string) changes nothing about the trust
+  // boundary. Same enum/length validation as every other extraction path.
+  const sanitized = sanitizeObligationsResponse(toolUseBlock.input);
 
   // Cross-validate sourceUrl against the actual page URLs this call was
   // given — sanitizeObligationsResponse only checks that it's a clean

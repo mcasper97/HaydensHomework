@@ -1,13 +1,21 @@
 /**
  * Focused unit tests for api/_emailExtraction.js — the text-only
  * counterpart to api/extract-obligations.js's photo pipeline (#26,
- * Commit 5). The Anthropic client is injected (a fake `messages.create`),
- * so no live ANTHROPIC_API_KEY or network access is needed — same
- * constraint already documented in tests/extract-obligations.unit.mjs.
+ * Commit 5; forced tool use added in the live-failure follow-up fix).
+ * The Anthropic client is injected (a fake `messages.create`), so no live
+ * ANTHROPIC_API_KEY or network access is needed — same constraint already
+ * documented in tests/extract-obligations.unit.mjs.
+ *
+ * A live Vercel log showed "Model output was not valid JSON" thrown from
+ * the old JSON.parse(message.content[0].text) approach. This file now
+ * exercises the forced tool_use mechanism that replaced it — the fake
+ * client returns a tool_use content block (an already-parsed `input`
+ * object), exactly the shape the real Anthropic SDK returns when
+ * `tool_choice: { type: "tool", name: "extract_obligations" }` is set.
  *
  * Usage: node tests/gmail-email-extraction.unit.mjs
  */
-import { extractObligationsFromEmail } from "../api/_emailExtraction.js";
+import { extractObligationsFromEmail, ExtractionError, EXTRACTION_ERROR_CODES } from "../api/_emailExtraction.js";
 
 let pass = 0, fail = 0;
 function ok(name, cond) {
@@ -15,12 +23,19 @@ function ok(name, cond) {
   else { fail++; console.log(`FAIL: ${name}`); }
 }
 
-function fakeClient(responseJson, { capture } = {}) {
+// Builds a fake Anthropic client whose messages.create() returns a
+// tool_use content block with the given `input` object — the real SDK's
+// shape when tool_choice forces a specific tool. No JSON string, no text
+// block required at all (proving the extraction code never needs one).
+function fakeClient(input, { capture, stopReason = "tool_use", toolName = "extract_obligations", extraContent = [] } = {}) {
   return {
     messages: {
       create: async (params) => {
         if (capture) capture(params);
-        return { content: [{ text: JSON.stringify(responseJson) }] };
+        return {
+          stop_reason: stopReason,
+          content: [...extraContent, { type: "tool_use", id: "toolu_01", name: toolName, input }],
+        };
       },
     },
   };
@@ -56,6 +71,35 @@ function fakeClient(responseJson, { capture } = {}) {
   });
   const result = await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
   ok("Drops an obligation with an invalid type enum, same as the photo pipeline's sanitization", result.obligations.length === 1 && result.obligations[0].title === "Valid one");
+}
+
+// ============ Forced tool use: the request itself asks for the right tool ============
+{
+  let captured;
+  const client = fakeClient({ obligations: [] }, { capture: (p) => (captured = p) });
+  await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+  ok("Passes exactly one tool named extract_obligations", Array.isArray(captured.tools) && captured.tools.length === 1 && captured.tools[0].name === "extract_obligations");
+  ok("Forces tool_choice to that exact tool (never lets the model choose freely)", captured.tool_choice?.type === "tool" && captured.tool_choice?.name === "extract_obligations");
+  ok("The tool's input_schema requires an obligations array", captured.tools[0].input_schema?.type === "object" && captured.tools[0].input_schema?.required?.includes("obligations"));
+  ok("max_tokens was raised from the old 2048 cap (live-failure fix)", captured.max_tokens === 4096);
+}
+
+// ============ No JSON.parse dependency remains — works with no text block at all ============
+{
+  const client = fakeClient({ obligations: [{ type: "assignment", title: "X" }] }); // no extraContent — content is ONLY the tool_use block, no text block whatsoever
+  const result = await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+  ok("Extraction succeeds with no text content block present at all (nothing to JSON.parse)", result.obligations.length === 1 && result.obligations[0].title === "X");
+}
+{
+  // Even if a text block IS present alongside the tool_use block (real
+  // models sometimes emit brief text plus a tool call), it must be
+  // completely ignored — only toolUseBlock.input is ever read.
+  const client = fakeClient(
+    { obligations: [{ type: "assignment", title: "From the tool" }] },
+    { extraContent: [{ type: "text", text: "not json at all — should be ignored entirely" }] }
+  );
+  const result = await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+  ok("A malformed/non-JSON text block alongside a valid tool_use block is ignored — only the tool's input is read", result.obligations[0].title === "From the tool");
 }
 
 // ============ Prompt content: today's date, sender, subject, email body ============
@@ -132,6 +176,19 @@ function fakeClient(responseJson, { capture } = {}) {
   ok("The Google Doc's actual text content is present", userText.includes("Unit 3 Study Guide: covers fractions and decimals."));
 }
 {
+  // A Google Doc obligation extracts and behaves exactly like a webpage
+  // obligation end-to-end through the (now tool_use-based) pipeline.
+  const client = fakeClient({
+    obligations: [{ type: "test", title: "Unit 3 Math Test", sourceUrl: "https://docs.google.com/document/d/abc123/edit" }],
+  });
+  const result = await extractObligationsFromEmail({
+    client,
+    emailBodyText: "See the attached study guide.",
+    pages: [{ url: "https://docs.google.com/document/d/abc123/edit", text: "Test on fractions Friday." }],
+  });
+  ok("A Google Doc's obligation is attributed via sourceUrl exactly like a webpage's", result.obligations[0].sourceUrl === "https://docs.google.com/document/d/abc123/edit");
+}
+{
   let captured;
   const client = fakeClient({ obligations: [] }, { capture: (p) => (captured = p) });
   await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
@@ -149,27 +206,90 @@ function fakeClient(responseJson, { capture } = {}) {
   ok("System prompt explicitly forbids inventing an obligation just to preserve a document's content", captured.system.toLowerCase().includes("preserve"));
 }
 
-// ============ Malformed model output ============
+// ============ Webpage (non-Google-Doc) extraction still works, unaffected by tool_use switch ============
 {
-  const client = { messages: { create: async () => ({ content: [{ text: "not json at all" }] }) } };
+  const client = fakeClient({
+    obligations: [{ type: "school_event", title: "From the webpage", sourceUrl: "https://school.edu/calendar" }],
+  });
+  const result = await extractObligationsFromEmail({
+    client,
+    emailBodyText: "See the calendar linked below.",
+    pages: [{ url: "https://school.edu/calendar", text: "PTA meeting Thursday." }],
+  });
+  ok("Webpage-attributed extraction still works end-to-end", result.obligations[0].title === "From the webpage" && result.obligations[0].sourceUrl === "https://school.edu/calendar");
+}
+
+// ============ Email-body-only extraction (no linked pages at all) still works ============
+{
+  const client = fakeClient({ obligations: [{ type: "reminder", title: "Bring lunch money", sourceUrl: null }] });
+  const result = await extractObligationsFromEmail({ client, emailBodyText: "Please send lunch money tomorrow.", pages: [] });
+  ok("Email-body-only extraction (zero linked pages) still works", result.obligations.length === 1 && result.obligations[0].title === "Bring lunch money");
+}
+
+// ============ Successful empty obligations is not treated as failure ============
+{
+  const client = fakeClient({ obligations: [] });
   let threw = false;
+  let result;
   try {
-    await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+    result = await extractObligationsFromEmail({ client, emailBodyText: "Just a friendly note, nothing actionable.", pages: [] });
   } catch {
     threw = true;
   }
-  ok("Throws when the model's output isn't valid JSON", threw);
+  ok("A genuinely empty obligations list does not throw", !threw);
+  ok("Returns an empty (not missing/undefined) obligations array", Array.isArray(result.obligations) && result.obligations.length === 0);
 }
 
-// ============ Markdown code-fence stripping (same as the photo pipeline) ============
+// ============ Truncation: stop_reason === "max_tokens" produces a controlled MODEL_OUTPUT_TRUNCATED failure ============
 {
-  const client = {
-    messages: {
-      create: async () => ({ content: [{ text: "```json\n" + JSON.stringify({ obligations: [] }) + "\n```" }] }),
-    },
-  };
-  const result = await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
-  ok("Strips a markdown code fence around the JSON before parsing", Array.isArray(result.obligations));
+  const client = fakeClient({ obligations: [{ type: "assignment", title: "Partial" }] }, { stopReason: "max_tokens" });
+  let caught = null;
+  try {
+    await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+  } catch (err) {
+    caught = err;
+  }
+  ok("Throws when stop_reason is max_tokens, even if a tool_use block is present", caught !== null);
+  ok("Thrown error is an ExtractionError instance", caught instanceof ExtractionError);
+  ok("Uses the MODEL_OUTPUT_TRUNCATED code, not a generic error", caught?.code === EXTRACTION_ERROR_CODES.TRUNCATED);
+  ok("Carries the stop_reason for logging", caught?.stopReason === "max_tokens");
+  ok("Never treated as generic 'invalid JSON' — code is specific", caught?.code !== undefined && !caught.message.toLowerCase().includes("not valid json"));
+}
+
+// ============ Missing tool_use block produces a controlled MODEL_TOOL_OUTPUT_MISSING failure ============
+{
+  const client = { messages: { create: async () => ({ stop_reason: "end_turn", content: [{ type: "text", text: "I could not find any obligations." }] }) } };
+  let caught = null;
+  try {
+    await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+  } catch (err) {
+    caught = err;
+  }
+  ok("Throws a controlled error when no tool_use block is present at all", caught instanceof ExtractionError);
+  ok("Uses the MODEL_TOOL_OUTPUT_MISSING code", caught?.code === EXTRACTION_ERROR_CODES.TOOL_OUTPUT_MISSING);
+  ok("No regex/prose repair is attempted — the stray text block's content never leaks into the error", !caught.message.includes("I could not find"));
+}
+{
+  // A tool_use block for a DIFFERENT tool name (shouldn't happen given
+  // forced tool_choice, but fails safe rather than trusting it).
+  const client = fakeClient({ obligations: [{ type: "assignment", title: "X" }] }, { toolName: "some_other_tool" });
+  let caught = null;
+  try {
+    await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+  } catch (err) {
+    caught = err;
+  }
+  ok("A tool_use block for the wrong tool name is treated as missing, not trusted", caught?.code === EXTRACTION_ERROR_CODES.TOOL_OUTPUT_MISSING);
+}
+{
+  const client = { messages: { create: async () => ({ stop_reason: "end_turn", content: [] }) } };
+  let caught = null;
+  try {
+    await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+  } catch (err) {
+    caught = err;
+  }
+  ok("An empty content array is treated as a missing tool_use block, not a crash", caught?.code === EXTRACTION_ERROR_CODES.TOOL_OUTPUT_MISSING);
 }
 
 // ============ sourceUrl attribution + cross-validation (#26, Commit 5 correction) ============
@@ -215,11 +335,10 @@ function fakeClient(responseJson, { capture } = {}) {
   let captured;
   const client = fakeClient({ obligations: [] }, { capture: (p) => (captured = p) });
   await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [{ url: "https://school.edu/x", text: "y" }] });
-  ok("The prompt's JSON schema documents the sourceUrl field", captured.system.includes('"sourceUrl"'));
-  ok("The prompt instructs the model how to set sourceUrl correctly", captured.system.toLowerCase().includes("sourceurl"));
+  ok("The tool's input_schema documents the sourceUrl field", "sourceUrl" in (captured.tools[0].input_schema.properties.obligations.items.properties));
 }
 
-// ============ startTime/endTime passthrough + prompt content (#26, Commit 5 review-UX fix) ============
+// ============ startTime/endTime passthrough + schema content (#26, Commit 5 review-UX fix) ============
 {
   const client = fakeClient({
     obligations: [
@@ -251,8 +370,9 @@ function fakeClient(responseJson, { capture } = {}) {
   let captured;
   const client = fakeClient({ obligations: [] }, { capture: (p) => (captured = p) });
   await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
-  ok("The prompt's JSON schema documents startTime", captured.system.includes('"startTime"'));
-  ok("The prompt's JSON schema documents endTime", captured.system.includes('"endTime"'));
+  const obligationSchema = captured.tools[0].input_schema.properties.obligations.items.properties;
+  ok("The tool's input_schema documents startTime", "startTime" in obligationSchema);
+  ok("The tool's input_schema documents endTime", "endTime" in obligationSchema);
   ok("The prompt explicitly instructs never to infer/guess a time", captured.system.toLowerCase().includes("never infer"));
   ok("The prompt explicitly instructs not to set endTime from a single start time alone", captured.system.includes("endTime stays null"));
 }
