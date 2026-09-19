@@ -27,6 +27,7 @@ import { buildSenderTargetOptions, parseSenderTargetValue, senderTargetToValue, 
 import { getParentToolsOpen, setParentToolsOpen } from "./data/parentToolsPreference.js";
 import { createSourceRecord } from "./data/sourceRecordsRepository.js";
 import { createIngestionCandidate } from "./data/ingestionCandidatesRepository.js";
+import { summarizeGoogleDocOutcomes } from "./organizer/googleDocCheckSummary.js";
 import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
 
 const CHILD_EMOJIS = ["🦁", "🐯", "🐺", "🦊", "🐻", "🐼", "🦄", "🐲", "🚀", "⭐", "🌈", "🔥"];
@@ -511,15 +512,17 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
       // before anything becomes a canonical Item, stay entirely
       // client-side here too.
       //
-      // Two-tier provenance (#26, Commit 5 correction): one "gmail_email"
-      // SourceRecord per qualifying email, plus one "webpage" SourceRecord
-      // per qualifying linked page (whether it was successfully fetched or
-      // not — a failed fetch is still recorded, same "kept, not discarded"
-      // philosophy as every other capture type's processingStatus), linked
-      // back via metadata.parentEmailSourceRecordId. Each obligation is
-      // attributed to whichever one it actually came from via its
-      // sourceUrl (see api/_emailExtraction.js) — the email's own
-      // SourceRecord when null/unmatched, or the matching webpage's.
+      // Two-tier provenance (#26, Commit 5 correction; Google Docs added in
+      // Commit 6): one "gmail_email" SourceRecord per qualifying email,
+      // plus one "webpage" or "google_doc" SourceRecord per qualifying
+      // linked page (whether it was successfully fetched or not — a
+      // failed fetch, or one that requires access, is still recorded,
+      // same "kept, not discarded" philosophy as every other capture
+      // type's processingStatus), linked back via
+      // metadata.parentEmailSourceRecordId. Each obligation is attributed
+      // to whichever one it actually came from via its sourceUrl (see
+      // api/_emailExtraction.js) — the email's own SourceRecord when
+      // null/unmatched, or the matching linked page's.
       const newCandidates = [];
       // Persistence failures (item #5, live-validation persistence defect
       // investigation): previously only console.error'd — invisible to the
@@ -555,7 +558,6 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
               targetType: emailResult.targetType,
               targetChildId: emailResult.targetChildId,
               linkedUrls: emailResult.linkedUrls,
-              googleDocUrls: emailResult.googleDocUrls,
             },
           });
         } catch (err) {
@@ -567,27 +569,37 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
           continue;
         }
 
-        // One webpage SourceRecord per qualifying link, fetched or not.
-        const webpageSourceRecordIdByUrl = new Map();
+        // One "webpage" or "google_doc" SourceRecord per qualifying link,
+        // fetched or not (#26, Commit 6 — google_doc, distinguished by
+        // page.type; see api/gmail-check-email.js).
+        const linkedSourceRecordIdByUrl = new Map();
         for (const page of emailResult.webpagePages || []) {
           const obligationsFromThisPage = emailResult.obligations.filter((o) => o.sourceUrl === page.url);
+          const isGoogleDoc = page.type === "google_doc";
           try {
-            const webpageSourceRecord = await createSourceRecord(ctx, {
-              sourceType: "webpage",
+            const linkedSourceRecord = await createSourceRecord(ctx, {
+              sourceType: isGoogleDoc ? "google_doc" : "webpage",
               // The page's actual <title> when one was found; null
-              // otherwise (a failed fetch, or a page with no <title>) —
-              // the review UI falls back to displaying the URL's
-              // hostname in that case (see sourceContext.js).
+              // otherwise (a failed fetch, a page with no <title>, or any
+              // Google Doc — title is deliberately never fetched for a
+              // Google Doc, see api/_googleDocFetch.js) — the review UI
+              // falls back to displaying the URL's hostname in that case
+              // (see sourceContext.js).
               title: page.title || null,
               processingStatus: !page.fetched ? "failed" : obligationsFromThisPage.length === 0 ? "no_candidates" : "extracted",
               metadata: {
                 sourceUrl: page.url,
                 parentEmailSourceRecordId: emailSourceRecord.id,
+                // Google-Doc-only fields — existing metadata bag, no new
+                // top-level SourceRecord schema. Both are simply omitted
+                // (not written as null) for a "webpage" record, since
+                // they have no meaning there.
+                ...(isGoogleDoc ? { documentId: page.documentId || null, failureReason: page.failureReason || null } : {}),
               },
             });
-            webpageSourceRecordIdByUrl.set(page.url, webpageSourceRecord.id);
+            linkedSourceRecordIdByUrl.set(page.url, linkedSourceRecord.id);
           } catch (err) {
-            console.error("Check Email: createSourceRecord (webpage) failed", page.url, err);
+            console.error("Check Email: createSourceRecord (linked page) failed", page.url, err);
             hadPersistenceError = true;
             // No entry in the map for this URL — any obligation attributed
             // to it below falls back to the email's own SourceRecord
@@ -596,8 +608,8 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
         }
 
         for (const o of emailResult.obligations) {
-          const sourceRecordId = o.sourceUrl && webpageSourceRecordIdByUrl.has(o.sourceUrl)
-            ? webpageSourceRecordIdByUrl.get(o.sourceUrl)
+          const sourceRecordId = o.sourceUrl && linkedSourceRecordIdByUrl.has(o.sourceUrl)
+            ? linkedSourceRecordIdByUrl.get(o.sourceUrl)
             : emailSourceRecord.id;
           try {
             const candidate = await createIngestionCandidate(ctx, {
@@ -729,6 +741,13 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
             ? `No new emails found from your ${checkResult.senderCount} approved sender${checkResult.senderCount === 1 ? "" : "s"} in the last ${checkResult.lookbackDays} days.`
             : `Checked ${checkResult.results.length} new email${checkResult.results.length === 1 ? "" : "s"} from the last ${checkResult.lookbackDays} days — review below.`}
         </p>
+      )}
+      {/* Google Doc access/fetch-failure summary (#26, Commit 6) — a
+          concise sentence, not an error dashboard; a doc that fetched
+          successfully (with or without obligations) needs no mention
+          here, same precedent as webpages/email bodies. */}
+      {checkResult && summarizeGoogleDocOutcomes(checkResult.results) && (
+        <p className="text-yellow-400 text-xs mt-1">{summarizeGoogleDocOutcomes(checkResult.results)}</p>
       )}
       {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
 

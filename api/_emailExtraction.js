@@ -1,10 +1,16 @@
 /* ============================== Email-led obligation extraction ==============================
  * Text-only counterpart to api/extract-obligations.js's photo pipeline
- * (#26, Commit 5). Given an approved sender's email body (already reduced
- * to readable text via api/_htmlToText.js) plus the readable text of up to
- * several linked webpages (also via api/_htmlToText.js, fetched only
- * through api/_urlSafety.js's SSRF-safe safeFetch), extracts the same
- * obligation shape the rest of the app already understands.
+ * (#26, Commit 5; Google Doc text added in Commit 6). Given an approved
+ * sender's email body (already reduced to readable text via
+ * api/_htmlToText.js) plus the readable text of up to several linked
+ * pages — ordinary webpages (via api/_htmlToText.js) or public Google
+ * Docs (via api/_googleDocFetch.js's plain-text export), both fetched
+ * only through api/_urlSafety.js's SSRF-safe safeFetch — extracts the
+ * same obligation shape the rest of the app already understands. This
+ * module treats every linked page's text identically regardless of
+ * whether it came from a webpage or a Google Doc — see
+ * api/gmail-check-email.js, which is the only place that distinguishes
+ * them (for SourceRecord attribution).
  *
  * Reuses api/extract-obligations.js's sanitizeObligationsResponse
  * directly — same enum/length validation, same untrusted-output boundary
@@ -28,7 +34,7 @@ const TYPE_ENUM_LIST = FORM_TYPES.join(" | ");
 const SUBJECT_ENUM_LIST = SUBJECT_OPTIONS.join(" | ");
 
 const SYSTEM_PROMPT = `You are a homework/school-communication parser for a family organizer app.
-You will be given the text of one email from a school contact the parent has explicitly approved, and — when available — the readable text of webpages that email links to. Read everything provided carefully and extract every distinct obligation (something a parent/student needs to know, do, or prepare for) into structured JSON.
+You will be given the text of one email from a school contact the parent has explicitly approved, and — when available — the readable text of pages that email links to (ordinary webpages, or the full text of a linked Google Doc). Read everything provided carefully and extract every distinct obligation (something a parent/student needs to know, do, or prepare for) into structured JSON.
 
 Return ONLY valid JSON with this exact shape — no markdown, no explanation:
 {
@@ -61,12 +67,13 @@ Rules:
 - description: a short plain-language summary of any instructions/details not captured by the other fields; otherwise null.
 - sourceUrl: if this specific obligation's information came from a linked page's text (not the email body itself), set this to that exact page's URL, copied character-for-character from its "--- LINKED PAGE: <url> ---" label. If the obligation came from the email body itself (or you are not sure which source it came from), set this to null. Never invent a URL that wasn't given to you.
 - startTime / endTime: only output a specific clock time, in 24-hour "HH:MM" format (e.g. "18:00" for 6:00 PM), if a specific time is explicitly stated in the source text; otherwise null. Never infer, estimate, or guess a time from vague context (e.g. do not assume "evening" or "after school" means any particular time). endTime must only be set when the source explicitly gives an end time or a time range (e.g. "6:00 PM to 7:30 PM" or "6:00-7:30 PM"); a single start time alone means endTime stays null. A date-only obligation with no time mentioned at all must leave both startTime and endTime null.
+- A linked page (including a Google Doc) may be pure reference/learning material — a worksheet, a reading passage, study notes, a study guide — with no actionable obligation in it at all. That is not automatically an obligation: extract one only if the page itself states something actionable (a due date, an event, a task to do or prepare for). Do not create an obligation merely to "preserve" or summarize a document's content — if a linked page contains no actionable date or task, it simply contributes no obligations, even if the rest of the email produces some.
 - The email body is the primary source. Linked page text, when provided, is supporting context that may explain something the email only references (e.g. "see the signup form linked below"). A linked page's text may be missing entirely if it could not be safely retrieved — never invent what an unavailable page might have said; rely on the email body alone in that case.
 - If several linked pages are provided, each is clearly labeled with its own URL — treat them as independent sources, not one merged document.
 - If the email (and any linked pages) contain no useful obligations, return { "obligations": [] }.
 - Do not invent obligations that aren't actually present in the provided text.`;
 
-function buildUserContent({ todayIso, senderEmail, subject, receivedAt, emailBodyText, pages, googleDocUrls }) {
+function buildUserContent({ todayIso, senderEmail, subject, receivedAt, emailBodyText, pages }) {
   const parts = [
     `Today's date is ${todayIso}.`,
     `This email is from ${senderEmail || "an approved sender"}, subject: "${subject || "(no subject)"}"${receivedAt ? `, received ${receivedAt}` : ""}.`,
@@ -75,16 +82,15 @@ function buildUserContent({ todayIso, senderEmail, subject, receivedAt, emailBod
     emailBodyText || "(empty)",
   ];
 
+  // `pages` holds every successfully-retrieved linked page's text —
+  // ordinary webpages and Google Docs alike (see api/gmail-check-email.js).
+  // A link that failed to fetch (an SSRF-unsafe target, a network error,
+  // or — for a Google Doc — one that requires access) simply never
+  // appears here at all, exactly like a failed webpage fetch always has:
+  // the model is never told a link existed but couldn't be read, so it
+  // has nothing to speculate about.
   for (const page of pages || []) {
     parts.push("", `--- LINKED PAGE: ${page.url} ---`, page.text || "(this page's content could not be retrieved)");
-  }
-
-  if (googleDocUrls && googleDocUrls.length > 0) {
-    parts.push(
-      "",
-      "--- GOOGLE DOCS LINKED IN THIS EMAIL (not retrieved in this version — do not describe their content) ---",
-      googleDocUrls.join("\n")
-    );
   }
 
   return parts.join("\n");
@@ -102,10 +108,9 @@ export async function extractObligationsFromEmail({
   receivedAt,
   emailBodyText,
   pages,
-  googleDocUrls,
   todayIso = new Date().toISOString().slice(0, 10),
 }) {
-  const userText = buildUserContent({ todayIso, senderEmail, subject, receivedAt, emailBodyText, pages, googleDocUrls });
+  const userText = buildUserContent({ todayIso, senderEmail, subject, receivedAt, emailBodyText, pages });
 
   const message = await client.messages.create({
     model: "claude-sonnet-4-6",

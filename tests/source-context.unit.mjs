@@ -98,6 +98,42 @@ ok("Missing subject yields null, not an empty string", buildSourceContext({ sour
   ok("Missing parent email record: senderLine and subject are null, not undefined/crash", ctx.senderLine === null && ctx.subject === null);
 }
 
+// ============ Google Doc candidate (#26, Commit 6): hostname or "Google Doc"
+// fallback (never a fetched title — deliberately not fetched at all), plus
+// the originating email's sender/subject, same shape as webpage. ============
+{
+  const googleDocRecord = {
+    sourceType: "google_doc",
+    title: null, // never set for a google_doc record — no title is ever fetched
+    metadata: { sourceUrl: "https://docs.google.com/document/d/abc123/edit", parentEmailSourceRecordId: "email-1", documentId: "abc123" },
+  };
+  const parentRecord = { sourceType: "gmail_email", metadata: { senderName: "Michelle Manson", senderEmail: "mmanson@school.org", subject: "Weekly Classroom Update" } };
+  const ctx = buildSourceContext(googleDocRecord, parentRecord);
+  ok("Google Doc context reports kind: google_doc", ctx.kind === "google_doc");
+  ok("Falls back to the URL's hostname (docs.google.com), never a fetched title", ctx.pageTitle === "docs.google.com");
+  ok("Google Doc context's senderLine comes from the PARENT email record", ctx.senderLine === "Michelle Manson <mmanson@school.org>");
+  ok("Google Doc context's subject comes from the parent email too", ctx.subject === "Weekly Classroom Update");
+}
+{
+  // No sourceUrl at all somehow (shouldn't happen, but fails closed) — a
+  // plain "Google Doc" label, never null/undefined/a crash.
+  const googleDocRecord = { sourceType: "google_doc", title: null, metadata: {} };
+  ok('No title and no sourceUrl: falls back to the literal "Google Doc" label', buildSourceContext(googleDocRecord, null).pageTitle === "Google Doc");
+}
+{
+  // The parent record couldn't be resolved — degrades gracefully, same as webpage.
+  const googleDocRecord = { sourceType: "google_doc", title: null, metadata: { sourceUrl: "https://docs.google.com/document/d/abc123/edit" } };
+  let threw = false;
+  let ctx;
+  try {
+    ctx = buildSourceContext(googleDocRecord, null);
+  } catch {
+    threw = true;
+  }
+  ok("Missing parent email record doesn't throw for a google_doc record either", !threw);
+  ok("Missing parent email record: senderLine and subject are null", ctx.senderLine === null && ctx.subject === null);
+}
+
 // ============ 7. Source display resolves through SourceRecord provenance (shape proof) ============
 {
   // buildSourceContext's ONLY inputs are SourceRecord-shaped objects (what

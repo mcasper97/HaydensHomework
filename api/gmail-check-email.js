@@ -1,11 +1,11 @@
 /* ============================== Gmail — Check Email ==============================
- * Manual, parent-triggered action (#26, Commit 5). For each approved
- * sender, finds Gmail messages from the last LOOKBACK_DAYS days not
- * already processed (deduped by Gmail's own message id), reads the body,
- * extracts qualifying links, safely fetches ordinary webpages those links
- * point to (never Google Docs — detected but not fetched yet), and asks
- * the model to extract obligations from the email body plus whatever
- * webpage text was retrieved.
+ * Manual, parent-triggered action (#26, Commit 5; Google Doc retrieval
+ * added in Commit 6). For each approved sender, finds Gmail messages from
+ * the last LOOKBACK_DAYS days not already processed (deduped by Gmail's
+ * own message id), reads the body, extracts qualifying links, safely
+ * fetches ordinary webpages and public Google Docs those links point to,
+ * and asks the model to extract obligations from the email body plus
+ * whatever linked text was retrieved.
  *
  * This endpoint does the entire pipeline server-side because every step
  * before extraction needs a secret this server alone holds (the Gmail
@@ -17,9 +17,10 @@
  * canonical Item, both stay entirely client-side (see src/AuthShell.jsx),
  * mirroring the existing photo-ingestion flow, extended with a second
  * provenance tier (see `webpagePages` below): the client creates one
- * "gmail_email" SourceRecord per qualifying email and one "webpage"
- * SourceRecord per qualifying link (fetched or not), and attributes each
- * extracted obligation to whichever one it actually came from via
+ * "gmail_email" SourceRecord per qualifying email and one "webpage" or
+ * "google_doc" SourceRecord per qualifying link (fetched or not,
+ * distinguished by webpagePages[].type), and attributes each extracted
+ * obligation to whichever one it actually came from via
  * `obligations[].sourceUrl` (see api/_emailExtraction.js).
  *
  * MIME/body handling: text/plain is used as-is for the extraction
@@ -30,16 +31,18 @@
  * text/plain is what's used for the prompt), and only a plain-text-only
  * email falls back to scanning for bare http(s) URLs.
  *
- * Untrusted-content boundary: email and webpage text is passed to the
- * model only as inert text content, never as instructions; the model has
- * no tool access, no OAuth credentials, and cannot fetch anything itself
- * (see api/_emailExtraction.js). Every field it returns is enum/length
- * validated by sanitizeObligationsResponse before this endpoint will
- * return it to the client at all.
+ * Untrusted-content boundary: email, webpage, and Google Doc text is
+ * passed to the model only as inert text content, never as instructions;
+ * the model has no tool access, no OAuth credentials, and cannot fetch
+ * anything itself (see api/_emailExtraction.js). Every field it returns
+ * is enum/length validated by sanitizeObligationsResponse before this
+ * endpoint will return it to the client at all.
  *
- * Scope for this commit: 14-day lookback, exact approved senders only,
- * normal webpages only, Google Docs identified but not fetched, no
- * attachments, no cron/background polling, no automatic Item creation.
+ * Scope: 14-day lookback, exact approved senders only, normal webpages,
+ * and docs.google.com/document/... Google Docs retrieved only via their
+ * anonymous public export (see api/_googleDocFetch.js) — no Drive OAuth,
+ * no Sheets/Slides/Drive-folder support, no attachments, no
+ * cron/background polling, no automatic Item creation.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { requireFirebaseUser, checkRateLimit } from "./_auth.js";
@@ -52,6 +55,7 @@ import { decodeGmailMessage } from "./_gmailMime.js";
 import { extractQualifyingLinks, extractLinksFromPlainText } from "./_extractLinks.js";
 import { safeFetch } from "./_urlSafety.js";
 import { htmlToReadableText, extractPageTitle } from "./_htmlToText.js";
+import { fetchGoogleDocText } from "./_googleDocFetch.js";
 import { extractObligationsFromEmail } from "./_emailExtraction.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -160,15 +164,20 @@ export default async function handler(req, res) {
       const qualifyingLinks = decoded.htmlBody
         ? extractQualifyingLinks(decoded.htmlBody)
         : extractLinksFromPlainText(decoded.textBody);
-      const googleDocUrls = qualifyingLinks.filter((l) => l.type === "google_doc").map((l) => l.url);
       const webpageLinks = qualifyingLinks.filter((l) => l.type === "webpage");
+      const googleDocLinks = qualifyingLinks.filter((l) => l.type === "google_doc");
 
-      // One entry per qualifying webpage link, fetched or not — this is
-      // what the client uses to create a "webpage" SourceRecord per link
-      // (see src/AuthShell.jsx), including a "failed" one for a legitimate
-      // link that could not be safely/successfully retrieved. `pages` (text
-      // content) only ever holds the ones that succeeded — that's what
-      // actually goes into the extraction prompt.
+      // One entry per qualifying link (webpage OR google_doc), fetched or
+      // not — this is what the client uses to create a "webpage" or
+      // "google_doc" SourceRecord per link (see src/AuthShell.jsx),
+      // including a "failed" one for a legitimate link that could not be
+      // safely/successfully retrieved. `pages` (text content) only ever
+      // holds the ones that succeeded — that's what actually goes into the
+      // extraction prompt. Both link types feed the exact same `pages`
+      // array/prompt mechanism — the model doesn't need to know or care
+      // whether a given page's text came from an ordinary webpage fetch or
+      // a Google Doc export; only the client-side SourceRecord it's later
+      // attributed to differs by `type`.
       const webpagePages = [];
       const pages = [];
       for (const link of webpageLinks) {
@@ -179,13 +188,39 @@ export default async function handler(req, res) {
             pages.push({ url: link.url, text: htmlToReadableText(rawHtml, { maxLength: MAX_PAGE_TEXT_LENGTH }) });
             // Cosmetic only (the review UI's compact source context) —
             // never used for extraction or anything else.
-            webpagePages.push({ url: link.url, fetched: true, title: extractPageTitle(rawHtml) });
+            webpagePages.push({ url: link.url, type: "webpage", fetched: true, title: extractPageTitle(rawHtml) });
           } else {
-            webpagePages.push({ url: link.url, fetched: false });
+            webpagePages.push({ url: link.url, type: "webpage", fetched: false });
           }
         } catch (err) {
           console.error("gmail-check-email: webpage fetch failed", link.url, err);
-          webpagePages.push({ url: link.url, fetched: false });
+          webpagePages.push({ url: link.url, type: "webpage", fetched: false });
+        }
+      }
+
+      // Google Docs (#26, Commit 6): anonymous public-export retrieval
+      // only — see api/_googleDocFetch.js. No Drive OAuth, no workaround
+      // attempted when a doc requires access; that outcome is recorded
+      // (failureReason) for the client to turn into a failed SourceRecord
+      // and a concise parent-facing message, never silently dropped.
+      for (const link of googleDocLinks) {
+        try {
+          const fetchResult = await fetchGoogleDocText(link.url);
+          if (fetchResult.status === "success") {
+            pages.push({ url: link.url, text: fetchResult.text.slice(0, MAX_PAGE_TEXT_LENGTH) });
+            webpagePages.push({ url: link.url, type: "google_doc", fetched: true, documentId: fetchResult.docId });
+          } else {
+            webpagePages.push({
+              url: link.url,
+              type: "google_doc",
+              fetched: false,
+              documentId: fetchResult.docId,
+              failureReason: fetchResult.status === "requires_authentication" ? "requires_authentication" : "fetch_failed",
+            });
+          }
+        } catch (err) {
+          console.error("gmail-check-email: google doc fetch failed", link.url, err);
+          webpagePages.push({ url: link.url, type: "google_doc", fetched: false, documentId: null, failureReason: "fetch_failed" });
         }
       }
 
@@ -199,7 +234,6 @@ export default async function handler(req, res) {
           receivedAt: decoded.receivedAt,
           emailBodyText,
           pages,
-          googleDocUrls,
         });
         obligations = extraction.obligations;
       } catch (err) {
@@ -218,7 +252,6 @@ export default async function handler(req, res) {
         targetChildId: sender.childId,
         linkedUrls: qualifyingLinks.map((l) => l.url),
         webpagePages,
-        googleDocUrls,
         obligations,
         extractionFailed,
       });

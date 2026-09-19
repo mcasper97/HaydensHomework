@@ -105,10 +105,11 @@ function installLocalStorageSpy() {
   return { calls: () => getCalls + setCalls, backing };
 }
 
-// Mirrors src/AuthShell.jsx's handleCheckEmail write sequence exactly
-// (see that file — not imported directly, since it's embedded in a JSX
-// component with no exported pure function to call). Keep in sync with
-// AuthShell.jsx if that sequence changes.
+// Mirrors src/AuthShell.jsx's handleCheckEmail write sequence exactly,
+// including the Commit 6 google_doc branching (see that file — not
+// imported directly, since it's embedded in a JSX component with no
+// exported pure function to call). Keep in sync with AuthShell.jsx if
+// that sequence changes.
 async function processEmailResult(ctx, emailResult, { createSourceRecord, createIngestionCandidate }) {
   const newCandidates = [];
   const emailSourceRecord = await createSourceRecord(ctx, {
@@ -125,25 +126,29 @@ async function processEmailResult(ctx, emailResult, { createSourceRecord, create
       targetType: emailResult.targetType,
       targetChildId: emailResult.targetChildId,
       linkedUrls: emailResult.linkedUrls,
-      googleDocUrls: emailResult.googleDocUrls,
     },
   });
 
-  const webpageSourceRecordIdByUrl = new Map();
+  const linkedSourceRecordIdByUrl = new Map();
   for (const page of emailResult.webpagePages || []) {
     const obligationsFromThisPage = emailResult.obligations.filter((o) => o.sourceUrl === page.url);
-    const webpageSourceRecord = await createSourceRecord(ctx, {
-      sourceType: "webpage",
+    const isGoogleDoc = page.type === "google_doc";
+    const linkedSourceRecord = await createSourceRecord(ctx, {
+      sourceType: isGoogleDoc ? "google_doc" : "webpage",
       title: page.title || null,
       processingStatus: !page.fetched ? "failed" : obligationsFromThisPage.length === 0 ? "no_candidates" : "extracted",
-      metadata: { sourceUrl: page.url, parentEmailSourceRecordId: emailSourceRecord.id },
+      metadata: {
+        sourceUrl: page.url,
+        parentEmailSourceRecordId: emailSourceRecord.id,
+        ...(isGoogleDoc ? { documentId: page.documentId || null, failureReason: page.failureReason || null } : {}),
+      },
     });
-    webpageSourceRecordIdByUrl.set(page.url, webpageSourceRecord.id);
+    linkedSourceRecordIdByUrl.set(page.url, linkedSourceRecord.id);
   }
 
   for (const o of emailResult.obligations) {
-    const sourceRecordId = o.sourceUrl && webpageSourceRecordIdByUrl.has(o.sourceUrl)
-      ? webpageSourceRecordIdByUrl.get(o.sourceUrl)
+    const sourceRecordId = o.sourceUrl && linkedSourceRecordIdByUrl.has(o.sourceUrl)
+      ? linkedSourceRecordIdByUrl.get(o.sourceUrl)
       : emailSourceRecord.id;
     const candidate = await createIngestionCandidate(ctx, {
       sourceRecordId,
@@ -173,13 +178,39 @@ const REVIEW_TARGET_EMAIL_RESULT = {
   subject: "Back to School Night", receivedAt: "2026-09-18T15:30:00.000Z",
   targetType: "review", targetChildId: null,
   linkedUrls: ["https://school.edu/signup"],
-  webpagePages: [{ url: "https://school.edu/signup", fetched: true, title: "Signup Page" }],
-  googleDocUrls: [],
+  webpagePages: [{ url: "https://school.edu/signup", type: "webpage", fetched: true, title: "Signup Page" }],
   obligations: [
     { type: "school_event", title: "Back to School Night", childName: null, date: "2026-09-15", subject: null,
       academicTopic: null, academicUnit: null, preparationRequired: null, description: null, extractionConfidence: 0.9,
       sourceUrl: "https://school.edu/signup", startTime: "18:00", endTime: "19:30" },
   ],
+  extractionFailed: false,
+};
+
+// #26, Commit 6 — a single email linking one successfully-fetched Google
+// Doc, whose text produced an obligation.
+const GOOGLE_DOC_EMAIL_RESULT = {
+  gmailMessageId: "gm-2", gmailThreadId: "gt-2", senderEmail: "teacher@school.edu", senderName: "Ms. Rivera",
+  subject: "Unit 3 Study Guide", receivedAt: "2026-09-20T12:00:00.000Z",
+  targetType: "child", targetChildId: "child-1",
+  linkedUrls: ["https://docs.google.com/document/d/abc123/edit"],
+  webpagePages: [{ url: "https://docs.google.com/document/d/abc123/edit", type: "google_doc", fetched: true, documentId: "abc123" }],
+  obligations: [
+    { type: "test", title: "Unit 3 Math Test", childName: null, date: "2026-09-25", subject: "Math",
+      academicTopic: null, academicUnit: null, preparationRequired: true, description: null, extractionConfidence: 0.85,
+      sourceUrl: "https://docs.google.com/document/d/abc123/edit", startTime: null, endTime: null },
+  ],
+  extractionFailed: false,
+};
+
+// A Google Doc that requires access — no obligations possible from it.
+const GOOGLE_DOC_REQUIRES_ACCESS_EMAIL_RESULT = {
+  gmailMessageId: "gm-3", gmailThreadId: "gt-3", senderEmail: "teacher@school.edu", senderName: "Ms. Rivera",
+  subject: "Restricted Doc", receivedAt: "2026-09-21T12:00:00.000Z",
+  targetType: "review", targetChildId: null,
+  linkedUrls: ["https://docs.google.com/document/d/restricted1/edit"],
+  webpagePages: [{ url: "https://docs.google.com/document/d/restricted1/edit", type: "google_doc", fetched: false, documentId: "restricted1", failureReason: "requires_authentication" }],
+  obligations: [],
   extractionFailed: false,
 };
 
@@ -296,6 +327,127 @@ test("guest ctx (isAdmin: true): unchanged — uses localStorage, never touches 
   } finally {
     delete globalThis.localStorage;
   }
+});
+
+// ============ Google Doc provenance (#26, Commit 6) ============
+
+test("authenticated ctx: Google Doc SourceRecord is persisted with sourceType google_doc and documentId", async (t) => {
+  const store = { writes: [] };
+  setupFirestoreMock(t, store);
+  const { createSourceRecord } = await freshImport("../src/data/sourceRecordsRepository.js");
+  const { createIngestionCandidate } = await freshImport("../src/data/ingestionCandidatesRepository.js");
+  const ctx = { uid: "real-parent-uid-abc123", isAdmin: false };
+
+  const { emailSourceRecord } = await processEmailResult(ctx, GOOGLE_DOC_EMAIL_RESULT, { createSourceRecord, createIngestionCandidate });
+
+  const docWrite = store.writes.find((w) => w.data.sourceType === "google_doc");
+  assert.ok(docWrite, "the Google Doc SourceRecord's createSourceRecord() call reached a real addDoc write");
+  assert.strictEqual(docWrite.collectionPath, "users/real-parent-uid-abc123/sourceRecords");
+  assert.strictEqual(docWrite.data.metadata.sourceUrl, "https://docs.google.com/document/d/abc123/edit");
+  assert.strictEqual(docWrite.data.metadata.documentId, "abc123");
+  assert.strictEqual(docWrite.data.metadata.failureReason, null, "no failureReason for a successfully-fetched doc");
+  assert.strictEqual(docWrite.data.metadata.parentEmailSourceRecordId, emailSourceRecord.id, "originating email relationship preserved — points at the REAL persisted email SourceRecord id");
+});
+
+test("authenticated ctx: IngestionCandidate from a Google Doc points to the Google Doc SourceRecord, not the email's", async (t) => {
+  const store = { writes: [] };
+  setupFirestoreMock(t, store);
+  const { createSourceRecord } = await freshImport("../src/data/sourceRecordsRepository.js");
+  const { createIngestionCandidate } = await freshImport("../src/data/ingestionCandidatesRepository.js");
+  const ctx = { uid: "real-parent-uid-abc123", isAdmin: false };
+
+  const { newCandidates } = await processEmailResult(ctx, GOOGLE_DOC_EMAIL_RESULT, { createSourceRecord, createIngestionCandidate });
+
+  assert.strictEqual(newCandidates.length, 1);
+  const docWrite = store.writes.find((w) => w.data.sourceType === "google_doc");
+  const candidateWrite = store.writes.find((w) => w.collectionPath === "users/real-parent-uid-abc123/ingestionCandidates");
+  assert.strictEqual(candidateWrite.data.sourceRecordId, docWrite.id, "candidate.sourceRecordId points to the Google Doc SourceRecord's real persisted id");
+  assert.strictEqual(candidateWrite.data.title, "Unit 3 Math Test");
+});
+
+test("authenticated ctx: a Google Doc requiring access is recorded as a failed SourceRecord with no candidate created", async (t) => {
+  const store = { writes: [] };
+  setupFirestoreMock(t, store);
+  const { createSourceRecord } = await freshImport("../src/data/sourceRecordsRepository.js");
+  const { createIngestionCandidate } = await freshImport("../src/data/ingestionCandidatesRepository.js");
+  const ctx = { uid: "real-parent-uid-abc123", isAdmin: false };
+
+  const { newCandidates } = await processEmailResult(ctx, GOOGLE_DOC_REQUIRES_ACCESS_EMAIL_RESULT, { createSourceRecord, createIngestionCandidate });
+
+  assert.strictEqual(newCandidates.length, 0, "no obligations, so no candidate — this is the entire point of requires_authentication never being invented around");
+  const docWrite = store.writes.find((w) => w.data.sourceType === "google_doc");
+  assert.ok(docWrite, "still persists a Google Doc SourceRecord — 'kept, not discarded' provenance, never silently dropped");
+  assert.strictEqual(docWrite.data.processingStatus, "failed");
+  assert.strictEqual(docWrite.data.metadata.failureReason, "requires_authentication");
+});
+
+test("authenticated ctx: no Drive OAuth is ever used — Google Doc writes carry only the standard SourceRecord shape", async (t) => {
+  const store = { writes: [] };
+  setupFirestoreMock(t, store);
+  const { createSourceRecord } = await freshImport("../src/data/sourceRecordsRepository.js");
+  const { createIngestionCandidate } = await freshImport("../src/data/ingestionCandidatesRepository.js");
+  const ctx = { uid: "real-parent-uid-abc123", isAdmin: false };
+
+  await processEmailResult(ctx, GOOGLE_DOC_EMAIL_RESULT, { createSourceRecord, createIngestionCandidate });
+
+  const docWrite = store.writes.find((w) => w.data.sourceType === "google_doc");
+  const keys = Object.keys(docWrite.data.metadata);
+  const oauthLikeKeys = ["accessToken", "refreshToken", "oauthToken", "driveScope", "credential", "googleAccountId"];
+  assert.ok(oauthLikeKeys.every((k) => !keys.includes(k)), "no OAuth/credential-shaped field is ever written onto the SourceRecord");
+});
+
+// ============ Existing webpage/email-body ingestion remains unchanged (#26, Commit 6 regression guard) ============
+
+test("existing webpage ingestion is unchanged: still sourceType webpage, still attributed correctly, alongside a Google Doc in the same run", async (t) => {
+  const store = { writes: [] };
+  setupFirestoreMock(t, store);
+  const { createSourceRecord } = await freshImport("../src/data/sourceRecordsRepository.js");
+  const { createIngestionCandidate } = await freshImport("../src/data/ingestionCandidatesRepository.js");
+  const ctx = { uid: "real-parent-uid-abc123", isAdmin: false };
+
+  // One email linking BOTH an ordinary webpage and a Google Doc — proves
+  // Commit 6 didn't disturb the pre-existing webpage path even when both
+  // link types appear together, exactly as api/gmail-check-email.js now
+  // processes them side by side.
+  const mixedEmailResult = {
+    ...REVIEW_TARGET_EMAIL_RESULT,
+    webpagePages: [
+      { url: "https://school.edu/signup", type: "webpage", fetched: true, title: "Signup Page" },
+      { url: "https://docs.google.com/document/d/abc123/edit", type: "google_doc", fetched: true, documentId: "abc123" },
+    ],
+    obligations: [
+      { ...REVIEW_TARGET_EMAIL_RESULT.obligations[0], sourceUrl: "https://school.edu/signup" },
+      { type: "test", title: "From the doc", childName: null, date: "2026-09-25", subject: null, academicTopic: null, academicUnit: null,
+        preparationRequired: null, description: null, extractionConfidence: 0.8, sourceUrl: "https://docs.google.com/document/d/abc123/edit", startTime: null, endTime: null },
+    ],
+  };
+
+  const { newCandidates } = await processEmailResult(ctx, mixedEmailResult, { createSourceRecord, createIngestionCandidate });
+
+  assert.strictEqual(newCandidates.length, 2);
+  const webpageWrite = store.writes.find((w) => w.data.sourceType === "webpage");
+  const docWrite = store.writes.find((w) => w.data.sourceType === "google_doc");
+  assert.ok(webpageWrite && docWrite, "both a webpage AND a google_doc SourceRecord persisted from the same email");
+  const webpageCandidate = newCandidates.find((c) => c.title === "Back to School Night");
+  const docCandidate = newCandidates.find((c) => c.title === "From the doc");
+  assert.strictEqual(webpageCandidate.sourceRecordId, webpageWrite.id, "webpage-attributed candidate still points to the webpage SourceRecord, unaffected by the doc being processed too");
+  assert.strictEqual(docCandidate.sourceRecordId, docWrite.id, "doc-attributed candidate points to the google_doc SourceRecord");
+});
+
+test("existing email-body ingestion is unchanged: an obligation with no sourceUrl still attributes to the email, even when the email also links a Google Doc", async (t) => {
+  const store = { writes: [] };
+  setupFirestoreMock(t, store);
+  const { createSourceRecord } = await freshImport("../src/data/sourceRecordsRepository.js");
+  const { createIngestionCandidate } = await freshImport("../src/data/ingestionCandidatesRepository.js");
+  const ctx = { uid: "real-parent-uid-abc123", isAdmin: false };
+
+  const emailResult = {
+    ...GOOGLE_DOC_EMAIL_RESULT,
+    obligations: [{ ...GOOGLE_DOC_EMAIL_RESULT.obligations[0], sourceUrl: null, title: "From the email body directly" }],
+  };
+  const { emailSourceRecord, newCandidates } = await processEmailResult(ctx, emailResult, { createSourceRecord, createIngestionCandidate });
+
+  assert.strictEqual(newCandidates[0].sourceRecordId, emailSourceRecord.id, "email-body-attributed obligation still points to the email SourceRecord, not the linked Google Doc");
 });
 
 console.log("\n(all assertions above ran via node:test — see the pass/fail summary below)");

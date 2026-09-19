@@ -36,11 +36,13 @@ function hostnameOf(url) {
  * buildSourceContext(sourceRecord, parentEmailSourceRecord?) ->
  *   { kind: "email", senderLine, subject, receivedDate } |
  *   { kind: "webpage", pageTitle, senderLine, subject } |
+ *   { kind: "google_doc", pageTitle, senderLine, subject } |
  *   null
  *
  * `parentEmailSourceRecord` is only used (and only needed) when
- * `sourceRecord.sourceType === "webpage"` — the originating email's
- * SourceRecord, resolved via sourceRecord.metadata.parentEmailSourceRecordId.
+ * `sourceRecord.sourceType` is "webpage" or "google_doc" — the
+ * originating email's SourceRecord, resolved via
+ * sourceRecord.metadata.parentEmailSourceRecordId.
  *
  * Returns null for any other sourceType (image_capture, csv_import,
  * legacy_family_event, manual, or a malformed/missing record) — a
@@ -67,6 +69,21 @@ export function buildSourceContext(sourceRecord, parentEmailSourceRecord) {
     return {
       kind: "webpage",
       pageTitle: sourceRecord.title || hostnameOf(meta.sourceUrl),
+      senderLine: formatSenderLine({ senderName: parentMeta.senderName, senderEmail: parentMeta.senderEmail }),
+      subject: parentMeta.subject || null,
+    };
+  }
+
+  if (sourceRecord.sourceType === "google_doc") {
+    // Google Docs never carry a fetched <title> (#26, Commit 6 — deliberately
+    // not fetched, to avoid extra API complexity for a cosmetic detail; see
+    // api/_googleDocFetch.js). Falls back to the URL's hostname
+    // ("docs.google.com"), then a plain "Google Doc" label.
+    const meta = sourceRecord.metadata || {};
+    const parentMeta = parentEmailSourceRecord?.metadata || {};
+    return {
+      kind: "google_doc",
+      pageTitle: sourceRecord.title || hostnameOf(meta.sourceUrl) || "Google Doc",
       senderLine: formatSenderLine({ senderName: parentMeta.senderName, senderEmail: parentMeta.senderEmail }),
       subject: parentMeta.subject || null,
     };

@@ -51,7 +51,7 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
       const record = await getSourceRecord(ctx, current.sourceRecordId);
       if (cancelled || !record) return;
       let parentRecord = null;
-      if (record.sourceType === "webpage" && record.metadata?.parentEmailSourceRecordId) {
+      if ((record.sourceType === "webpage" || record.sourceType === "google_doc") && record.metadata?.parentEmailSourceRecordId) {
         parentRecord = await getSourceRecord(ctx, record.metadata.parentEmailSourceRecordId);
       }
       if (cancelled) return;
@@ -133,6 +133,12 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
                 <div>Email from {sourceContext.senderLine || "unknown sender"}</div>
                 {sourceContext.subject && <div>Subject: {sourceContext.subject}</div>}
                 {sourceContext.receivedDate && <div>Received: {sourceContext.receivedDate}</div>}
+              </>
+            ) : sourceContext.kind === "google_doc" ? (
+              <>
+                <div>Google Doc: {sourceContext.pageTitle || "unknown document"}</div>
+                <div>Linked from email by {sourceContext.senderLine || "unknown sender"}</div>
+                {sourceContext.subject && <div>Subject: {sourceContext.subject}</div>}
               </>
             ) : (
               <>

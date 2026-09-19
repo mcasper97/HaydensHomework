@@ -40,7 +40,6 @@ function fakeClient(responseJson, { capture } = {}) {
     receivedAt: "2026-03-15T10:00:00.000Z",
     emailBodyText: "Reading logs are due Friday this week.",
     pages: [],
-    googleDocUrls: [],
     todayIso: "2026-03-15",
   });
   ok("Returns one sanitized obligation", result.obligations.length === 1 && result.obligations[0].title === "Reading log due Friday");
@@ -70,7 +69,6 @@ function fakeClient(responseJson, { capture } = {}) {
     receivedAt: "2026-03-10T12:00:00.000Z",
     emailBodyText: "Picture day is next Tuesday, wear your best smile.",
     pages: [],
-    googleDocUrls: [],
     todayIso: "2026-03-11",
   });
   const userText = captured.messages[0].content[0].text;
@@ -92,7 +90,6 @@ function fakeClient(responseJson, { capture } = {}) {
       { url: "https://school.edu/signup", text: "Signup form: bring $5 by Friday." },
       { url: "https://school.edu/calendar", text: "Calendar: no school on the 20th." },
     ],
-    googleDocUrls: [],
   });
   const userText = captured.messages[0].content[0].text;
   ok("Includes the first linked page's URL as a label", userText.includes("https://school.edu/signup"));
@@ -109,33 +106,47 @@ function fakeClient(responseJson, { capture } = {}) {
     client,
     emailBodyText: "body",
     pages: [{ url: "https://school.edu/blocked", text: "" }],
-    googleDocUrls: [],
   });
   const userText = captured.messages[0].content[0].text;
   ok("Still labels the page by URL even when its text is empty", userText.includes("https://school.edu/blocked"));
   ok("Explicitly notes the content could not be retrieved, rather than showing a blank section", userText.includes("could not be retrieved"));
 }
 
-// ============ Google Doc URLs are surfaced as identified-but-not-read ============
+// ============ Google Doc text is fed through the exact same `pages` mechanism
+// as a webpage (#26, Commit 6) — api/gmail-check-email.js is the only place
+// that distinguishes a Google Doc from an ordinary webpage; by the time
+// text reaches this module, both are just "linked page" entries. A Google
+// Doc that couldn't be fetched/requires access is simply absent from
+// `pages`, exactly like a failed webpage fetch always has been — no
+// separate "Google Docs linked" section exists anymore. ============
 {
   let captured;
   const client = fakeClient({ obligations: [] }, { capture: (p) => (captured = p) });
   await extractObligationsFromEmail({
     client,
-    emailBodyText: "body",
-    pages: [],
-    googleDocUrls: ["https://docs.google.com/document/d/abc/edit"],
+    emailBodyText: "See the attached study guide.",
+    pages: [{ url: "https://docs.google.com/document/d/abc123/edit", text: "Unit 3 Study Guide: covers fractions and decimals." }],
   });
   const userText = captured.messages[0].content[0].text;
-  ok("Lists a linked Google Doc URL", userText.includes("https://docs.google.com/document/d/abc/edit"));
-  ok("Explicitly instructs not to describe its content (it was never fetched)", userText.toLowerCase().includes("not retrieved"));
+  ok("A successfully-fetched Google Doc's text is included via the same LINKED PAGE labeling as a webpage", userText.includes("--- LINKED PAGE: https://docs.google.com/document/d/abc123/edit ---"));
+  ok("The Google Doc's actual text content is present", userText.includes("Unit 3 Study Guide: covers fractions and decimals."));
 }
 {
   let captured;
   const client = fakeClient({ obligations: [] }, { capture: (p) => (captured = p) });
-  await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [], googleDocUrls: [] });
+  await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
   const userText = captured.messages[0].content[0].text;
-  ok("No Google Docs section appears at all when there are none linked", !userText.includes("GOOGLE DOCS"));
+  ok("No 'GOOGLE DOCS LINKED' section exists at all anymore (obsolete Commit 5 mechanism, removed in Commit 6)", !userText.includes("GOOGLE DOCS"));
+}
+{
+  let captured;
+  const client = fakeClient({ obligations: [] }, { capture: (p) => (captured = p) });
+  await extractObligationsFromEmail({ client, emailBodyText: "body", pages: [] });
+  ok(
+    "System prompt instructs the model that reference/learning material alone isn't automatically an obligation",
+    captured.system.toLowerCase().includes("reference") && captured.system.toLowerCase().includes("not automatically an obligation")
+  );
+  ok("System prompt explicitly forbids inventing an obligation just to preserve a document's content", captured.system.toLowerCase().includes("preserve"));
 }
 
 // ============ Malformed model output ============
@@ -173,7 +184,6 @@ function fakeClient(responseJson, { capture } = {}) {
     client,
     emailBodyText: "body",
     pages: [{ url: "https://school.edu/signup", text: "Signup details." }],
-    googleDocUrls: [],
   });
   const fromBody = result.obligations.find((o) => o.title === "From the email body");
   const fromPage = result.obligations.find((o) => o.title === "From the linked page");
@@ -190,7 +200,6 @@ function fakeClient(responseJson, { capture } = {}) {
     client,
     emailBodyText: "body",
     pages: [{ url: "https://school.edu/signup", text: "Signup details." }],
-    googleDocUrls: [],
   });
   ok("A sourceUrl that doesn't match any actually-fetched page is discarded (falls back to email-body attribution)", result.obligations[0].sourceUrl === null);
 }
