@@ -3432,6 +3432,15 @@ const HomeworkGamesApp = ({
             description: o.description,
             extractionConfidence: o.extractionConfidence,
             reviewStatus: "pending",
+            // Review Inbox slice — persists which child this photo was
+            // captured for, the same way an email candidate already
+            // persists its sender-configured target, so a candidate
+            // reopened later from the Review Inbox (no ambient child page
+            // context at that point) still resolves the correct child
+            // automatically via candidateToDraftItem.js's existing
+            // targetType==="child" branch. Never the AI's own guess
+            // (o.childName above is informational only, unchanged).
+            ...(childId ? { targetType: "child", targetChildId: childId } : {}),
           })
         )
       );

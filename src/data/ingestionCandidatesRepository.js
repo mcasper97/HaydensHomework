@@ -37,6 +37,21 @@
  * createItem() fails, the candidate is left at "approved" (not reverted to
  * "pending") so a retry can simply re-attempt createItem() without asking
  * the parent to re-decide.
+ *
+ * targetType/targetChildId (Review Inbox slice) — originally email-only
+ * (the approved sender's configured assignment). Now also set by the photo
+ * capture path (targetType: "child", targetChildId: <the child whose
+ * Parents Page the photo was captured from>) so a candidate reopened later
+ * from the Review Inbox — with no ambient "which child's page is this"
+ * context available, unlike the immediate in-the-moment review flow —
+ * still resolves the correct child automatically via
+ * candidateToDraftItem.js's existing targetType==="child" branch. No
+ * schema change: both fields already existed. A candidate created before
+ * this change (or CSV-imported, which never creates a candidate at all —
+ * see App.jsx's importStructuredCSV, which writes canonical Items
+ * directly) simply has targetType: null and falls back to manual child
+ * selection on reopen, exactly like an unmapped "review"-targeted email
+ * candidate already does today.
  */
 import { collection, doc, addDoc, updateDoc, onSnapshot, getDoc, getDocs, serverTimestamp } from "firebase/firestore";
 import { db } from "../Firebase.js";
@@ -125,12 +140,19 @@ const EMPTY_DEFAULTS = {
 };
 
 /**
- * subscribeIngestionCandidates(ctx, filter, onChange) -> unsubscribe
+ * subscribeIngestionCandidates(ctx, filter, onChange, onError?) -> unsubscribe
  * filter.sourceRecordId (optional) — when given, only candidates from that
  * capture are delivered (used by the review UI to show only the candidates
  * from the photo just uploaded).
+ *
+ * onError (optional, additive — Review Inbox slice) — when given, a
+ * subscribe failure calls onError(err) INSTEAD of onChange([]), so a
+ * caller that needs to show a distinct "couldn't load" state (rather than
+ * silently rendering "nothing pending") can. Every pre-existing caller
+ * omits this argument and keeps the original behavior exactly
+ * (onChange([]) on failure) — this is purely additive.
  */
-export function subscribeIngestionCandidates(ctx, filter, onChange) {
+export function subscribeIngestionCandidates(ctx, filter, onChange, onError) {
   const applyFilter = (candidates) => {
     if (!filter?.sourceRecordId) return candidates;
     return candidates.filter((c) => c.sourceRecordId === filter.sourceRecordId);
@@ -156,10 +178,58 @@ export function subscribeIngestionCandidates(ctx, filter, onChange) {
     },
     (err) => {
       console.error("ingestionCandidatesRepository: subscribeIngestionCandidates failed", err);
-      onChange([]);
+      if (onError) onError(err);
+      else onChange([]);
     }
   );
   return unsub;
+}
+
+// The one place an IngestionCandidate's createdAt (a Firestore Timestamp on
+// the real path, a plain ISO string in guest mode, or briefly unresolved
+// immediately after a fresh write before the server round-trip completes)
+// is turned into a comparable number — Review Inbox's "oldest pending
+// first" ordering is the only current consumer. An unresolved timestamp
+// sorts as the NEWEST (Infinity), not the oldest (0): a candidate that
+// hasn't gotten its server timestamp back yet is, in reality, the most
+// recent thing in the collection, and sorting it to the front would put a
+// brand-new item ahead of genuinely old unresolved ones for a moment
+// before settling once the real timestamp arrives.
+export function candidateCreatedAtMillis(candidate) {
+  const v = candidate?.createdAt;
+  if (!v) return Number.POSITIVE_INFINITY;
+  if (typeof v === "string") {
+    const t = Date.parse(v);
+    return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
+  }
+  if (typeof v.toMillis === "function") return v.toMillis();
+  if (typeof v.seconds === "number") return v.seconds * 1000 + (v.nanoseconds || 0) / 1e6;
+  return Number.POSITIVE_INFINITY;
+}
+
+/**
+ * subscribePendingIngestionCandidates(ctx, onChange, onError?) -> unsubscribe
+ * Review Inbox's one subscription (per Slice 1's "single pending
+ * subscription" requirement — this is the only place reviewStatus is
+ * filtered to "pending" and the only place candidates are sorted for this
+ * purpose). Thin wrapper over subscribeIngestionCandidates — no Firestore
+ * query logic is duplicated; filtering/sorting both happen client-side on
+ * the same whole-collection snapshot every other consumer already reads.
+ * Oldest-pending-first, so an older unresolved obligation is never buried
+ * under newer ingestion (Slice 1 product decision).
+ */
+export function subscribePendingIngestionCandidates(ctx, onChange, onError) {
+  return subscribeIngestionCandidates(
+    ctx,
+    {},
+    (candidates) => {
+      const pending = candidates
+        .filter((c) => c.reviewStatus === "pending")
+        .sort((a, b) => candidateCreatedAtMillis(a) - candidateCreatedAtMillis(b));
+      onChange(pending);
+    },
+    onError
+  );
 }
 
 export async function listIngestionCandidates(ctx, filter) {

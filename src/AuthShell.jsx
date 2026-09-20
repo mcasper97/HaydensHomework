@@ -26,12 +26,13 @@ import { subscribeApprovedSenders, addApprovedSender, updateApprovedSenderTarget
 import { buildSenderTargetOptions, parseSenderTargetValue, senderTargetToValue, getSenderTargetLabel } from "./data/gmailApprovedSenders.js";
 import { getParentToolsOpen, setParentToolsOpen } from "./data/parentToolsPreference.js";
 import { createSourceRecord } from "./data/sourceRecordsRepository.js";
-import { createIngestionCandidate } from "./data/ingestionCandidatesRepository.js";
+import { createIngestionCandidate, subscribePendingIngestionCandidates } from "./data/ingestionCandidatesRepository.js";
 import { listItems } from "./data/itemsRepository.js";
 import { buildObligationSignature, canReconcile } from "./organizer/recurringObligationMatch.js";
 import { summarizeGoogleDocOutcomes } from "./organizer/googleDocCheckSummary.js";
 import { summarizeCheckEmailResult } from "./organizer/checkEmailSummary.js";
 import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
+import ReviewInboxPanel from "./organizer/ReviewInboxPanel.jsx";
 
 const CHILD_EMOJIS = ["🦁", "🐯", "🐺", "🦊", "🐻", "🐼", "🦄", "🐲", "🚀", "⭐", "🌈", "🔥"];
 
@@ -947,6 +948,50 @@ const ChildSelector = ({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
+  // Review Inbox (Slice 1) — the single pending-candidate subscription for
+  // this page, driving BOTH the Parent Tools badge and the inbox list
+  // below (never two subscriptions for the same data). Runs unconditionally
+  // (not gated on showParentTools) so the badge is accurate even while the
+  // panel itself is collapsed. pendingError is distinct from an empty list
+  // — a load failure must never render as "nothing to review."
+  const [pendingCandidates, setPendingCandidates] = useState([]);
+  const [pendingError, setPendingError] = useState(false);
+  // The one candidate currently reopened from the inbox into the existing
+  // CandidateReviewModal — a single-item array, mirroring exactly how the
+  // immediate-capture flow already uses that same modal, just sourced from
+  // a persisted list instead of a just-created batch.
+  const [reviewInboxCandidate, setReviewInboxCandidate] = useState(null);
+
+  useEffect(() => {
+    const ctx = { uid: user?.uid, isAdmin: !!user?.isAdmin };
+    const unsub = subscribePendingIngestionCandidates(
+      ctx,
+      (list) => {
+        setPendingCandidates(list);
+        setPendingError(false);
+      },
+      () => {
+        setPendingCandidates([]);
+        setPendingError(true);
+      }
+    );
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, user?.isAdmin]);
+
+  // Auto-close: once the reopened candidate leaves "pending" (approved,
+  // rejected, or otherwise resolved), the SAME subscription above will stop
+  // including it — clear the local reopened-candidate state so the modal
+  // (which itself already renders nothing once its internal queue is
+  // empty) doesn't stay referenced. Never fires from the "×" close button,
+  // which only clears reviewInboxCandidate directly and leaves the
+  // candidate's own reviewStatus untouched.
+  useEffect(() => {
+    if (!reviewInboxCandidate) return;
+    const stillPending = pendingCandidates.some((c) => c.id === reviewInboxCandidate.id);
+    if (!stillPending) setReviewInboxCandidate(null);
+  }, [pendingCandidates, reviewInboxCandidate]);
+
   // Family last name — shown as "{name} Family Board" on this page's button and
   // on the board itself. Stored on the same users/{uid} doc the board reads.
   const [familyLastName, setFamilyLastName] = useState("");
@@ -1110,7 +1155,33 @@ const ChildSelector = ({
           style={{ background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}
         >
           <span className="text-2xl">🗂️</span> Parent Tools
+          {pendingCandidates.length > 0 && (
+            <span
+              className="ml-auto text-xs font-extrabold rounded-full px-2 py-0.5"
+              style={{ background: "#DC2626", color: "white" }}
+            >
+              {pendingCandidates.length}
+            </span>
+          )}
         </button>
+
+        {showParentTools && (
+          <ReviewInboxPanel
+            candidates={pendingCandidates}
+            error={pendingError}
+            familyChildren={children}
+            onReview={setReviewInboxCandidate}
+          />
+        )}
+
+        {reviewInboxCandidate && (
+          <CandidateReviewModal
+            ctx={{ uid: user?.uid, isAdmin: !!user?.isAdmin }}
+            candidates={[reviewInboxCandidate]}
+            familyChildren={children}
+            onClose={() => setReviewInboxCandidate(null)}
+          />
+        )}
 
         {showParentTools && onOpenChildImport && (
           <div data-testid="parent-organizer-panel" className="rounded-3xl p-5 mb-6 border border-gray-700" style={{ background: "#2a2a2c" }}>
