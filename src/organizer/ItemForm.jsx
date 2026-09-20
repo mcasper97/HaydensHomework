@@ -50,6 +50,14 @@ const showsField = (type, field) => {
  * a caller wants different wording (e.g. reviewing an ingestion candidate),
  * it just displays whatever string it's given.
  *
+ * cancelLabel — same pattern, for the Cancel button's text (default
+ * "Cancel", unchanged for every existing caller). CandidateReviewModal.jsx
+ * is the one caller that overrides it to "Reject" — onCancel there is
+ * wired to a real, persisted write (reviewStatus: "rejected"), unlike
+ * every other caller's onCancel, which is a true no-op close. Purely a
+ * label; the click behavior is entirely up to whatever onCancel the
+ * caller passed, unchanged.
+ *
  * allowFamilyWide — opt-in only (default false), set by
  * CandidateReviewModal.jsx for an email candidate whose approved sender is
  * configured as "Family" OR "Ask during review" (#26, Commit 5 correction
@@ -106,6 +114,7 @@ const ItemForm = ({
   onSubmit,
   onCancel,
   submitLabel = null,
+  cancelLabel = "Cancel",
   allowFamilyWide = false,
   initialFamilyWide = false,
   compactDateTime = false,
@@ -497,7 +506,7 @@ const ItemForm = ({
         </button>
         {onCancel && (
           <button type="button" onClick={onCancel} className="px-4 py-2 rounded-2xl font-extrabold text-gray-500 border border-gray-300">
-            Cancel
+            {cancelLabel}
           </button>
         )}
       </div>

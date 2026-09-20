@@ -28,14 +28,39 @@ import { buildSourceContext } from "./sourceContext.js";
  * available to pick from. When provided, this takes precedence over
  * `child` for what ItemForm offers; candidateToDraftItem.js still decides
  * the actual prefill from each candidate's own configured target.
+ *
+ * Four distinct exit actions (Review Inbox slice, product correction):
+ *   "Approve & Add"  -> approve/commit (handleApprove, unchanged).
+ *   "Reject" (ItemForm's Cancel button, relabeled) -> reject
+ *     (reviewStatus: "rejected") via handleReject.
+ *   "Review later"   -> onClose, writes nothing (the candidate is already
+ *     "pending" by construction) — the modal just closes.
+ *   "×"              -> does NOT reject immediately (a second product
+ *     correction after the first one over-corrected this). It opens a
+ *     small, local "Discard this suggestion?" confirmation
+ *     (confirmingDiscard state below) with "Keep reviewing" (dismisses
+ *     the confirmation only, changes nothing) and "Discard" (calls the
+ *     SAME handleReject "Reject" already uses — never a second copy of
+ *     that write, never a new lifecycle status). This is the one place a
+ *     confirmation step exists in this component; it is not a reusable
+ *     dialog component, just a local render branch.
  */
 const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose }) => {
   const [queue, setQueue] = useState(candidates);
   const [error, setError] = useState("");
   const [sourceContext, setSourceContext] = useState(null);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
   const current = queue[0];
   const resolvedCount = candidates.length - queue.length;
+
+  // Reset the confirmation whenever the candidate on screen changes (e.g.
+  // advancing to the next item in a multi-candidate batch after a
+  // Reject/Discard/Approve) — a confirmation about candidate A must never
+  // linger onto candidate B.
+  useEffect(() => {
+    setConfirmingDiscard(false);
+  }, [current?.id]);
 
   // Compact "Source" context (#26, Commit 5 live-validation fix) — reads
   // persisted SourceRecord provenance, not the transient Check Email
@@ -92,6 +117,37 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
     advance();
   };
 
+  // Small, local confirmation — deliberately not a reusable dialog
+  // component or a second copy of the reject write. "Keep reviewing"
+  // touches only this component's own confirmingDiscard state; "Discard"
+  // calls the exact same handleReject the "Reject" button already uses.
+  if (confirmingDiscard) {
+    return (
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-3xl shadow-xl p-6 w-full max-w-sm">
+          <h3 className="text-lg font-extrabold text-gray-900 mb-1">Discard this suggestion?</h3>
+          <p className="text-sm text-gray-600 mb-4">It won't appear in your Review Inbox.</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmingDiscard(false)}
+              className="flex-1 px-4 py-2 rounded-2xl font-extrabold text-gray-500 border border-gray-300"
+            >
+              Keep reviewing
+            </button>
+            <button
+              type="button"
+              onClick={handleReject}
+              className="flex-1 bg-red-600 hover:bg-red-700 text-white font-extrabold py-2 rounded-2xl"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-3xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
@@ -100,9 +156,16 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
             {familyChildren ? "Review email import" : "Review photo import"}
             {candidates.length > 1 ? ` (${resolvedCount + 1} of ${candidates.length})` : ""}
           </h2>
+          {/* Review Inbox slice, second product correction: "×" no longer
+              rejects immediately — it opens the local "Discard this
+              suggestion?" confirmation above. Nothing is written until the
+              parent explicitly picks Discard there (which reuses
+              handleReject, the exact same write "Reject" below performs).
+              A parent who wants to defer without deciding uses "Review
+              later" instead (see its own comment). */}
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => setConfirmingDiscard(true)}
             aria-label="Close"
             className="text-gray-400 hover:text-gray-700 text-2xl leading-none px-2"
           >
@@ -114,6 +177,18 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
             ? "Found in an approved sender's email — review, edit anything that's wrong, confirm who it's for, then add it."
             : "Found in your photo — review, edit anything that's wrong, confirm the child, then add it."}
         </p>
+
+        {/* Explicit defer action — closes without writing anything (the
+            candidate is already "pending" by construction, so there's
+            nothing to set). Reuses the same onClose prop the caller
+            already passes, no new state or handler. */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-xs font-semibold text-indigo-700 underline hover:text-indigo-900 mb-3"
+        >
+          Review later — save to your Review Inbox
+        </button>
         {familyChildren && current.targetType && (
           <p className="text-sm text-indigo-700 font-semibold mb-2">
             Configured for: {getSenderTargetLabel({ targetType: current.targetType, childId: current.targetChildId }, familyChildren)}
@@ -182,6 +257,11 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
           }}
           onCancel={handleReject}
           submitLabel="Approve & Add"
+          // "Cancel" undersells what this button actually does here — it's
+          // a real, persisted reject (reviewStatus: "rejected"), not a
+          // no-op close like every other ItemForm caller's Cancel. Opt-in
+          // relabel only; every other caller keeps the default "Cancel".
+          cancelLabel="Reject"
         />
       </div>
     </div>

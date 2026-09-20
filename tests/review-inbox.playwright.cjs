@@ -5,6 +5,16 @@
  * wiring (single subscription driving both the Parent Tools badge and the
  * inbox list, plus the reopened CandidateReviewModal + auto-close).
  *
+ * Includes two post-launch product corrections to CandidateReviewModal.jsx's
+ * exit actions. First correction: the explicit, distinctly-labeled "Review
+ * later" action is what leaves a candidate pending and visible in the
+ * inbox — "×" no longer implicitly means that. Second correction
+ * (superseding the first correction's own "×" behavior): "×" does NOT
+ * reject immediately — it opens a small local "Discard this suggestion?"
+ * confirmation; only its "Discard" button actually rejects (reusing the
+ * exact same handleReject "Reject" already calls); "Keep reviewing" leaves
+ * the candidate pending and reopens the same modal.
+ *
  * Exercises the guest/local-demo storage path (localStorage-backed), same
  * as every other *.playwright.cjs file in this suite. Real photo/email
  * ingestion cannot create a genuine IngestionCandidate in guest mode (no
@@ -91,19 +101,20 @@ function candidate(overrides) {
   const legacyNoTarget = candidate({ id: 'cand-legacy', title: 'Field Trip Form', proposedType: 'reminder', targetType: null, targetChildId: null, createdAt: '2020-01-02T00:00:00.000Z' });
   const familyTargeted = candidate({ id: 'cand-family', title: 'Back to School Night', proposedType: 'family_event', targetType: 'family', targetChildId: null, createdAt: '2020-01-03T00:00:00.000Z' });
   const missingSource = candidate({ id: 'cand-missing-src', title: 'Book Report', proposedType: 'assignment', sourceRecordId: 'does-not-exist', targetType: 'child', targetChildId: avaId, createdAt: '2020-01-04T00:00:00.000Z' });
+  const xRejectTarget = candidate({ id: 'cand-x-reject', title: 'Permission Slip', proposedType: 'reminder', createdAt: '2020-01-05T00:00:00.000Z' });
   const alreadyApproved = candidate({ id: 'cand-approved', title: 'Already approved', reviewStatus: 'approved' });
   const alreadyRejected = candidate({ id: 'cand-rejected', title: 'Already rejected', reviewStatus: 'rejected' });
   const alreadyCommitted = candidate({ id: 'cand-committed', title: 'Already committed', reviewStatus: 'committed' });
   const alreadyCorroborated = candidate({ id: 'cand-corroborated', title: 'Already corroborated', reviewStatus: 'corroborated' });
 
-  await writeCandidates([childTargeted, legacyNoTarget, familyTargeted, missingSource, alreadyApproved, alreadyRejected, alreadyCommitted, alreadyCorroborated]);
+  await writeCandidates([childTargeted, legacyNoTarget, familyTargeted, missingSource, xRejectTarget, alreadyApproved, alreadyRejected, alreadyCommitted, alreadyCorroborated]);
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
   await page.waitForSelector('text=Parent Page');
 
   // ============ Badge visible before opening Parent Tools ============
   const parentToolsButtonBefore = page.locator('button', { hasText: 'Parent Tools' });
-  ok('A pending-count badge is visible on the Parent Tools button before it is opened', await parentToolsButtonBefore.getByText('4', { exact: true }).isVisible().catch(() => false));
+  ok('A pending-count badge is visible on the Parent Tools button before it is opened', await parentToolsButtonBefore.getByText('5', { exact: true }).isVisible().catch(() => false));
   ok('Review Inbox panel is not visible before opening Parent Tools', !(await visible('Review Inbox')));
 
   await page.getByText('Parent Tools').click();
@@ -114,8 +125,9 @@ function candidate(overrides) {
   ok('Persisted pending candidate (legacy, no target) appears', await visible('Field Trip Form'));
   ok('Persisted pending candidate (family-targeted) appears', await visible('Back to School Night'));
   ok('Persisted pending candidate (missing SourceRecord) appears', await visible('Book Report'));
+  ok('Persisted pending candidate (for the ×-reject check below) appears', await visible('Permission Slip'));
   ok('Each pending candidate appears exactly once', (await page.getByText('Spelling Test').count()) === 1);
-  ok('Inbox subtext shows the correct pending count', await visible('4 items awaiting review'));
+  ok('Inbox subtext shows the correct pending count', await visible('5 items awaiting review'));
 
   // ============ 8/9/10. approved/rejected/committed/corroborated never appear ============
   ok('An already-approved candidate is not shown', !(await visible('Already approved')));
@@ -125,8 +137,8 @@ function candidate(overrides) {
 
   // ============ Badge and inbox agree (same subscription) ============
   const parentToolsButton = page.locator('button', { hasText: 'Parent Tools' });
-  const badgeVisible = await parentToolsButton.getByText('4', { exact: true }).isVisible().catch(() => false);
-  ok('The Parent Tools badge and the inbox list agree on the pending count (4)', badgeVisible);
+  const badgeVisible = await parentToolsButton.getByText('5', { exact: true }).isVisible().catch(() => false);
+  ok('The Parent Tools badge and the inbox list agree on the pending count (5)', badgeVisible);
 
   // ============ 5. Review reopens the existing CandidateReviewModal; 15/16. child-context restoration ============
   const childRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Spelling Test' });
@@ -137,20 +149,28 @@ function candidate(overrides) {
   const avaPill = form.getByRole('button', { name: /Ava/ }).first();
   ok('A photo-sourced, child-targeted candidate restores the correct child preselected on deferred review', (await avaPill.getAttribute('class') || '').includes('bg-indigo-600'));
 
-  // ============ 2. X-close leaves it pending ============
-  await page.getByRole('button', { name: 'Close' }).click();
+  // ============ "×", "Review later", and "Reject" are distinct, independently present actions ============
+  const xButton = page.locator('button[aria-label="Close"]');
+  const reviewLaterButton = page.getByRole('button', { name: /Review later/ });
+  ok('The "×" control (aria-label "Close") is present', await xButton.isVisible());
+  ok('The "Review later" control is present at the same time, as a visibly distinct element', await reviewLaterButton.isVisible());
+  ok('The "Reject" control (ItemForm\'s relabeled Cancel button) is present at the same time too', await form.getByRole('button', { name: 'Reject' }).isVisible());
+
+  // ============ "Review later" leaves it pending and closes the modal (product correction) ============
+  await reviewLaterButton.click();
   await page.waitForTimeout(200);
   let stored = await readCandidates();
-  ok('Closing via "×" leaves the candidate reviewStatus unchanged ("pending")', stored.find((c) => c.id === 'cand-child')?.reviewStatus === 'pending');
-  ok('The candidate is still shown in the inbox after closing without resolving', await visible('Spelling Test'));
+  ok('"Review later" leaves the candidate reviewStatus unchanged ("pending")', stored.find((c) => c.id === 'cand-child')?.reviewStatus === 'pending');
+  ok('The candidate is still shown in the inbox after "Review later"', await visible('Spelling Test'));
+  ok('"Review later" closes the modal (no lingering form)', !(await page.locator('form').isVisible().catch(() => false)));
 
-  // ============ 3/4. Survives refresh; survives navigation away/back ============
+  // ============ 3/4. A "Review later"-deferred candidate survives refresh; survives navigation away/back ============
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
   await page.waitForSelector('text=Parent Page');
   await page.getByText('Parent Tools').click();
   await page.waitForSelector('text=Review Inbox');
-  ok('Pending candidate survives a full page refresh', await visible('Spelling Test'));
+  ok('A "Review later"-deferred candidate survives a full page refresh', await visible('Spelling Test'));
 
   await page.getByText(/Family Board/).first().click();
   await page.waitForSelector('text=🔆 Today');
@@ -158,14 +178,45 @@ function candidate(overrides) {
   await page.waitForSelector('text=Parent Page');
   await page.getByText('Parent Tools').click();
   await page.waitForSelector('text=Review Inbox');
-  ok('Pending candidate survives navigating away (Family Board) and back', await visible('Spelling Test'));
+  ok('A "Review later"-deferred candidate survives navigating away (Family Board) and back', await visible('Spelling Test'));
+
+  // ============ "×" opens a discard confirmation; it does NOT reject by itself ============
+  const xRejectRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Permission Slip' });
+  await xRejectRow.getByText('Review', { exact: true }).click();
+  await page.locator('button[aria-label="Close"]').click();
+  await page.waitForTimeout(150);
+
+  ok('Clicking "×" alone shows the "Discard this suggestion?" confirmation', await visible('Discard this suggestion?'));
+  ok('The confirmation explains the consequence ("It won\'t appear in your Review Inbox.")', await visible("It won't appear in your Review Inbox."));
+  stored = await readCandidates();
+  ok('Clicking "×" alone does NOT change reviewStatus (still "pending")', stored.find((c) => c.id === 'cand-x-reject')?.reviewStatus === 'pending');
+  ok('The candidate is still in the pending inbox while the confirmation is open (nothing written yet)', stored.filter((c) => c.reviewStatus === 'pending').some((c) => c.id === 'cand-x-reject'));
+
+  // ---- "Keep reviewing" leaves it pending and reopens the same modal ----
+  await page.getByRole('button', { name: 'Keep reviewing' }).click();
+  await page.waitForTimeout(150);
+  ok('"Keep reviewing" dismisses the confirmation and leaves CandidateReviewModal open', await page.locator('form').isVisible());
+  ok('"Keep reviewing" changes nothing — the same candidate\'s title is still shown in the reopened form', await page.locator('form').getByPlaceholder('Title').inputValue().then((v) => v === 'Permission Slip'));
+  stored = await readCandidates();
+  ok('"Keep reviewing" does not change reviewStatus (still "pending")', stored.find((c) => c.id === 'cand-x-reject')?.reviewStatus === 'pending');
+
+  // ---- Clicking "×" again, then "Discard", actually rejects ----
+  await page.locator('button[aria-label="Close"]').click();
+  await page.waitForTimeout(150);
+  ok('Clicking "×" a second time reopens the same confirmation', await visible('Discard this suggestion?'));
+  await page.getByRole('button', { name: 'Discard' }).click();
+  await page.waitForTimeout(300);
+
+  ok('"Discard" removes the candidate from the pending inbox', !(await visible('Permission Slip')));
+  stored = await readCandidates();
+  ok('"Discard" rejects the candidate (reviewStatus becomes "rejected") — reuses the existing reject path, not a new status', stored.find((c) => c.id === 'cand-x-reject')?.reviewStatus === 'rejected');
 
   // ============ 13. Missing SourceRecord remains reviewable ============
   const missingRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Book Report' });
   await missingRow.getByText('Review', { exact: true }).click();
   form = page.locator('form');
   ok('A candidate whose sourceRecordId points at a deleted/missing SourceRecord is still reviewable (no crash, form renders)', await form.getByPlaceholder('Title').inputValue().then((v) => v === 'Book Report'));
-  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: /Review later/ }).click();
   await page.waitForTimeout(150);
 
   // ============ 15/16 continued: legacy (no target) requires manual selection; family-target never mis-assigns a child ============
@@ -174,7 +225,7 @@ function candidate(overrides) {
   form = page.locator('form');
   let legacyAvaClass = (await form.getByRole('button', { name: /Ava/ }).first().getAttribute('class')) || '';
   ok('A legacy candidate with no targetChildId does NOT preselect Ava (manual selection required)', !legacyAvaClass.includes('bg-indigo-600'));
-  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: /Review later/ }).click();
   await page.waitForTimeout(150);
 
   const familyRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Back to School Night' });
@@ -187,7 +238,7 @@ function candidate(overrides) {
   // (nonexistent, in this state) child pill lacks a selected class.
   const wholeFamilyCheckbox = form.locator('label', { hasText: 'Whole family' }).locator('input[type="checkbox"]');
   ok('A family-targeted candidate starts with "Whole family" checked, never a specific child preselected', await wholeFamilyCheckbox.isChecked());
-  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: /Review later/ }).click();
   await page.waitForTimeout(150);
 
   // ============ 6/17/18/19. Approve removes it from the inbox; auto-close ============
@@ -202,18 +253,19 @@ function candidate(overrides) {
   ok('The underlying candidate is now committed (existing approve/commit lifecycle unchanged)', stored.find((c) => c.id === 'cand-child')?.reviewStatus === 'committed');
   ok('The reopened modal auto-closed after resolution (no lingering form)', !(await page.locator('form').isVisible().catch(() => false)));
 
-  // ============ 7. Reject removes it from the inbox ============
+  // ============ 7. Reject (via ItemForm's own "Reject" button, relabeled from "Cancel") removes it from the inbox ============
   const reopenLegacy = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Field Trip Form' });
   await reopenLegacy.getByText('Review', { exact: true }).click();
   form = page.locator('form');
-  await form.getByRole('button', { name: 'Cancel' }).click();
+  ok('ItemForm\'s Cancel button is relabeled "Reject" inside the Review Inbox flow (it performs a real, persisted reject here, unlike a plain cancel)', await form.getByRole('button', { name: 'Reject' }).isVisible());
+  await form.getByRole('button', { name: 'Reject' }).click();
   await page.waitForTimeout(300);
 
-  ok('Rejecting (via ItemForm\'s in-form Cancel) removes the candidate from the pending inbox', !(await visible('Field Trip Form')));
+  ok('Rejecting (via ItemForm\'s "Reject" button) removes the candidate from the pending inbox', !(await visible('Field Trip Form')));
   stored = await readCandidates();
   ok('The underlying candidate is now rejected', stored.find((c) => c.id === 'cand-legacy')?.reviewStatus === 'rejected');
 
-  // ============ Remaining candidates still correct after two resolutions ============
+  // ============ Remaining candidates still correct after all resolutions ============
   ok('Untouched pending candidates remain visible after others resolve', await visible('Back to School Night') && await visible('Book Report'));
 
   // ============ 14. Load error differs from empty (simulated via a corrupted localStorage value) ============
