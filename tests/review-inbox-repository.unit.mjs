@@ -9,6 +9,13 @@
  * path is covered separately in
  * tests/review-inbox-error-path.unit.mjs (module-mocked).
  *
+ * Slice 2 update: subscribePendingIngestionCandidates now also includes
+ * reviewStatus:"approved" candidates (legacy candidates stranded there by a
+ * partial failure from before Slice 2's atomic commit existed — see
+ * candidateCommitRepository.js) so they surface as "Needs attention" in the
+ * Review Inbox instead of being invisible. Only "rejected", "committed",
+ * and "corroborated" remain excluded.
+ *
  * Usage: node tests/review-inbox-repository.unit.mjs
  */
 import {
@@ -66,9 +73,9 @@ ok("An undefined candidate itself does not throw", candidateCreatedAtMillis(unde
   const corroborated = await createIngestionCandidate(ctx, { title: "Corroborated one", proposedType: "reminder", reviewStatus: "corroborated" });
   const pendingC = await createIngestionCandidate(ctx, { title: "Pending C", proposedType: "project", reviewStatus: "pending" });
 
-  ok("Exactly the 3 pending candidates are delivered, nothing else", delivered.length === 3);
-  ok("Every delivered candidate has reviewStatus 'pending'", delivered.every((c) => c.reviewStatus === "pending"));
-  ok("Approved candidate is excluded", !delivered.some((c) => c.id === approved.id));
+  ok("Exactly the 3 pending + 1 legacy-approved candidates are delivered, nothing else", delivered.length === 4);
+  ok("Every delivered candidate has reviewStatus 'pending' or 'approved'", delivered.every((c) => c.reviewStatus === "pending" || c.reviewStatus === "approved"));
+  ok("Legacy-approved candidate IS included (Slice 2 recovery)", delivered.some((c) => c.id === approved.id));
   ok("Rejected candidate is excluded", !delivered.some((c) => c.id === rejected.id));
   ok("Committed candidate is excluded", !delivered.some((c) => c.id === committed.id));
   ok("Corroborated candidate is excluded", !delivered.some((c) => c.id === corroborated.id));
@@ -81,18 +88,34 @@ ok("An undefined candidate itself does not throw", candidateCreatedAtMillis(unde
   await updateIngestionCandidate(ctx, pendingB.id, { createdAt: "2020-01-01T00:00:00.000Z" });
   await updateIngestionCandidate(ctx, pendingC.id, { createdAt: "2020-01-03T00:00:00.000Z" });
 
+  // "approved" (the pre-existing legacy candidate) keeps its real,
+  // un-forced wall-clock createdAt, so it always sorts after the three
+  // forced 2020 dates — the 4th, newest-by-construction item.
   ok(
-    "Pending candidates are delivered oldest-first by createdAt (B, then A, then C)",
-    delivered.length === 3 && delivered[0].id === pendingB.id && delivered[1].id === pendingA.id && delivered[2].id === pendingC.id
+    "Pending + legacy-approved candidates are delivered oldest-first by createdAt (B, A, C, then approved)",
+    delivered.length === 4 &&
+      delivered[0].id === pendingB.id &&
+      delivered[1].id === pendingA.id &&
+      delivered[2].id === pendingC.id &&
+      delivered[3].id === approved.id
   );
 
   // Resolving one removes it from the live pending list without a second subscription/query.
+  // Slice 2: approving no longer removes a candidate from this list — it
+  // stays (now as a "Needs attention" recovery row) until it's actually
+  // committed or rejected.
   await updateIngestionCandidate(ctx, pendingA.id, { reviewStatus: "approved" });
-  ok("Approving a previously-pending candidate removes it from the live delivered list", delivered.length === 2 && !delivered.some((c) => c.id === pendingA.id));
-  ok("The remaining two stay in oldest-first order", delivered[0].id === pendingB.id && delivered[1].id === pendingC.id);
+  ok("Approving a previously-pending candidate KEEPS it in the delivered list (Slice 2 recovery)", delivered.length === 4 && delivered.some((c) => c.id === pendingA.id));
+  ok("It still sorts in its original oldest-first position", delivered[0].id === pendingB.id && delivered[1].id === pendingA.id && delivered[2].id === pendingC.id && delivered[3].id === approved.id);
 
   await updateIngestionCandidate(ctx, pendingB.id, { reviewStatus: "rejected" });
-  ok("Rejecting a previously-pending candidate removes it too", delivered.length === 1 && delivered[0].id === pendingC.id);
+  ok("Rejecting a candidate removes it", delivered.length === 3 && !delivered.some((c) => c.id === pendingB.id));
+
+  await updateIngestionCandidate(ctx, pendingA.id, { reviewStatus: "committed" });
+  ok("Committing a (formerly legacy-approved) candidate removes it too", delivered.length === 2 && !delivered.some((c) => c.id === pendingA.id));
+
+  await updateIngestionCandidate(ctx, approved.id, { reviewStatus: "committed" });
+  ok("Committing the original legacy-approved candidate removes it, leaving only pendingC", delivered.length === 1 && delivered[0].id === pendingC.id);
 
   unsub();
   delete global.localStorage;

@@ -19,6 +19,7 @@ import {
   updateDoc,
   deleteDoc,
   onSnapshot,
+  getDoc,
   getDocs,
   serverTimestamp,
 } from "firebase/firestore";
@@ -26,7 +27,10 @@ import { db } from "../Firebase.js";
 
 const GUEST_ITEMS_KEY = "crestly_admin_items";
 
-function readGuestItems() {
+// Exported (Slice 2) so candidateCommitRepository.js's guest-mode branch can
+// compose its own "insert item at a specific id if missing" logic without a
+// new parameter on createItem() below — createItem() itself is unchanged.
+export function readGuestItems() {
   try {
     const raw = localStorage.getItem(GUEST_ITEMS_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
@@ -36,7 +40,7 @@ function readGuestItems() {
   }
 }
 
-function writeGuestItems(items) {
+export function writeGuestItems(items) {
   try {
     localStorage.setItem(GUEST_ITEMS_KEY, JSON.stringify(items));
   } catch {
@@ -47,7 +51,7 @@ function writeGuestItems(items) {
 // Guest storage has no live Firestore-style listener, so subscribers are
 // notified manually whenever a guest write happens (create/update/delete).
 const guestListeners = new Set();
-function notifyGuestListeners() {
+export function notifyGuestListeners() {
   const items = readGuestItems();
   guestListeners.forEach((cb) => cb(items));
 }
@@ -62,7 +66,10 @@ function itemsCollection(uid) {
   return collection(db, "users", uid, "items");
 }
 
-const EMPTY_DEFAULTS = {
+// Exported (Slice 2) so candidateCommitRepository.js can build an Item
+// payload with the exact same defaults createItem() applies, without
+// duplicating this object or importing createItem() itself.
+export const EMPTY_DEFAULTS = {
   childIds: [],
   subject: null,
   courseId: null,
@@ -151,6 +158,23 @@ export async function listItems(ctx) {
   if (!db || !ctx?.uid) return [];
   const snap = await getDocs(itemsCollection(ctx.uid));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * getItem(ctx, itemId) -> item | null (Slice 2)
+ * Read-only single-item fetch — used by candidateCommitRepository.js's
+ * guest-mode branch to check "does items/{candidateId} already exist"
+ * without a transaction (Firestore's real path checks this itself, inside
+ * its own runTransaction, and does not call this).
+ */
+export async function getItem(ctx, itemId) {
+  if (!itemId) return null;
+  if (ctx?.isAdmin) {
+    return readGuestItems().find((it) => it.id === itemId) || null;
+  }
+  if (!db || !ctx?.uid) return null;
+  const snap = await getDoc(doc(db, "users", ctx.uid, "items", itemId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
 export async function createItem(ctx, data) {

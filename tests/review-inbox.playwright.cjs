@@ -15,6 +15,15 @@
  * exact same handleReject "Reject" already calls); "Keep reviewing" leaves
  * the candidate pending and reopens the same modal.
  *
+ * Also covers Slice 2 (Candidate-to-Item Idempotency + Recovery): a
+ * candidate stranded at reviewStatus:"approved" (impossible for a FRESH
+ * approval to produce anymore — see candidateCommitRepository.js — but
+ * reachable by a legacy candidate from before Slice 2) now appears in the
+ * inbox tagged "Needs attention" instead of being invisible, and reopening
+ * it renders CandidateReviewModal's restricted recovery UI (no Reject, no
+ * Review later, "×" closes with no confirmation, submit reads "Finish
+ * Adding") rather than the normal four-action review UI.
+ *
  * Exercises the guest/local-demo storage path (localStorage-backed), same
  * as every other *.playwright.cjs file in this suite. Real photo/email
  * ingestion cannot create a genuine IngestionCandidate in guest mode (no
@@ -113,8 +122,10 @@ function candidate(overrides) {
   await page.waitForSelector('text=Parent Page');
 
   // ============ Badge visible before opening Parent Tools ============
+  // 6, not 5: the 5 pending candidates PLUS the legacy "approved" recovery
+  // candidate (Slice 2 — see below), which now also counts.
   const parentToolsButtonBefore = page.locator('button', { hasText: 'Parent Tools' });
-  ok('A pending-count badge is visible on the Parent Tools button before it is opened', await parentToolsButtonBefore.getByText('5', { exact: true }).isVisible().catch(() => false));
+  ok('A pending-count badge is visible on the Parent Tools button before it is opened', await parentToolsButtonBefore.getByText('6', { exact: true }).isVisible().catch(() => false));
   ok('Review Inbox panel is not visible before opening Parent Tools', !(await visible('Review Inbox')));
 
   await page.getByText('Parent Tools').click();
@@ -127,18 +138,21 @@ function candidate(overrides) {
   ok('Persisted pending candidate (missing SourceRecord) appears', await visible('Book Report'));
   ok('Persisted pending candidate (for the ×-reject check below) appears', await visible('Permission Slip'));
   ok('Each pending candidate appears exactly once', (await page.getByText('Spelling Test').count()) === 1);
-  ok('Inbox subtext shows the correct pending count', await visible('5 items awaiting review'));
+  ok('Inbox subtext shows the correct pending+needs-attention count', await visible('6 items awaiting review'));
 
-  // ============ 8/9/10. approved/rejected/committed/corroborated never appear ============
-  ok('An already-approved candidate is not shown', !(await visible('Already approved')));
+  // ============ 8/9/10. rejected/committed/corroborated never appear; legacy-approved appears as "Needs attention" (Slice 2) ============
+  ok('A legacy-approved candidate IS shown (Slice 2 recovery, not invisible)', await visible('Already approved'));
+  const approvedRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Already approved' });
+  ok('Its row carries the "Needs attention" tag', await approvedRow.getByTestId('review-inbox-needs-attention').isVisible());
   ok('An already-rejected candidate is not shown', !(await visible('Already rejected')));
   ok('An already-committed candidate is not shown', !(await visible('Already committed')));
   ok('An already-corroborated candidate is not shown', !(await visible('Already corroborated')));
+  ok('A normal pending row does NOT carry the "Needs attention" tag', !(await page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Spelling Test' }).getByTestId('review-inbox-needs-attention').isVisible().catch(() => false)));
 
   // ============ Badge and inbox agree (same subscription) ============
   const parentToolsButton = page.locator('button', { hasText: 'Parent Tools' });
-  const badgeVisible = await parentToolsButton.getByText('5', { exact: true }).isVisible().catch(() => false);
-  ok('The Parent Tools badge and the inbox list agree on the pending count (5)', badgeVisible);
+  const badgeVisible = await parentToolsButton.getByText('6', { exact: true }).isVisible().catch(() => false);
+  ok('The Parent Tools badge and the inbox list agree on the pending+needs-attention count (6)', badgeVisible);
 
   // ============ 5. Review reopens the existing CandidateReviewModal; 15/16. child-context restoration ============
   const childRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Spelling Test' });
@@ -264,6 +278,39 @@ function candidate(overrides) {
   ok('Rejecting (via ItemForm\'s "Reject" button) removes the candidate from the pending inbox', !(await visible('Field Trip Form')));
   stored = await readCandidates();
   ok('The underlying candidate is now rejected', stored.find((c) => c.id === 'cand-legacy')?.reviewStatus === 'rejected');
+
+  // ============ Slice 2: legacy "approved" candidate reopens into a restricted recovery UI ============
+  await approvedRow.getByText('Review', { exact: true }).click();
+  form = page.locator('form');
+  ok('Recovery mode\'s header reads "Needs attention" instead of the normal review title', await visible('Needs attention'));
+  ok('Recovery mode never offers "Reject" (would silently orphan a possibly-already-created Item)', !(await form.getByRole('button', { name: 'Reject' }).isVisible().catch(() => false)));
+  ok('Recovery mode never offers "Review later" (leaving it at "approved" is not a safe no-op)', !(await page.getByRole('button', { name: /Review later/ }).isVisible().catch(() => false)));
+  ok('Recovery mode\'s submit button reads "Finish Adding", not "Approve & Add"', await form.getByRole('button', { name: 'Finish Adding' }).isVisible());
+
+  // "×" in recovery mode closes immediately — no "Discard this suggestion?" confirmation, nothing written.
+  await page.locator('button[aria-label="Close"]').click();
+  await page.waitForTimeout(150);
+  ok('"×" in recovery mode does NOT open the "Discard this suggestion?" confirmation', !(await visible('Discard this suggestion?')));
+  ok('"×" in recovery mode simply closes the modal', !(await page.locator('form').isVisible().catch(() => false)));
+  stored = await readCandidates();
+  ok('Closing recovery mode with "×" leaves the candidate untouched (still "approved")', stored.find((c) => c.id === 'cand-approved')?.reviewStatus === 'approved');
+  ok('The candidate is still shown (still needs attention) after closing recovery mode', await visible('Already approved'));
+
+  // Reopen, pick a child (this legacy candidate has no targetType, so
+  // nothing is preselected — same as any other untargeted candidate), and
+  // "Finish Adding" — commits atomically via commitCandidateToItem.
+  await approvedRow.getByText('Review', { exact: true }).click();
+  form = page.locator('form');
+  await form.getByRole('button', { name: /Ava/ }).first().click();
+  await form.getByRole('button', { name: 'Finish Adding' }).click();
+  await page.waitForTimeout(400);
+
+  ok('Finishing a recovery candidate removes it from the inbox', !(await visible('Already approved')));
+  stored = await readCandidates();
+  ok('The recovered candidate is now committed', stored.find((c) => c.id === 'cand-approved')?.reviewStatus === 'committed');
+  const recoveredItems = await page.evaluate(() => JSON.parse(localStorage.getItem('crestly_admin_items') || '[]'));
+  ok('Exactly one Item was created for the recovered candidate, at a deterministic id matching the candidate', recoveredItems.filter((it) => it.id === 'cand-approved').length === 1);
+  ok('The created Item carries sourceCandidateId back to the candidate (Slice 2 provenance)', recoveredItems.find((it) => it.id === 'cand-approved')?.sourceCandidateId === 'cand-approved');
 
   // ============ Remaining candidates still correct after all resolutions ============
   ok('Untouched pending candidates remain visible after others resolve', await visible('Back to School Night') && await visible('Book Report'));

@@ -14,11 +14,17 @@ import { candidateCreatedAtMillis } from "../data/ingestionCandidatesRepository.
  * subscription this component is purely presentational over (no
  * subscription, no Firestore access, no filtering/sorting logic here).
  *
- * candidates — already filtered to reviewStatus:"pending" and sorted
+ * candidates — already filtered to reviewStatus:"pending" (or, as of
+ * Slice 2, the legacy-recovery reviewStatus:"approved") and sorted
  * oldest-first by the caller (ingestionCandidatesRepository.js's
  * subscribePendingIngestionCandidates). This component never re-derives
  * that — a single source of truth for "what's pending," per the Slice 1
- * product decision.
+ * product decision. A row whose candidate is "approved" instead of
+ * "pending" renders a "Needs attention" tag (Slice 2) — it was approved by
+ * a parent but never finished becoming an Item (a partial failure from
+ * before Slice 2's atomic commit existed), so it needs a distinct visual
+ * treatment from a normal not-yet-reviewed suggestion, not a different
+ * subscription or filter.
  *
  * error — true when the subscription itself failed (distinct from a
  * genuinely empty list — "no items" and "couldn't load" must never look
@@ -61,11 +67,21 @@ const ReviewInboxPanel = ({ candidates = [], error = false, familyChildren = [],
               const meta = ITEM_TYPE_META[c.proposedType] || {};
               const targetLabel = getSenderTargetLabel({ targetType: c.targetType, childId: c.targetChildId }, familyChildren);
               const createdLabel = formatCreatedAt(c);
+              const needsAttention = c.reviewStatus === "approved";
               return (
                 <div key={c.id} data-testid="review-inbox-row" className="w-full flex items-center gap-3 p-3 rounded-2xl" style={{ background: "#1C1C1E" }}>
                   <div className="flex-1 min-w-0">
                     <div className="text-white font-bold text-sm truncate">
                       {meta.icon} {c.title || "(untitled)"}
+                      {needsAttention && (
+                        <span
+                          data-testid="review-inbox-needs-attention"
+                          className="ml-2 text-[10px] font-extrabold uppercase tracking-wide rounded-full px-2 py-0.5 align-middle"
+                          style={{ background: "#DC2626", color: "white" }}
+                        >
+                          Needs attention
+                        </span>
+                      )}
                     </div>
                     <div className="text-gray-400 text-xs truncate">
                       {meta.label || c.proposedType}

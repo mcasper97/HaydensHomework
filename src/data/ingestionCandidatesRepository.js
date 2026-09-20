@@ -211,12 +211,20 @@ export function candidateCreatedAtMillis(candidate) {
  * subscribePendingIngestionCandidates(ctx, onChange, onError?) -> unsubscribe
  * Review Inbox's one subscription (per Slice 1's "single pending
  * subscription" requirement — this is the only place reviewStatus is
- * filtered to "pending" and the only place candidates are sorted for this
- * purpose). Thin wrapper over subscribeIngestionCandidates — no Firestore
- * query logic is duplicated; filtering/sorting both happen client-side on
- * the same whole-collection snapshot every other consumer already reads.
- * Oldest-pending-first, so an older unresolved obligation is never buried
- * under newer ingestion (Slice 1 product decision).
+ * filtered and the only place candidates are sorted for this purpose).
+ * Thin wrapper over subscribeIngestionCandidates — no Firestore query logic
+ * is duplicated; filtering/sorting both happen client-side on the same
+ * whole-collection snapshot every other consumer already reads.
+ * Oldest-first, so an older unresolved obligation is never buried under
+ * newer ingestion (Slice 1 product decision).
+ *
+ * Slice 2 addition: also includes candidates stranded at "approved" — a
+ * status a fresh approval no longer passes through (see
+ * candidateCommitRepository.js), but which legacy candidates from before
+ * Slice 2 may still be sitting at after a partial failure. These need
+ * attention (see ReviewInboxPanel.jsx's "Needs attention" treatment) rather
+ * than being invisible, which was exactly Slice 2's "stranded, invisible
+ * candidate" failure mode.
  */
 export function subscribePendingIngestionCandidates(ctx, onChange, onError) {
   return subscribeIngestionCandidates(
@@ -224,7 +232,7 @@ export function subscribePendingIngestionCandidates(ctx, onChange, onError) {
     {},
     (candidates) => {
       const pending = candidates
-        .filter((c) => c.reviewStatus === "pending")
+        .filter((c) => c.reviewStatus === "pending" || c.reviewStatus === "approved")
         .sort((a, b) => candidateCreatedAtMillis(a) - candidateCreatedAtMillis(b));
       onChange(pending);
     },

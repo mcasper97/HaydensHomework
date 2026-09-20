@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import ItemForm from "./ItemForm.jsx";
 import { updateIngestionCandidate } from "../data/ingestionCandidatesRepository.js";
-import { createItem } from "../data/itemsRepository.js";
+import { commitCandidateToItem } from "../data/candidateCommitRepository.js";
 import { getSourceRecord } from "../data/sourceRecordsRepository.js";
 import { candidateToDraftItem } from "./candidateToDraftItem.js";
 import { getSenderTargetLabel } from "../data/gmailApprovedSenders.js";
@@ -44,6 +44,29 @@ import { buildSourceContext } from "./sourceContext.js";
  *     that write, never a new lifecycle status). This is the one place a
  *     confirmation step exists in this component; it is not a reusable
  *     dialog component, just a local render branch.
+ *
+ * Recovery mode (Slice 2) — a candidate reopened here whose reviewStatus is
+ * already "approved" (never written by a fresh approval anymore, see
+ * handleApprove below; only reachable for a legacy candidate stranded there
+ * by a partial failure from before Slice 2 existed) renders a deliberately
+ * SMALLER action set than the four above, because a legacy-approved
+ * candidate may already have a committed Item behind it:
+ *   - No "Reject": rejecting here would never touch an Item that may
+ *     already exist, silently orphaning it with no candidate pointing back
+ *     at it.
+ *   - No "Review later": that action's whole meaning ("still pending,
+ *     nothing written yet") is false for a candidate already past pending —
+ *     leaving it at "approved" is not a safe no-op the way it is from
+ *     "pending".
+ *   - "×" simply closes (onClose) with no confirmation — there is nothing
+ *     to discard; the candidate's own status is left exactly as it was.
+ *   - The submit button ("Finish Adding") calls the exact same
+ *     handleApprove -> commitCandidateToItem used by a normal approval;
+ *     commitCandidateToItem's own idempotent-recovery logic (existing Item
+ *     left untouched, only the candidate's status finalized) is what makes
+ *     this safe to resubmit.
+ * See the isRecovery flag below — the only place this component branches
+ * on reviewStatus.
  */
 const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose }) => {
   const [queue, setQueue] = useState(candidates);
@@ -90,6 +113,11 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
 
   if (!current) return null;
 
+  // Legacy/recovery candidate (Slice 2) — see the module doc comment above.
+  // A fresh approval never produces this state anymore; only a candidate
+  // stranded at "approved" from before Slice 2 reaches it.
+  const isRecovery = current.reviewStatus === "approved";
+
   const advance = () => {
     setError("");
     setQueue((prev) => prev.slice(1));
@@ -105,15 +133,17 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
     }
   };
 
-  // Approval and commit are deliberately two separate writes: the candidate
-  // is marked "approved" before createItem() runs. If createItem() throws,
-  // the candidate is left at "approved" (never reverted to "pending") and
-  // this same handler simply retries on the next submit — the parent is
-  // never asked to re-decide something they already approved.
+  // Single atomic commit (Slice 2) — see candidateCommitRepository.js.
+  // Replaces the earlier two-write "approved" then createItem() then
+  // "committed" sequence: a fresh approval now goes pending -> committed in
+  // one transaction, so a failed commit leaves the candidate untouched at
+  // "pending" (safely retryable from here or from the Review Inbox) instead
+  // of stranding it at an intermediate "approved" state. Also used to
+  // resubmit a legacy-approved recovery candidate (isRecovery above) —
+  // commitCandidateToItem's own idempotent logic leaves any already-created
+  // Item untouched and only finalizes the candidate's status.
   const handleApprove = async (payload) => {
-    await updateIngestionCandidate(ctx, current.id, { reviewStatus: "approved" });
-    await createItem(ctx, { ...payload, sourceRecordId: current.sourceRecordId });
-    await updateIngestionCandidate(ctx, current.id, { reviewStatus: "committed" });
+    await commitCandidateToItem(ctx, current.id, { ...payload, sourceRecordId: current.sourceRecordId });
     advance();
   };
 
@@ -153,19 +183,22 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
       <div className="bg-white rounded-3xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-xl font-extrabold text-gray-900">
-            {familyChildren ? "Review email import" : "Review photo import"}
+            {isRecovery ? "Needs attention" : familyChildren ? "Review email import" : "Review photo import"}
             {candidates.length > 1 ? ` (${resolvedCount + 1} of ${candidates.length})` : ""}
           </h2>
-          {/* Review Inbox slice, second product correction: "×" no longer
-              rejects immediately — it opens the local "Discard this
-              suggestion?" confirmation above. Nothing is written until the
-              parent explicitly picks Discard there (which reuses
-              handleReject, the exact same write "Reject" below performs).
-              A parent who wants to defer without deciding uses "Review
-              later" instead (see its own comment). */}
+          {/* Recovery mode (Slice 2): "×" is a plain close, no confirmation
+              — there is nothing to discard, and the candidate's own status
+              is left exactly as it was. Normal mode (Review Inbox slice,
+              second product correction): "×" no longer rejects immediately
+              — it opens the local "Discard this suggestion?" confirmation
+              above. Nothing is written until the parent explicitly picks
+              Discard there (which reuses handleReject, the exact same
+              write "Reject" below performs). A parent who wants to defer
+              without deciding uses "Review later" instead (see its own
+              comment). */}
           <button
             type="button"
-            onClick={() => setConfirmingDiscard(true)}
+            onClick={isRecovery ? onClose : () => setConfirmingDiscard(true)}
             aria-label="Close"
             className="text-gray-400 hover:text-gray-700 text-2xl leading-none px-2"
           >
@@ -173,7 +206,9 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
           </button>
         </div>
         <p className="text-sm text-gray-600 mb-2">
-          {familyChildren
+          {isRecovery
+            ? "This item was approved earlier but wasn't finished. Nothing has been added yet — review it below and finish adding it."
+            : familyChildren
             ? "Found in an approved sender's email — review, edit anything that's wrong, confirm who it's for, then add it."
             : "Found in your photo — review, edit anything that's wrong, confirm the child, then add it."}
         </p>
@@ -181,14 +216,19 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
         {/* Explicit defer action — closes without writing anything (the
             candidate is already "pending" by construction, so there's
             nothing to set). Reuses the same onClose prop the caller
-            already passes, no new state or handler. */}
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-xs font-semibold text-indigo-700 underline hover:text-indigo-900 mb-3"
-        >
-          Review later — save to your Review Inbox
-        </button>
+            already passes, no new state or handler. Recovery mode omits
+            this entirely — see the module doc comment: leaving a
+            legacy-approved candidate at "approved" is not the same safe
+            no-op that leaving a "pending" one is. */}
+        {!isRecovery && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs font-semibold text-indigo-700 underline hover:text-indigo-900 mb-3"
+          >
+            Review later — save to your Review Inbox
+          </button>
+        )}
         {familyChildren && current.targetType && (
           <p className="text-sm text-indigo-700 font-semibold mb-2">
             Configured for: {getSenderTargetLabel({ targetType: current.targetType, childId: current.targetChildId }, familyChildren)}
@@ -255,8 +295,12 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
               throw err;
             }
           }}
-          onCancel={handleReject}
-          submitLabel="Approve & Add"
+          // Recovery mode omits onCancel entirely — ItemForm hides its
+          // Cancel/Reject button whenever onCancel is falsy (see
+          // ItemForm.jsx: `{onCancel && (...)}`) — never offering a Reject
+          // here is exactly the point (see the module doc comment above).
+          onCancel={isRecovery ? undefined : handleReject}
+          submitLabel={isRecovery ? "Finish Adding" : "Approve & Add"}
           // "Cancel" undersells what this button actually does here — it's
           // a real, persisted reject (reviewStatus: "rejected"), not a
           // no-op close like every other ItemForm caller's Cancel. Opt-in
