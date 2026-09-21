@@ -111,6 +111,28 @@ export const EMPTY_DEFAULTS = {
   // existing startDate field doubles as the recurrence's effective start
   // boundary (see isRecurringDueOn) — no new date field was added for this.
   schedule: null,
+  // Google Calendar publishing (Slice C) — optional, additive. All four
+  // default to null/absent for every pre-existing item and stay that way
+  // until a parent explicitly publishes this Item (see
+  // src/organizer/ParentOrganizer.jsx's "Add to Google Calendar" control
+  // and api/calendar-publish.js, the only place any of these are ever
+  // written — never here, never through a generic updateItem() call).
+  // googleCalendarEventId is the deterministic id derived from this
+  // Item's own Firestore id (see api/_googleCalendarClient.js's
+  // deriveGoogleEventId) — its presence is what "published" means.
+  googleCalendarEventId: null,
+  // Which calendar the event lives in — Slice C always uses "primary";
+  // stored explicitly rather than assumed, for auditability and so a
+  // future multi-calendar phase doesn't need a schema migration.
+  googleCalendarId: null,
+  // ISO timestamp of the last successful publish (create in Slice C;
+  // create-or-update from Slice D onward).
+  googleCalendarSyncedAt: null,
+  // Set only when a publish/sync attempt failed AFTER the Item already
+  // had a meaningful linkage to react to (Slice C's own create failures
+  // leave this untouched — see api/calendar-publish.js's own doc
+  // comment); reserved primarily for Slice D's re-sync flow.
+  googleCalendarSyncError: null,
 };
 
 /**

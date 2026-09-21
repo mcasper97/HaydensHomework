@@ -5,6 +5,8 @@ import { subscribeItemCompletions, setItemCompletion } from "../data/itemComplet
 import { bucketItems, choresDueToday, todayStr, isOccurrenceCompleted } from "./itemBuckets.js";
 import { ITEM_TYPE_META, FORM_TYPES, ACADEMIC_TYPES } from "../data/itemTypes.js";
 import ItemForm from "./ItemForm.jsx";
+import { getCalendarStatus, publishItemToGoogleCalendar } from "../data/googleCalendarConnection.js";
+import { isItemEligibleForCalendarPublish, getEffectiveDateTime } from "./calendarEventMapping.js";
 
 /**
  * Parent Organizer — Today / Needs Attention / Upcoming, filterable by child,
@@ -38,11 +40,39 @@ const ParentOrganizer = ({
   const [editingItem, setEditingItem] = useState(null);
   const [formType, setFormType] = useState("assignment");
 
+  // Google Calendar publishing (Slice C) — connection status is fetched
+  // once, the same way GoogleCalendarConnectionPanel does in AuthShell.jsx,
+  // so each eligible row can show the right control without a per-row
+  // network call. Gated on allowManage (never fetched/shown in the
+  // read-only kiosk Organizer Display) and !ctx.isAdmin (guest/local-demo
+  // mode has no real account to attach a Calendar connection to — see
+  // api/_auth.js — calling this would just fail).
+  const [calendarStatus, setCalendarStatus] = useState(null);
+  const [publishingId, setPublishingId] = useState(null);
+  const [publishError, setPublishError] = useState("");
+  // The one Item currently awaiting the minimal end-time confirmation
+  // prompt (startTime present, endTime absent) — see handlePublishClick.
+  // That temporary value is sent to the server as optionalEndTime and
+  // used ONLY to build the Google event; it never mutates this canonical
+  // Item (see calendarEventMapping.js's own doc comment).
+  const [endTimePromptItem, setEndTimePromptItem] = useState(null);
+  const [endTimeInput, setEndTimeInput] = useState("");
+
   useEffect(() => {
     const unsub = subscribeItems(ctx, {}, setItems);
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx.uid, ctx.isAdmin]);
+
+  useEffect(() => {
+    if (!allowManage || ctx.isAdmin) return undefined;
+    let cancelled = false;
+    getCalendarStatus()
+      .then((s) => { if (!cancelled) setCalendarStatus(s); })
+      .catch(() => { if (!cancelled) setCalendarStatus({ connected: false, needsReconnect: false, connectedAt: null }); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowManage, ctx.uid, ctx.isAdmin]);
 
   useEffect(() => {
     const unsub = subscribeItemCompletions(ctx, setCompletions);
@@ -120,6 +150,72 @@ const ParentOrganizer = ({
     if (window.confirm(`Delete "${item.title}"?`)) deleteItem(ctx, item.id);
   };
 
+  // Google Calendar publishing (Slice C). A timed item with a startTime
+  // but no endTime must never silently get an invented duration (product
+  // correction) — the parent supplies one via a minimal confirmation
+  // prompt first; anything else publishes immediately.
+  const handlePublishClick = (item) => {
+    setPublishError("");
+    const { startTime, endTime } = getEffectiveDateTime(item);
+    if (!item.allDay && startTime && !endTime) {
+      setEndTimePromptItem(item);
+      setEndTimeInput("");
+      return;
+    }
+    doPublish(item, null);
+  };
+
+  const doPublish = async (item, optionalEndTime) => {
+    setPublishingId(item.id);
+    setPublishError("");
+    try {
+      await publishItemToGoogleCalendar(item.id, optionalEndTime ? { optionalEndTime } : {});
+      // No local state update needed — the live subscribeItems()
+      // subscription above already picks up the server's write to
+      // googleCalendarEventId/googleCalendarSyncedAt automatically.
+      setEndTimePromptItem(null);
+    } catch (e) {
+      setPublishError(e.message || "Couldn't publish to Google Calendar.");
+    } finally {
+      setPublishingId(null);
+    }
+  };
+
+  // The one place a row's Calendar control is decided — never shown at
+  // all for an ineligible (recurring, or unsupported-type/chore) item.
+  // ctx.isAdmin (guest mode) never sees a live control: Calendar
+  // publishing requires a real Firebase account, exactly like Gmail.
+  const renderCalendarControl = (item) => {
+    if (!isItemEligibleForCalendarPublish(item)) return null;
+    if (item.googleCalendarEventId) {
+      return (
+        <span className="text-xs font-bold text-green-600 flex-shrink-0 whitespace-nowrap">
+          Google Calendar ✓
+        </span>
+      );
+    }
+    if (ctx.isAdmin) return null;
+    if (!calendarStatus || !calendarStatus.connected || calendarStatus.needsReconnect) {
+      return (
+        <span
+          className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap cursor-default"
+          title="Connect Google Calendar in Parent Tools"
+        >
+          Add to Google Calendar
+        </span>
+      );
+    }
+    return (
+      <button
+        onClick={() => handlePublishClick(item)}
+        disabled={publishingId === item.id}
+        className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex-shrink-0 disabled:opacity-50 whitespace-nowrap"
+      >
+        {publishingId === item.id ? "Adding…" : "Add to Google Calendar"}
+      </button>
+    );
+  };
+
   const renderItemRow = (item) => {
     const meta = ITEM_TYPE_META[item.type] || {};
     const isRecurring = !!item.schedule?.recurring;
@@ -154,6 +250,7 @@ const ParentOrganizer = ({
             {isRecurring ? "" : dateLabel ? ` · ${dateLabel}` : ""}
           </div>
         </div>
+        {allowManage && renderCalendarControl(item)}
         {allowManage && (
           <>
             <button onClick={() => openEdit(item)} className="text-gray-400 hover:text-gray-700 text-xs font-bold px-2 flex-shrink-0">
@@ -191,6 +288,10 @@ const ParentOrganizer = ({
           </button>
         ))}
       </div>
+
+      {allowManage && publishError && !endTimePromptItem && (
+        <p className="text-sm text-red-600 font-semibold">{publishError}</p>
+      )}
 
       {allowManage && (
         <div className="flex flex-wrap gap-2">
@@ -268,6 +369,47 @@ const ParentOrganizer = ({
           {buckets.upcoming.map(renderItemRow)}
         </div>
       </div>
+
+      {/* Minimal end-time confirmation (Slice C, product correction) — a
+          timed item with a start time but no end time is NEVER published
+          with a silently-invented duration. This value is sent as
+          optionalEndTime and used only to build the Google event; it
+          never changes the saved Item (see calendarEventMapping.js). */}
+      {endTimePromptItem && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl shadow-xl p-6 w-full max-w-sm">
+            <h3 className="text-lg font-extrabold text-gray-900 mb-1">What time does this end?</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              "{endTimePromptItem.title}" starts at {getEffectiveDateTime(endTimePromptItem).startTime} but has no end time yet.
+              This won't change the saved item — it's only used for the Google Calendar event.
+            </p>
+            <input
+              type="time"
+              value={endTimeInput}
+              onChange={(e) => setEndTimeInput(e.target.value)}
+              autoFocus
+              className="w-full rounded-2xl px-4 py-2 font-semibold border border-gray-200 focus:outline-none"
+            />
+            {publishError && <p className="text-red-600 text-sm font-semibold mt-2">{publishError}</p>}
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => { setEndTimePromptItem(null); setPublishError(""); }}
+                className="flex-1 px-4 py-2 rounded-2xl font-extrabold text-gray-500 border border-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => doPublish(endTimePromptItem, endTimeInput)}
+                disabled={!endTimeInput || publishingId === endTimePromptItem.id}
+                className="flex-1 font-extrabold py-2 rounded-2xl disabled:opacity-50"
+                style={{ background: "#A8FF3E", color: "#1C1C1E" }}
+              >
+                {publishingId === endTimePromptItem.id ? "Adding…" : "Add to Google Calendar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
