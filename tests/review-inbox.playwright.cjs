@@ -239,6 +239,14 @@ function candidate(overrides) {
   form = page.locator('form');
   let legacyAvaClass = (await form.getByRole('button', { name: /Ava/ }).first().getAttribute('class')) || '';
   ok('A legacy candidate with no targetChildId does NOT preselect Ava (manual selection required)', !legacyAvaClass.includes('bg-indigo-600'));
+
+  // ---- Legacy-family compatibility fix: a null-targetType candidate reviewed from the Review Inbox now also offers "Whole family" ----
+  const legacyWholeFamilyCheckbox = form.locator('label', { hasText: 'Whole family' }).locator('input[type="checkbox"]');
+  ok('A legacy (null-targetType) candidate reopened from the Review Inbox now offers "Whole family" as a choice', await legacyWholeFamilyCheckbox.isVisible());
+  ok('"Whole family" is NOT preselected for it — the parent must choose', !(await legacyWholeFamilyCheckbox.isChecked()));
+  ok('Every current learner is still selectable alongside "Whole family" (Ava is still offered)', await form.getByRole('button', { name: /Ava/ }).first().isVisible());
+  ok('No learner is auto-selected — Approve & Add stays disabled until the parent picks a learner or Whole family', await form.getByRole('button', { name: 'Approve & Add' }).isDisabled());
+
   await page.getByRole('button', { name: /Review later/ }).click();
   await page.waitForTimeout(150);
 

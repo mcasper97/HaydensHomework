@@ -110,17 +110,59 @@ ok("Submitting with a specific child picked (Family unchecked) saves exactly tha
   ok("The AI's proposedChildName guess never overrides the sender-configured child", draft.childIds[0] === "hayden-1");
 }
 
-// 9. photo-ingestion review behavior remains unchanged
+// 9. photo-ingestion review behavior remains unchanged (no household-wide context)
 {
-  // Photo/CSV candidates never set targetType at all.
+  // Photo/CSV candidates never set targetType at all. Called exactly as
+  // the immediate single-child photo-capture flow calls it (no second
+  // arg) — must be byte-for-byte unchanged by the legacy-family fix below.
   const { allowFamilyWide, initialFamilyWide } = resolveFamilyWideOption(undefined);
-  ok("A candidate with no targetType (photo/CSV ingestion) never offers Family", allowFamilyWide === false);
+  ok("A candidate with no targetType (photo/CSV ingestion), called with no household-wide context, never offers Family", allowFamilyWide === false);
   ok("...and its Family option (moot, since it's never offered) is not checked either", initialFamilyWide === false);
 
   const photoChild = { id: "child-1", name: "Ava", emoji: "🦁" };
   const draft = candidateToDraftItem({ proposedType: "test", title: "X", proposedChildName: "Ava" }, photoChild);
   ok("Photo ingestion's single-in-scope-child prefill is completely unaffected by this fix", draft.childIds.length === 1 && draft.childIds[0] === "child-1");
   ok("Photo ingestion's submit rule is unaffected: zero children (no ambient child) still blocks submit, exactly as before", !canSubmitItemForm({ title: "X", childIds: [] }));
+}
+
+// 10. Legacy-family compatibility fix: a null/undefined-targetType
+// candidate ONLY gains Family when reviewed in a household-wide context
+// (legacyFamilyWide: true — the Review Inbox, never the immediate
+// single-child photo flow, which never passes this).
+{
+  const withoutContext = resolveFamilyWideOption(undefined, false);
+  ok("Explicitly passing legacyFamilyWide: false behaves exactly like omitting it", withoutContext.allowFamilyWide === false && withoutContext.initialFamilyWide === false);
+
+  const nullWithContext = resolveFamilyWideOption(null, true);
+  ok("A null-targetType candidate reviewed with household-wide context now offers Family", nullWithContext.allowFamilyWide === true);
+  ok("...but Family is never preselected for it (the parent must choose)", nullWithContext.initialFamilyWide === false);
+
+  const undefinedWithContext = resolveFamilyWideOption(undefined, true);
+  ok("An undefined-targetType candidate reviewed with household-wide context also offers Family", undefinedWithContext.allowFamilyWide === true);
+  ok("...and is likewise never preselected", undefinedWithContext.initialFamilyWide === false);
+
+  // Explicit targetType values must be completely unaffected by the new
+  // second argument, whether household-wide context is present or not —
+  // legacyFamilyWide only ever matters for null/undefined.
+  for (const context of [false, true]) {
+    const child = resolveFamilyWideOption("child", context);
+    ok(`Explicit "child" targetType never offers Family, regardless of household-wide context (${context})`, child.allowFamilyWide === false && child.initialFamilyWide === false);
+
+    const family = resolveFamilyWideOption("family", context);
+    ok(`Explicit "family" targetType keeps offering Family, preselected, regardless of household-wide context (${context})`, family.allowFamilyWide === true && family.initialFamilyWide === true);
+
+    const review = resolveFamilyWideOption("review", context);
+    ok(`Explicit "review" targetType keeps offering Family, unchecked, regardless of household-wide context (${context})`, review.allowFamilyWide === true && review.initialFamilyWide === false);
+  }
+
+  // No child is ever inferred by this fix — candidateToDraftItem.js's own
+  // childIds logic is untouched; a legacy candidate reviewed with no
+  // ambient `child` (the Review Inbox's own calling convention) still
+  // starts with zero children selected.
+  const legacyDraft = candidateToDraftItem({ proposedType: "reminder", title: "Field Trip Form", targetType: null, targetChildId: null }, null);
+  ok("A legacy null-targetType candidate reviewed with no ambient child still starts with zero children selected (no inference)", legacyDraft.childIds.length === 0);
+  ok("...and is not submittable until the parent picks a learner or Family", !canSubmitItemForm({ title: "Field Trip Form", childIds: legacyDraft.childIds, familyWide: false }));
+  ok("...but IS submittable once the parent checks Family, with zero children picked", canSubmitItemForm({ title: "Field Trip Form", childIds: legacyDraft.childIds, familyWide: true }));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

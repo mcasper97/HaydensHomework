@@ -277,10 +277,18 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
           // Family option — a school-wide event from an unmapped
           // ("review") sender must be assignable to the whole family, not
           // just to one child. See resolveFamilyWideOption's doc comment
-          // for exactly what each targetType starts with. Photo/CSV
-          // candidates (targetType is never set) get neither prop —
-          // completely unchanged from before this fix.
-          {...resolveFamilyWideOption(current.targetType)}
+          // for exactly what each targetType starts with.
+          //
+          // Second arg (live-validation fix after Slice 2): !!familyChildren
+          // signals "household-wide review context" — true here in the
+          // Review Inbox (familyChildren is always passed there), false in
+          // the immediate single-child photo-capture flow (App.jsx passes
+          // only `child`). A legacy candidate with no persisted targetType
+          // at all (predates that field) only gains the Family choice when
+          // reviewed in that household-wide context — never preselected,
+          // never inferred, and the single-child photo flow's behavior is
+          // completely unchanged.
+          {...resolveFamilyWideOption(current.targetType, !!familyChildren)}
           // Compact Date / Start Time / End Time review UI (#26, Commit 5
           // review-UX fix) — only for email review (familyChildren is only
           // ever passed by the Gmail flow); photo/CSV review keeps the

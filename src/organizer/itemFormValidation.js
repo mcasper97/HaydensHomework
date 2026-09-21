@@ -42,11 +42,26 @@ export function canSubmitItemForm({ title, childIds, familyWide }) {
  *               "child"-targeted candidate keeps its configured child
  *               preselected via candidateToDraftItem.js; the AI is never
  *               consulted for any of this.
+ *
+ * legacyFamilyWide (Slice 2 live-validation fix) — a SECOND, independent
+ * signal from the caller: true only when CandidateReviewModal is operating
+ * in a household-wide review context (familyChildren is available — i.e.
+ * the Review Inbox, never the immediate single-child photo-capture flow,
+ * which only ever passes a single `child`). When true, a candidate whose
+ * targetType is null/undefined — a legacy candidate that predates the
+ * targetType field entirely, surfaced e.g. by Slice 2's "Needs attention"
+ * recovery flow — is treated exactly like "review" above: Family becomes
+ * an available (never preselected) choice, alongside every current
+ * learner, with no child inferred. Defaults to false, so every existing
+ * caller/behavior (explicit "family"/"review"/"child", and the immediate
+ * single-child flow's null-targetType candidates) is completely
+ * unchanged.
  */
-export function resolveFamilyWideOption(targetType) {
+export function resolveFamilyWideOption(targetType, legacyFamilyWide = false) {
+  const effectiveType = targetType == null && legacyFamilyWide ? "review" : targetType;
   return {
-    allowFamilyWide: targetType === "family" || targetType === "review",
-    initialFamilyWide: targetType === "family",
+    allowFamilyWide: effectiveType === "family" || effectiveType === "review",
+    initialFamilyWide: effectiveType === "family",
   };
 }
 
