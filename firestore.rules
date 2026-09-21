@@ -35,5 +35,20 @@ service cloud.firestore {
     match /gmailOAuthStates/{document=**} {
       allow read, write: if false;
     }
+
+    // Server-private: Google Calendar OAuth refresh tokens (Slice B — see
+    // api/_googleCalendarConnectionsStore.js). Same reasoning as
+    // gmailConnections above, and deliberately a SEPARATE collection from
+    // it — Gmail and Calendar are independently connectable/disconnectable
+    // features, each with its own least-privilege scope and credential.
+    match /googleCalendarConnections/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Server-private: short-lived Google Calendar OAuth `state` records
+    // (same module, same reasoning as googleCalendarConnections above).
+    match /googleCalendarOAuthStates/{document=**} {
+      allow read, write: if false;
+    }
   }
 }

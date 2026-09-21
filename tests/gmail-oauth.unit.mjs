@@ -23,7 +23,8 @@
  */
 import crypto from "node:crypto";
 import {
-  OAUTH_SCOPES,
+  GMAIL_SCOPES,
+  CALENDAR_SCOPES,
   generateState,
   generatePkcePair,
   buildAuthorizationUrl,
@@ -49,12 +50,18 @@ function ok(name, cond) {
 }
 
 // ============ _googleOAuth.js: scope minimality ============
-ok("Requests gmail.readonly, not a broader Gmail scope", OAUTH_SCOPES.includes("https://www.googleapis.com/auth/gmail.readonly"));
-ok("Does not request Gmail modify/send", !OAUTH_SCOPES.some((s) => /gmail\.(modify|send)/.test(s)));
-ok("Does not request Drive/Calendar/Contacts", !OAUTH_SCOPES.some((s) => /drive|calendar|contacts/i.test(s)));
-ok("Requests gmail.readonly and nothing else — no openid/email identity scope", OAUTH_SCOPES.length === 1);
-ok("Does not request the openid scope", !OAUTH_SCOPES.includes("openid"));
-ok("Does not request the email scope", !OAUTH_SCOPES.includes("email"));
+ok("Requests gmail.readonly, not a broader Gmail scope", GMAIL_SCOPES.includes("https://www.googleapis.com/auth/gmail.readonly"));
+ok("Does not request Gmail modify/send", !GMAIL_SCOPES.some((s) => /gmail\.(modify|send)/.test(s)));
+ok("Does not request Drive/Calendar/Contacts", !GMAIL_SCOPES.some((s) => /drive|calendar|contacts/i.test(s)));
+ok("Requests gmail.readonly and nothing else — no openid/email identity scope", GMAIL_SCOPES.length === 1);
+ok("Does not request the openid scope", !GMAIL_SCOPES.includes("openid"));
+ok("Does not request the email scope", !GMAIL_SCOPES.includes("email"));
+
+// ============ _googleOAuth.js: Gmail and Calendar scope lists stay independent (Slice B) ============
+ok("GMAIL_SCOPES and CALENDAR_SCOPES are two distinct, non-overlapping lists", !GMAIL_SCOPES.some((s) => CALENDAR_SCOPES.includes(s)));
+ok("CALENDAR_SCOPES requests exactly calendar.events, nothing else", CALENDAR_SCOPES.length === 1 && CALENDAR_SCOPES[0] === "https://www.googleapis.com/auth/calendar.events");
+ok("CALENDAR_SCOPES does not request the broader calendar scope", !CALENDAR_SCOPES.includes("https://www.googleapis.com/auth/calendar"));
+ok("CALENDAR_SCOPES does not request an identity/profile scope", !CALENDAR_SCOPES.includes("openid") && !CALENDAR_SCOPES.includes("email"));
 
 // ============ generateState ============
 {
@@ -82,19 +89,50 @@ ok("Does not request the email scope", !OAUTH_SCOPES.includes("email"));
   process.env.GOOGLE_CLIENT_ID = "test-client-id";
   process.env.GOOGLE_OAUTH_REDIRECT_URI = "https://example.test/api/gmail-oauth-callback";
 
-  const url = new URL(buildAuthorizationUrl({ state: "abc123", codeChallenge: "xyz789" }));
+  const url = new URL(buildAuthorizationUrl({ state: "abc123", codeChallenge: "xyz789", scopes: GMAIL_SCOPES }));
   ok("Authorization URL points at Google's OAuth endpoint", url.origin === "https://accounts.google.com");
   ok("Includes the configured client_id", url.searchParams.get("client_id") === "test-client-id");
   ok("Includes the configured redirect_uri", url.searchParams.get("redirect_uri") === "https://example.test/api/gmail-oauth-callback");
   ok("Includes response_type=code", url.searchParams.get("response_type") === "code");
   ok("Requests exactly the gmail.readonly scope string, nothing else", url.searchParams.get("scope") === "https://www.googleapis.com/auth/gmail.readonly");
+  ok("Gmail auth URL still contains gmail.readonly (Slice B regression check)", url.searchParams.get("scope").includes("gmail.readonly"));
+  ok("Gmail auth URL does NOT contain calendar.events", !url.searchParams.get("scope").includes("calendar.events"));
   ok("Includes the state value", url.searchParams.get("state") === "abc123");
   ok("Includes the PKCE code_challenge", url.searchParams.get("code_challenge") === "xyz789");
   ok("Uses S256 as the code_challenge_method", url.searchParams.get("code_challenge_method") === "S256");
   ok("Requests offline access (needed for a refresh token)", url.searchParams.get("access_type") === "offline");
 
+  // ---- Slice B: passing CALENDAR_SCOPES to the SAME shared builder produces a Calendar-scoped URL, and doesn't disturb Gmail's own env var ----
+  const calendarUrl = new URL(buildAuthorizationUrl({ state: "abc123", codeChallenge: "xyz789", scopes: CALENDAR_SCOPES }));
+  ok("Calendar auth URL contains calendar.events", calendarUrl.searchParams.get("scope").includes("https://www.googleapis.com/auth/calendar.events"));
+  ok("Calendar auth URL does NOT contain gmail.readonly", !calendarUrl.searchParams.get("scope").includes("gmail.readonly"));
+  ok(
+    "Calendar auth URL (built with no redirectUriEnvVar override) still falls back to Gmail's default redirect env var — proving the default truly matches Gmail's pre-existing behavior",
+    calendarUrl.searchParams.get("redirect_uri") === "https://example.test/api/gmail-oauth-callback"
+  );
+
   process.env.GOOGLE_CLIENT_ID = prevId;
   process.env.GOOGLE_OAUTH_REDIRECT_URI = prevRedirect;
+}
+
+// ============ buildAuthorizationUrl: redirectUriEnvVar parameterization (Slice B) ============
+{
+  const prevId = process.env.GOOGLE_CLIENT_ID;
+  const prevGmailRedirect = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+  const prevCalendarRedirect = process.env.GOOGLE_CALENDAR_OAUTH_REDIRECT_URI;
+  process.env.GOOGLE_CLIENT_ID = "test-client-id";
+  process.env.GOOGLE_OAUTH_REDIRECT_URI = "https://example.test/api/gmail-oauth-callback";
+  process.env.GOOGLE_CALENDAR_OAUTH_REDIRECT_URI = "https://example.test/api/calendar-oauth-callback";
+
+  const gmailUrl = new URL(buildAuthorizationUrl({ state: "s", codeChallenge: "c", scopes: GMAIL_SCOPES }));
+  const calendarUrl = new URL(buildAuthorizationUrl({ state: "s", codeChallenge: "c", scopes: CALENDAR_SCOPES, redirectUriEnvVar: "GOOGLE_CALENDAR_OAUTH_REDIRECT_URI" }));
+  ok("Gmail's URL uses Gmail's own redirect_uri env var by default", gmailUrl.searchParams.get("redirect_uri") === "https://example.test/api/gmail-oauth-callback");
+  ok("Calendar's URL uses its OWN, separate redirect_uri env var when explicitly named", calendarUrl.searchParams.get("redirect_uri") === "https://example.test/api/calendar-oauth-callback");
+  ok("Gmail and Calendar authorization URLs use two DIFFERENT redirect_uri values", gmailUrl.searchParams.get("redirect_uri") !== calendarUrl.searchParams.get("redirect_uri"));
+
+  process.env.GOOGLE_CLIENT_ID = prevId;
+  process.env.GOOGLE_OAUTH_REDIRECT_URI = prevGmailRedirect;
+  process.env.GOOGLE_CALENDAR_OAUTH_REDIRECT_URI = prevCalendarRedirect;
 }
 
 // ============ exchangeCodeForTokens ============

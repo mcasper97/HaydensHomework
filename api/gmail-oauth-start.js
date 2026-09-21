@@ -11,7 +11,7 @@
  * navigation to the returned authUrl itself (see src/data/gmailConnection.js).
  */
 import { requireFirebaseUser, checkRateLimit } from "./_auth.js";
-import { generateState, generatePkcePair, buildAuthorizationUrl, getOAuthConfig } from "./_googleOAuth.js";
+import { generateState, generatePkcePair, buildAuthorizationUrl, getOAuthConfig, GMAIL_SCOPES } from "./_googleOAuth.js";
 import { createOAuthState } from "./_gmailConnectionsStore.js";
 
 export default async function handler(req, res) {
@@ -40,7 +40,7 @@ export default async function handler(req, res) {
     const state = generateState();
     const { codeVerifier, codeChallenge } = generatePkcePair();
     await createOAuthState(state, { uid, codeVerifier });
-    const authUrl = buildAuthorizationUrl({ state, codeChallenge });
+    const authUrl = buildAuthorizationUrl({ state, codeChallenge, scopes: GMAIL_SCOPES });
     return res.status(200).json({ ok: true, authUrl });
   } catch (err) {
     console.error("gmail-oauth-start error:", err);

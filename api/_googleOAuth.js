@@ -1,16 +1,31 @@
-/* ============================== Google OAuth (Gmail readonly) protocol helpers ==============================
- * Pure OAuth 2.0 protocol logic for connecting one Gmail account per parent
- * (#26, Commit 3 — connection only, no mail reading yet). Deliberately
- * built on Node's built-in `crypto`/`fetch` only — no
- * new npm dependency. `google-auth-library` is present in node_modules,
- * but only as a transitive dependency pulled in by firebase-admin's own
- * internals (several different versions coexist for that reason); it was
- * never declared in package.json, so importing it directly here would mean
- * silently depending on whatever version firebase-admin happens to vendor
- * on any given install — fragile, and not really "no new dependency" in
- * any meaningful sense. The actual protocol needed here is a handful of
- * well-documented HTTP calls plus standard crypto primitives, the same
- * reasoning that kept api/_urlSafety.js and api/_htmlToText.js dependency-free.
+/* ============================== Google OAuth protocol helpers ==============================
+ * Pure OAuth 2.0 protocol logic, shared by two independent Google
+ * integrations that each get their own connect/disconnect flow and their
+ * own stored credential (#26, Commit 3 — Gmail connection only, no mail
+ * reading yet; Slice B — Google Calendar connect/disconnect only, no
+ * Calendar API calls yet). Deliberately built on Node's built-in
+ * `crypto`/`fetch` only — no new npm dependency. `google-auth-library` is
+ * present in node_modules, but only as a transitive dependency pulled in
+ * by firebase-admin's own internals (several different versions coexist
+ * for that reason); it was never declared in package.json, so importing
+ * it directly here would mean silently depending on whatever version
+ * firebase-admin happens to vendor on any given install — fragile, and
+ * not really "no new dependency" in any meaningful sense. The actual
+ * protocol needed here is a handful of well-documented HTTP calls plus
+ * standard crypto primitives, the same reasoning that kept
+ * api/_urlSafety.js and api/_htmlToText.js dependency-free.
+ *
+ * Generalized narrowly (Slice B) so a caller supplies its own `scopes` —
+ * this is NOT a multi-provider integration framework; it's still Google
+ * OAuth only, with exactly two named scope lists below, one per feature.
+ * `redirectUriEnvVar` is similarly parameterized: Gmail and Calendar each
+ * need their own registered redirect URI (Google requires the exact
+ * redirect_uri used at authorization time to also be used at token-exchange
+ * time, and the two features use different callback endpoints), so each
+ * reads a different environment variable. Every default below matches
+ * Gmail's pre-existing behavior exactly, so gmail-oauth-start.js/
+ * gmail-oauth-callback.js need no change to their own redirect-URI
+ * handling — only to explicitly pass their own `scopes` now.
  *
  * PKCE (RFC 7636, S256) is used even though this is a confidential client
  * (we hold a client secret) — it's a few lines on top of the state
@@ -18,9 +33,10 @@
  * authorization-code interception for negligible extra complexity.
  *
  * This module has no knowledge of Firestore, request/response objects, or
- * any specific user/uid — see api/_gmailConnectionsStore.js for storage,
- * and the api/gmail-oauth-*.js files for the actual HTTP endpoints.
- * `fetchFn` is injectable throughout for offline unit testing.
+ * any specific user/uid — see api/_gmailConnectionsStore.js /
+ * api/_googleCalendarConnectionsStore.js for storage, and the
+ * api/gmail-oauth-*.js / api/calendar-oauth-*.js files for the actual HTTP
+ * endpoints. `fetchFn` is injectable throughout for offline unit testing.
  */
 import crypto from "node:crypto";
 
@@ -29,19 +45,38 @@ const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
 const GMAIL_PROFILE_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 
-// Exactly the one scope this feature needs. Nothing else (Drive, Calendar,
-// Contacts, a profile/identity scope, Gmail modify/send) is requested. The
-// connected account's email address is obtained after the token exchange
-// via the Gmail API's own profile endpoint (see fetchGmailProfile below),
-// which gmail.readonly already authorizes — no separate identity scope
-// (openid/email) is needed just to learn which address got connected.
-export const OAUTH_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
+const DEFAULT_REDIRECT_URI_ENV_VAR = "GOOGLE_OAUTH_REDIRECT_URI";
 
-export function getOAuthConfig() {
+// Exactly the one scope Gmail ingestion needs. Nothing else (Drive,
+// Calendar, Contacts, a profile/identity scope, Gmail modify/send) is
+// requested. The connected account's email address is obtained after the
+// token exchange via the Gmail API's own profile endpoint (see
+// fetchGmailProfile below), which gmail.readonly already authorizes — no
+// separate identity scope (openid/email) is needed just to learn which
+// address got connected.
+export const GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
+
+// Exactly the one scope Google Calendar publishing needs (Slice B — no
+// event reads/writes happen yet, but this is the scope Slice C's create/
+// update/delete calls will use). Deliberately NOT the broader
+// auth/calendar scope (which also grants calendar-list/settings/ACL
+// management this app never needs) or a readonly-only variant (which
+// wouldn't support later publishing). No identity/profile scope is
+// requested — Phase 1 never stores or displays the connected account's
+// email address for Calendar (see api/calendar-oauth-callback.js).
+export const CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"];
+
+/**
+ * getOAuthConfig(redirectUriEnvVar) -> { clientId, clientSecret, redirectUri }
+ * clientId/clientSecret are shared across every Google integration (one
+ * registered OAuth client) — only the redirect URI differs per feature,
+ * since each has its own callback endpoint registered with Google.
+ */
+export function getOAuthConfig(redirectUriEnvVar = DEFAULT_REDIRECT_URI_ENV_VAR) {
   return {
     clientId: process.env.GOOGLE_CLIENT_ID || "",
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
-    redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI || "",
+    redirectUri: process.env[redirectUriEnvVar] || "",
   };
 }
 
@@ -55,13 +90,21 @@ export function generatePkcePair() {
   return { codeVerifier, codeChallenge };
 }
 
-export function buildAuthorizationUrl({ state, codeChallenge }) {
-  const { clientId, redirectUri } = getOAuthConfig();
+/**
+ * buildAuthorizationUrl({ state, codeChallenge, scopes, redirectUriEnvVar? })
+ * `scopes` is required and explicit (no default) — every caller names the
+ * exact scope list it wants (GMAIL_SCOPES or CALENDAR_SCOPES above),
+ * rather than this shared builder silently favoring one feature's scope
+ * over another's. `redirectUriEnvVar` defaults to Gmail's existing env var
+ * name, so gmail-oauth-start.js needs no change to its own call there.
+ */
+export function buildAuthorizationUrl({ state, codeChallenge, scopes, redirectUriEnvVar = DEFAULT_REDIRECT_URI_ENV_VAR }) {
+  const { clientId, redirectUri } = getOAuthConfig(redirectUriEnvVar);
   const url = new URL(AUTHORIZATION_ENDPOINT);
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", OAUTH_SCOPES.join(" "));
+  url.searchParams.set("scope", scopes.join(" "));
   url.searchParams.set("access_type", "offline");
   // Forces Google to hand back a refresh token even on a reconnect where
   // the account previously granted consent — without this, Google only
@@ -78,10 +121,12 @@ export function buildAuthorizationUrl({ state, codeChallenge }) {
  * response ({ access_token, refresh_token?, expires_in, scope, token_type })
  * — callers decide what (if anything) to persist. No id_token is requested
  * or returned (no openid scope — see fetchGmailProfile for how the
- * connected account's identity is obtained instead).
+ * connected account's identity is obtained instead). `redirectUriEnvVar`
+ * must match whatever was used to build the authorization URL this code
+ * came from (Google requires the two to agree).
  */
-export async function exchangeCodeForTokens({ code, codeVerifier, fetchFn = fetch }) {
-  const { clientId, clientSecret, redirectUri } = getOAuthConfig();
+export async function exchangeCodeForTokens({ code, codeVerifier, fetchFn = fetch, redirectUriEnvVar = DEFAULT_REDIRECT_URI_ENV_VAR }) {
+  const { clientId, clientSecret, redirectUri } = getOAuthConfig(redirectUriEnvVar);
   const body = new URLSearchParams({
     code,
     client_id: clientId,
