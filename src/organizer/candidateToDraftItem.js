@@ -10,7 +10,11 @@ import { todayStr } from "./itemBuckets.js";
 // date as a start/occurrence date. Kept here (not exported from itemTypes.js)
 // since it's specific to mapping a flat IngestionCandidate.date onto
 // ItemForm's two-date model, not a property of the type vocabulary itself.
-const DUE_DATE_TYPES = ["assignment", "project", "study_task"];
+// Exported (Slice 3 — one-time obligation reconciliation) so
+// oneTimeObligationMatch.js can apply this exact same due-vs-start routing
+// when reading an existing Item's effective date/time for matching,
+// without a second, independently-maintained copy of this list.
+export const DUE_DATE_TYPES = ["assignment", "project", "study_task"];
 
 /**
  * Shapes one IngestionCandidate as an ItemForm `existingItem` so the exact

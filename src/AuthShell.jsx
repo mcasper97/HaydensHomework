@@ -29,6 +29,7 @@ import { createSourceRecord } from "./data/sourceRecordsRepository.js";
 import { createIngestionCandidate, subscribePendingIngestionCandidates } from "./data/ingestionCandidatesRepository.js";
 import { listItems } from "./data/itemsRepository.js";
 import { buildObligationSignature, canReconcile } from "./organizer/recurringObligationMatch.js";
+import { buildOneTimeSignatureFromItem, decideOneTimeReconciliation } from "./organizer/oneTimeObligationMatch.js";
 import { summarizeGoogleDocOutcomes } from "./organizer/googleDocCheckSummary.js";
 import { summarizeCheckEmailResult } from "./organizer/checkEmailSummary.js";
 import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
@@ -528,8 +529,13 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
       // api/_emailExtraction.js) — the email's own SourceRecord when
       // null/unmatched, or the matching linked page's.
       const newCandidates = [];
-      // Recurring-obligation reconciliation (recurring-obligations
-      // increment) — fetched once per Check Email run, not per obligation.
+      // Reconciliation (recurring-obligations increment, extended by
+      // Slice 3 to one-time obligations) — ONE listItems(ctx) call per
+      // Check Email run feeds BOTH reconciliation paths below, since
+      // recurring and one-time Items are just the two halves of the same
+      // canonical Item list (schedule?.recurring true vs. not) — no
+      // separate Firestore read is needed for either.
+      //
       // `existingRecurringSignatures` compares a new recurring obligation
       // against every already-approved recurring Item in this household;
       // `runRecurringSignatures` additionally catches the same standing
@@ -538,17 +544,33 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
       // obligations that are themselves recurring — a one-time obligation
       // never touches this logic, so existing dedupe (Gmail message-id) and
       // one-time candidate creation are completely unaffected.
-      let existingRecurringItems = [];
+      //
+      // `existingOneTimeSignatures` (Slice 3) compares a new one-time
+      // obligation against every already-existing one-time (non-recurring)
+      // Item in this household; `runOneTimeRecords` additionally catches
+      // the same one-time obligation appearing twice within this one run —
+      // see organizer/oneTimeObligationMatch.js's
+      // decideOneTimeReconciliation, the one place that actual matching
+      // decision is made. This module never reimplements that logic
+      // itself.
+      let existingItems = [];
       try {
-        existingRecurringItems = (await listItems(ctx)).filter((it) => it.schedule?.recurring);
+        existingItems = await listItems(ctx);
       } catch (err) {
-        console.error("Check Email: listItems (recurring reconciliation) failed", err);
+        console.error("Check Email: listItems (reconciliation) failed", err);
       }
+      const existingRecurringItems = existingItems.filter((it) => it.schedule?.recurring);
+      const existingOneTimeItems = existingItems.filter((it) => !it.schedule?.recurring);
       const existingRecurringSignatures = existingRecurringItems.map((it) => ({
         itemId: it.id,
         signature: buildObligationSignature({ type: it.type, title: it.title, recurring: true, target: { childIds: it.childIds } }),
       }));
+      const existingOneTimeSignatures = existingOneTimeItems.map((it) => ({
+        itemId: it.id,
+        signature: buildOneTimeSignatureFromItem(it),
+      }));
       const runRecurringSignatures = [];
+      const runOneTimeRecords = [];
       // Persistence failures (item #5, live-validation persistence defect
       // investigation): previously only console.error'd — invisible to the
       // parent, who would see either a normal or a silently-incomplete
@@ -638,10 +660,14 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
             : emailSourceRecord.id;
 
           // Recurring-obligation reconciliation — only ever applied to an
-          // obligation the extraction itself marked recurring; a one-time
-          // obligation falls straight through to the unchanged path below.
+          // obligation the extraction itself marked recurring; unchanged by
+          // Slice 3 (one-time reconciliation below runs only in the `else`
+          // branch, and never touches skipAsRunDuplicate/reconciledItemId
+          // here).
           let reconciledItemId = null;
+          let reconciledCandidateId = null;
           let skipAsRunDuplicate = false;
+          let oneTimeDecision = null;
           if (o.recurring) {
             const target = { targetType: emailResult.targetType, targetChildId: emailResult.targetChildId };
             const signature = buildObligationSignature({ type: o.type, title: o.title, recurring: true, target });
@@ -657,6 +683,25 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
             } else {
               runRecurringSignatures.push(signature);
             }
+          } else {
+            // One-time obligation reconciliation (Slice 3) — the ONE
+            // decision point; every comparison rule lives inside
+            // decideOneTimeReconciliation itself (organizer/
+            // oneTimeObligationMatch.js), never reimplemented here. Unlike
+            // recurring's same-run handling above, a one-time same-run
+            // duplicate always still produces a real, persisted
+            // (corroborated) candidate — see reconciledCandidateId below —
+            // rather than being silently skipped, so its own SourceRecord
+            // provenance is never left looking like "nothing was found."
+            const target = { targetType: emailResult.targetType, targetChildId: emailResult.targetChildId };
+            oneTimeDecision = decideOneTimeReconciliation({
+              obligation: { type: o.type, title: o.title, date: o.date, startTime: o.startTime, endTime: o.endTime },
+              target,
+              existingSignatures: existingOneTimeSignatures,
+              runRecords: runOneTimeRecords,
+            });
+            reconciledItemId = oneTimeDecision.reconciledItemId;
+            reconciledCandidateId = oneTimeDecision.reconciledCandidateId;
           }
           if (skipAsRunDuplicate) continue;
 
@@ -687,18 +732,37 @@ const GmailApprovedSendersPanel = ({ ctx, childProfiles }) => {
               recurrenceSuggestion,
               // A corroborated candidate preserves full provenance (this
               // SourceRecord + candidate both persist) without ever
-              // entering the parent's review queue or writing to the
-              // already-approved Item it corroborates — the parent's own
-              // chosen schedule is never touched by a later source update.
+              // entering the parent's review queue or writing to whatever
+              // it corroborates — the parent's own chosen schedule (or a
+              // still-pending/rejected earlier candidate, for a same-run
+              // one-time duplicate) is never touched by a later source.
               // reviewStatus is omitted (not set to undefined) for a
               // non-corroborated candidate so it keeps createIngestionCandidate's
-              // own "pending" default rather than overwriting it.
-              ...(reconciledItemId ? { reviewStatus: "corroborated", reconciledItemId } : {}),
+              // own "pending" default rather than overwriting it. The two
+              // reconciled*Id fields are never both non-null — see
+              // ingestionCandidatesRepository.js's schema comment.
+              ...(reconciledItemId
+                ? { reviewStatus: "corroborated", reconciledItemId }
+                : reconciledCandidateId
+                ? { reviewStatus: "corroborated", reconciledCandidateId }
+                : {}),
             });
+            // A one-time obligation with no match ("new") is the earliest
+            // point a LATER same-run duplicate can be compared against —
+            // record its real candidate id + signature now, so
+            // decideOneTimeReconciliation can find it on a subsequent
+            // obligation in this same run. Never recorded for a recurring
+            // candidate (oneTimeDecision stays null for those) or for an
+            // already-corroborated one-time candidate (a duplicate must
+            // always trace back to the ORIGINAL first occurrence, never
+            // chain onto another duplicate).
+            if (oneTimeDecision?.outcome === "new") {
+              runOneTimeRecords.push({ candidateId: candidate.id, signature: oneTimeDecision.signature });
+            }
             // Corroborated candidates are deliberately never added to the
             // review queue — see ingestionCandidatesRepository.js's
             // reviewStatus lifecycle doc comment.
-            if (!reconciledItemId) newCandidates.push(candidate);
+            if (!reconciledItemId && !reconciledCandidateId) newCandidates.push(candidate);
           } catch (err) {
             console.error("Check Email: createIngestionCandidate failed", err);
             hadPersistenceError = true;

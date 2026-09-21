@@ -17,19 +17,26 @@
  *   "rejected"     — parent declined; no item created; kept for audit history
  *   "approved"     — parent approved; item creation about to be/being attempted
  *   "committed"    — canonical item was created successfully
- *   "corroborated" — recurring-obligations increment: this candidate was
- *                    recognized as describing the SAME standing obligation
- *                    as an existing recurring Item (see
- *                    src/organizer/recurringObligationMatch.js). Set once,
- *                    at creation, never transitioned into from any other
- *                    state. Preserves full provenance (this candidate and
- *                    its SourceRecord both exist and are queryable) without
+ *   "corroborated" — recurring-obligations increment, extended by Slice 3
+ *                    to one-time obligations: this candidate was recognized
+ *                    as describing the SAME obligation as either (a) an
+ *                    existing canonical Item (see
+ *                    src/organizer/recurringObligationMatch.js for
+ *                    recurring obligations, src/organizer/
+ *                    oneTimeObligationMatch.js for one-time ones), in which
+ *                    case reconciledItemId points at that Item, or (b) an
+ *                    earlier candidate created in the SAME ingestion run
+ *                    that has no canonical Item yet (one-time only — see
+ *                    reconciledCandidateId below). Set once, at creation,
+ *                    never transitioned into from any other state.
+ *                    Preserves full provenance (this candidate and its
+ *                    SourceRecord both exist and are queryable) without
  *                    ever entering the parent's review queue and without
- *                    ever writing to the existing Item — see
- *                    reconciledItemId below. No caller filters/queries
- *                    candidates by reviewStatus today (confirmed before
- *                    adding this value), so this is a safe additive enum
- *                    entry with no existing consumer to update.
+ *                    ever writing to the existing Item/candidate it
+ *                    corroborates. No caller filters/queries candidates by
+ *                    reviewStatus today (confirmed before adding this
+ *                    value), so this is a safe additive enum entry with no
+ *                    existing consumer to update.
  *
  * Approval and commit are deliberately two separate states/writes: on
  * approval the candidate is marked "approved" BEFORE createItem() is
@@ -130,13 +137,33 @@ const EMPTY_DEFAULTS = {
   // written only at approval time, is what actually controls behavior.
   recurrenceSuggestion: null,
   // Set only when this candidate was recognized (see
-  // src/organizer/recurringObligationMatch.js, wired in src/AuthShell.jsx)
-  // as corroborating an EXISTING recurring Item rather than describing a
-  // new one — reviewStatus is "corroborated" in that case (see the
-  // reviewStatus lifecycle doc above), and this points at the Item it
-  // corroborates. Provenance only: creating this candidate never writes
-  // anything onto that Item.
+  // src/organizer/recurringObligationMatch.js for recurring obligations,
+  // src/organizer/oneTimeObligationMatch.js for one-time ones — both wired
+  // in src/AuthShell.jsx) as corroborating an EXISTING canonical Item
+  // rather than describing a new one — reviewStatus is "corroborated" in
+  // that case (see the reviewStatus lifecycle doc above), and this points
+  // at the real Item it corroborates. Provenance only: creating this
+  // candidate never writes anything onto that Item.
+  //
+  // reconciledItemId and reconciledCandidateId (below) are never both
+  // non-null for the same candidate — a reconciliation decision resolves
+  // to exactly one of "matches an existing Item" or "duplicates another
+  // candidate from this same run", never both.
   reconciledItemId: null,
+  // Slice 3 (one-time obligation reconciliation) — set only when this
+  // candidate was recognized as a SAME-RUN duplicate of an earlier
+  // candidate produced by this same ingestion run (e.g. an email body and
+  // a linked webpage both describing the same one-time event), where that
+  // earlier candidate has no canonical Item yet — it may still be
+  // approved, rejected, or left pending. Deliberately a SEPARATE field
+  // from reconciledItemId rather than overloading it with a candidate id:
+  // reconciledItemId must always mean "an actual canonical Item exists at
+  // this id," which is not true here. This field is never later mutated
+  // to become a reconciledItemId once/if the earlier candidate is
+  // eventually approved — it records what was true at the moment this
+  // candidate was created (an honest audit trail), not the earlier
+  // candidate's current state.
+  reconciledCandidateId: null,
 };
 
 /**
