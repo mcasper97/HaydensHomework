@@ -25,6 +25,7 @@ import { fetchGmailStatus, startGmailConnect, disconnectGmail, checkGmailEmail }
 import { subscribeApprovedSenders, addApprovedSender, updateApprovedSenderTarget, removeApprovedSender } from "./data/gmailApprovedSendersRepository.js";
 import { buildSenderTargetOptions, parseSenderTargetValue, senderTargetToValue, getSenderTargetLabel } from "./data/gmailApprovedSenders.js";
 import { getParentToolsOpen, setParentToolsOpen } from "./data/parentToolsPreference.js";
+import { isValidIanaTimezone, suggestBrowserTimezone } from "./data/householdTimezone.js";
 import { createSourceRecord } from "./data/sourceRecordsRepository.js";
 import { createIngestionCandidate, subscribePendingIngestionCandidates } from "./data/ingestionCandidatesRepository.js";
 import { listItems } from "./data/itemsRepository.js";
@@ -1063,6 +1064,19 @@ const ChildSelector = ({
   const [editingName, setEditingName] = useState(false);
   const [savingName, setSavingName] = useState(false);
 
+  // Household timezone (Slice A) — the canonical users/{uid}.timezone
+  // field, on the exact same profile document/persistence pattern as
+  // familyLastName above (setDoc(..., {merge:true}) for a real account,
+  // localStorage for guest/admin). Null/"" means "not yet configured" —
+  // never silently defaulted to the browser's own timezone; see
+  // editingTimezone's render branch below, which only ever SUGGESTS the
+  // browser value and requires an explicit Save.
+  const [timezone, setTimezone] = useState(null);
+  const [timezoneInput, setTimezoneInput] = useState("");
+  const [editingTimezone, setEditingTimezone] = useState(false);
+  const [savingTimezone, setSavingTimezone] = useState(false);
+  const [timezoneError, setTimezoneError] = useState("");
+
   // Restores whether Parent Tools was left open, but ONLY for a real
   // authenticated parent (see data/parentToolsPreference.js) — guest/local
   // mode never persists this and always starts closed, unchanged from
@@ -1090,10 +1104,16 @@ const ChildSelector = ({
     // Staying in `loading` (not calling setLoading(false)) while forwarding
     // avoids a one-frame flash of the picker before AuthShell stops rendering
     // this component at all.
-    const finish = (list, famName) => {
+    const finish = (list, famName, tz) => {
       setChildren(list);
       setFamilyLastName(famName);
       setLastNameInput(famName);
+      setTimezone(tz || null);
+      // Unset -> pre-fill the (still-unsaved) input with the browser's own
+      // current timezone as a SUGGESTION only, per requirement 3 — visibly
+      // editable, never written to Firestore/localStorage until the parent
+      // explicitly clicks Save/"Use this timezone" (see saveTimezone).
+      setTimezoneInput(tz || suggestBrowserTimezone() || "");
       if (!suppressAutoLock && deviceMode === "child" && lockedChildId) {
         const match = list.find((c) => c.id === lockedChildId);
         if (match) {
@@ -1108,7 +1128,8 @@ const ChildSelector = ({
     if (user.isAdmin) {
       const saved = localStorage.getItem("crestly_admin_children");
       const savedName = localStorage.getItem("crestly_admin_family_name") || "";
-      finish(saved ? JSON.parse(saved) : [], savedName);
+      const savedTimezone = localStorage.getItem("crestly_admin_timezone") || null;
+      finish(saved ? JSON.parse(saved) : [], savedName, savedTimezone);
       return;
     }
     if (!db) { setLoading(false); return; }
@@ -1116,7 +1137,7 @@ const ChildSelector = ({
     getDoc(profileRef).then(snap => {
       if (snap.exists()) {
         const data = snap.data();
-        finish(data.children || [], data.familyLastName || "");
+        finish(data.children || [], data.familyLastName || "", data.timezone || null);
       } else {
         setLoading(false);
       }
@@ -1145,6 +1166,40 @@ const ChildSelector = ({
     } finally {
       setSavingName(false);
       setEditingName(false);
+    }
+  };
+
+  // Household timezone (Slice A) — validated BEFORE any write is attempted
+  // (real account or guest alike), using the exact deterministic
+  // Intl.DateTimeFormat-based check isValidIanaTimezone performs; an
+  // invalid value is rejected with an inline error and never persisted,
+  // never even attempted against Firestore/localStorage.
+  const saveTimezone = async () => {
+    const value = timezoneInput.trim();
+    if (!isValidIanaTimezone(value)) {
+      setTimezoneError("That doesn't look like a valid timezone (e.g. America/New_York).");
+      return;
+    }
+    setTimezoneError("");
+    if (value === timezone || savingTimezone) { setEditingTimezone(false); return; }
+    setSavingTimezone(true);
+    if (user.isAdmin) {
+      localStorage.setItem("crestly_admin_timezone", value);
+      setTimezone(value);
+      setSavingTimezone(false);
+      setEditingTimezone(false);
+      return;
+    }
+    try {
+      const profileRef = doc(db, "users", user.uid);
+      await setDoc(profileRef, { timezone: value }, { merge: true });
+      setTimezone(value);
+    } catch (e) {
+      console.error("Save household timezone failed:", e);
+      setTimezoneInput(timezone || ""); // revert on failure
+    } finally {
+      setSavingTimezone(false);
+      setEditingTimezone(false);
     }
   };
 
@@ -1268,6 +1323,67 @@ const ChildSelector = ({
                     <span className="text-white font-semibold">{child.name}</span>
                   </button>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Household timezone (Slice A) — the canonical users/{uid}.timezone
+            field a future Google Calendar publishing slice will read as its
+            sole authoritative source for converting a timed Item into a
+            Google Calendar event. Establishes the field only; nothing here
+            calls any Google API. Available to both a real account and
+            guest/admin mode (mirrors the Family name card just above this
+            panel), Parent Tools only — never reachable from Family Board,
+            Child Home, or a locked/shared Display surface. */}
+        {showParentTools && (
+          <div data-testid="household-timezone-panel" className="rounded-3xl p-5 mb-6 border border-gray-700" style={{ background: "#2a2a2c" }}>
+            <h3 className="text-white font-display text-lg mb-1">Household Timezone</h3>
+            {editingTimezone || !timezone ? (
+              <div>
+                {!timezone && (
+                  <p className="text-gray-400 text-xs mb-2">
+                    Suggested: {timezoneInput || "—"} — you can change this before saving.
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={timezoneInput}
+                    onChange={(e) => { setTimezoneInput(e.target.value); setTimezoneError(""); }}
+                    onKeyDown={(e) => e.key === "Enter" && saveTimezone()}
+                    placeholder="e.g. America/New_York"
+                    className="flex-1 rounded-2xl px-4 py-2 font-semibold focus:outline-none"
+                    style={{ background: "#1C1C1E", color: "white", border: "2px solid rgba(255,255,255,0.15)" }}
+                  />
+                  <button
+                    onClick={saveTimezone}
+                    disabled={savingTimezone}
+                    className="px-4 py-2 rounded-2xl font-extrabold disabled:opacity-50"
+                    style={{ background: "#A8FF3E", color: "#1C1C1E" }}
+                  >
+                    {savingTimezone ? "..." : timezone ? "Save" : "Use this timezone"}
+                  </button>
+                  {timezone && (
+                    <button
+                      onClick={() => { setTimezoneInput(timezone); setTimezoneError(""); setEditingTimezone(false); }}
+                      className="px-4 py-2 rounded-2xl font-extrabold text-gray-400 hover:text-white border border-gray-700"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+                {timezoneError && <p className="text-red-400 text-xs mt-2">{timezoneError}</p>}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-gray-300 font-semibold">{timezone}</span>
+                <button
+                  onClick={() => { setTimezoneInput(timezone); setTimezoneError(""); setEditingTimezone(true); }}
+                  className="text-xs font-semibold text-indigo-300 underline hover:text-indigo-100"
+                >
+                  Change
+                </button>
               </div>
             )}
           </div>
