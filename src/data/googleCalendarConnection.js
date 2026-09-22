@@ -59,6 +59,23 @@ export async function disconnectCalendar() {
 }
 
 /**
+ * getCalendarList() -> [{ id, summary, primary, accessRole }, ...]
+ * Slice C.1A — server-side Calendar List support, exposed here for the
+ * temporary "Test Calendar List" Parent Tools validation control (see
+ * AuthShell.jsx) ahead of C.1B's real routing-configuration UI, which
+ * will call this same function. Throws on failure — a
+ * CALENDAR_LIST_SCOPE_MISSING code (see api/calendar.js's own doc
+ * comment) arrives as `err.code`, exactly like every other authedFetch
+ * caller's error-code handling here; the caller decides how to display
+ * it. Never returns a token of any kind — see the server's own
+ * listCalendars sanitization in api/_googleCalendarClient.js.
+ */
+export async function getCalendarList() {
+  const data = await authedFetch("/api/calendar?action=list", { method: "GET" });
+  return Array.isArray(data.calendars) ? data.calendars : [];
+}
+
+/**
  * publishItemToGoogleCalendar(itemId, { optionalEndTime? }) -> result
  * Manual, per-Item action (Slice C) — see ParentOrganizer.jsx's "Add to
  * Google Calendar" control. `optionalEndTime` is only ever sent when the

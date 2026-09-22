@@ -22,7 +22,7 @@ import {
 } from "./deviceMode.js";
 import { hasPin, setPin as savePin } from "./data/parentPin.js";
 import { fetchGmailStatus, startGmailConnect, disconnectGmail, checkGmailEmail } from "./data/gmailConnection.js";
-import { getCalendarStatus, startCalendarOAuth, disconnectCalendar } from "./data/googleCalendarConnection.js";
+import { getCalendarStatus, startCalendarOAuth, disconnectCalendar, getCalendarList } from "./data/googleCalendarConnection.js";
 import { subscribeApprovedSenders, addApprovedSender, updateApprovedSenderTarget, removeApprovedSender } from "./data/gmailApprovedSendersRepository.js";
 import { buildSenderTargetOptions, parseSenderTargetValue, senderTargetToValue, getSenderTargetLabel } from "./data/gmailApprovedSenders.js";
 import { getParentToolsOpen, setParentToolsOpen } from "./data/parentToolsPreference.js";
@@ -1100,6 +1100,83 @@ const GoogleCalendarConnectionPanel = () => {
   );
 };
 
+/* ─────────────────────── TEMPORARY: Calendar List validation control (Slice C.1A) ───────────────────────
+ * Live-validation aid ONLY, ahead of C.1B's real routing-configuration UI.
+ * Directly navigating to /api/calendar?action=list in a browser tab
+ * correctly returns "Authentication required" — no Firebase Authorization
+ * header is attached to a plain address-bar GET. This button calls the
+ * exact same endpoint through the real authenticated client path
+ * (getCalendarList() -> authedFetch, same as every other Calendar call),
+ * so a parent (or this session) can confirm the endpoint actually works
+ * end-to-end without waiting for C.1B. Does not persist anything, does
+ * not build any learner mapping, does not touch publish behavior. Meant
+ * to be deleted once C.1B's real UI supersedes it.
+ */
+const CalendarListValidationControl = () => {
+  const [status, setStatus] = useState("idle"); // idle | loading | done | error
+  const [calendars, setCalendars] = useState([]);
+  const [error, setError] = useState("");
+  const [scopeMissing, setScopeMissing] = useState(false);
+
+  const handleTest = async () => {
+    setStatus("loading");
+    setError("");
+    setScopeMissing(false);
+    try {
+      const result = await getCalendarList();
+      setCalendars(result);
+      setStatus("done");
+    } catch (e) {
+      setScopeMissing(e.code === "CALENDAR_LIST_SCOPE_MISSING");
+      setError(e.message || "Could not load your Google calendars.");
+      setStatus("error");
+    }
+  };
+
+  return (
+    <div data-testid="calendar-list-validation-control" className="rounded-3xl p-5 mb-6 border border-dashed border-yellow-600" style={{ background: "#2a2a2c" }}>
+      <h3 className="text-white font-display text-lg mb-1">Test Calendar List <span className="text-yellow-500 text-xs font-normal">(temporary)</span></h3>
+      <p className="text-gray-400 text-xs mb-3">Live-validation aid for Slice C.1A — not part of the finished routing UI.</p>
+      <button
+        onClick={handleTest}
+        disabled={status === "loading"}
+        className="px-4 py-2 rounded-xl font-semibold text-white transition hover:opacity-90 disabled:opacity-50 border border-gray-600"
+        style={{ background: "#1C1C1E" }}
+      >
+        {status === "loading" ? "Testing…" : "Test Calendar List"}
+      </button>
+
+      {status === "error" && scopeMissing && (
+        <p className="text-yellow-400 text-sm mt-3">
+          CALENDAR_LIST_SCOPE_MISSING — reconnect Google Calendar to grant permission to list your calendars.
+        </p>
+      )}
+      {status === "error" && !scopeMissing && (
+        <p className="text-red-400 text-sm mt-3">{error}</p>
+      )}
+
+      {status === "done" && (
+        <div className="mt-3">
+          <p className="text-gray-400 text-xs mb-2">{calendars.length} writable calendar{calendars.length === 1 ? "" : "s"} found:</p>
+          {calendars.length === 0 ? (
+            <p className="text-gray-500 text-sm">No writable calendars returned.</p>
+          ) : (
+            <ul className="space-y-1">
+              {calendars.map((cal) => (
+                <li key={cal.id} className="text-sm text-gray-300 bg-gray-900/40 rounded-xl px-3 py-2">
+                  <span className="font-semibold text-white">{cal.summary}</span>
+                  {cal.primary && <span className="text-green-400 ml-1">(primary)</span>}
+                  <div className="text-xs text-gray-500 mt-0.5">id: {cal.id} · accessRole: {cal.accessRole}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 /* ─────────────────────── Child Selector ─────────────────────── */
 const ChildSelector = ({
   user,
@@ -1515,6 +1592,12 @@ const ChildSelector = ({
             reachable from Family Board, Child Home, or a locked/shared
             Display surface. */}
         {showParentTools && !user.isAdmin && <GoogleCalendarConnectionPanel />}
+
+        {/* TEMPORARY (Slice C.1A live-validation aid) — see the component's
+            own doc comment. Gated identically to GoogleCalendarConnectionPanel
+            just above: real Firebase-authenticated parent, Parent Tools only.
+            Delete once C.1B's real routing-configuration UI supersedes it. */}
+        {showParentTools && !user.isAdmin && <CalendarListValidationControl />}
 
         {loading ? (
           <div className="text-center py-12">
