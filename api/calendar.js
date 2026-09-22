@@ -34,6 +34,23 @@
  * server-only tokens, deterministic event id / idempotent publish,
  * disconnect's conditional-revoke logic) is unchanged.
  *
+ * Slice C.1C adds one real behavior change to "publish": the destination
+ * calendar is resolved from the household's stored routing config
+ * (getGoogleCalendarRouting + resolveGoogleCalendarId) instead of being
+ * hardcoded to "primary". This ONLY happens for a NEW publication — an
+ * Item that already has googleCalendarEventId short-circuits before
+ * routing is ever resolved, so changing routing config never moves or
+ * re-targets an already-published event (that's a future slice's
+ * concern, not this one's). If the resolved destination is an explicitly
+ * configured child/default calendar (source !== "primary") and Google
+ * reports it not found/not writable, the publish fails with a new
+ * controlled code, CALENDAR_ROUTE_INVALID — deliberately NEVER falls
+ * back to primary or tries a different calendar in that case, since
+ * silently doing so could put a child's event on the wrong family
+ * calendar without the parent knowing (see handlePublish's own inline
+ * comment for the full reasoning). A plain primary fallback (nothing
+ * configured at all) is unaffected and behaves exactly as before.
+ *
  * RATE LIMITING (the one thing that could NOT be a pure copy-paste):
  * checkRateLimit(key) (api/_auth.js) keys its in-memory bucket by
  * whatever string it's given — it has no notion of "uid" beyond using it
@@ -66,7 +83,7 @@ import {
   sanitizeGoogleCalendarConnectionForClient,
 } from "./_googleCalendarConnectionsStore.js";
 import { getGmailConnection } from "./_gmailConnectionsStore.js";
-import { getHouseholdTimezone } from "./_householdProfileStore.js";
+import { getHouseholdTimezone, getGoogleCalendarRouting } from "./_householdProfileStore.js";
 import { getItem, setItemGoogleCalendarFields } from "./_itemsStore.js";
 import {
   deriveGoogleEventId,
@@ -77,6 +94,7 @@ import {
 import { revokeToken, generateState, generatePkcePair, buildAuthorizationUrl, getOAuthConfig, CALENDAR_SCOPES } from "./_googleOAuth.js";
 import { createOAuthState } from "./_googleCalendarConnectionsStore.js";
 import { buildCalendarEventFromItem } from "../src/organizer/calendarEventMapping.js";
+import { resolveGoogleCalendarId } from "../src/organizer/calendarRouting.js";
 
 const CALENDAR_OAUTH_REDIRECT_URI_ENV_VAR = "GOOGLE_CALENDAR_OAUTH_REDIRECT_URI";
 
@@ -200,6 +218,11 @@ async function handlePublish(req, res, uid) {
     return res.status(404).json({ ok: false, error: "This item no longer exists." });
   }
 
+  // Idempotency step 1 — an already-linked Item short-circuits BEFORE any
+  // routing resolution happens at all. Slice C.1C never re-resolves
+  // routing, never moves, and never duplicates an already-published
+  // event — changing household routing config only ever affects FUTURE
+  // publications (see the module doc comment for the full design note).
   if (item.googleCalendarEventId) {
     return res.status(200).json({
       ok: true,
@@ -224,6 +247,18 @@ async function handlePublish(req, res, uid) {
     return res.status(400).json({ ok: false, code: mapped.code, error: mapped.message });
   }
 
+  // Slice C.1C — resolve the actual destination calendar from stored
+  // household routing config (never hardcoded to "primary" anymore).
+  // Pure/local, no network call: see src/organizer/calendarRouting.js.
+  let routing;
+  try {
+    routing = await getGoogleCalendarRouting(uid);
+  } catch (err) {
+    console.error("calendar (publish) error:", err?.message);
+    return res.status(500).json({ ok: false, error: "Could not load your Google Calendar routing settings." });
+  }
+  const { calendarId, source } = resolveGoogleCalendarId(item, routing);
+
   const refreshed = await refreshCalendarAccessToken(uid, connection);
   if (!refreshed.ok) {
     if (refreshed.needsReconnect) {
@@ -232,15 +267,31 @@ async function handlePublish(req, res, uid) {
     return res.status(502).json({ ok: false, error: refreshed.error || "Could not connect to Google Calendar. Please try again." });
   }
 
-  const inserted = await insertCalendarEvent({ accessToken: refreshed.accessToken, event: mapped.event });
+  const inserted = await insertCalendarEvent({ accessToken: refreshed.accessToken, calendarId, event: mapped.event });
   if (!inserted.ok) {
+    // A configured (non-"primary") destination that Google reports as
+    // not found/not writable means the saved routing mapping is stale —
+    // NEVER silently fall back to primary or another calendar here (that
+    // could put a child's event on the wrong family calendar without the
+    // parent knowing). The canonical Item is left completely untouched;
+    // the parent is directed to fix the mapping in Parent Tools and
+    // retry — a plain "primary" fallback (source: "primary", meaning
+    // nothing was actually configured) is never itself treated as a
+    // stale mapping.
+    if (inserted.notFound && source !== "primary") {
+      return res.status(502).json({
+        ok: false,
+        code: "CALENDAR_ROUTE_INVALID",
+        error: "This Google Calendar is no longer available. Update Calendar Routing in Parent Tools and try again.",
+      });
+    }
     return res.status(502).json({ ok: false, error: inserted.error || "Could not publish to Google Calendar. Please try again." });
   }
 
   try {
     await setItemGoogleCalendarFields(uid, itemId, {
       googleCalendarEventId: inserted.eventId,
-      googleCalendarId: "primary",
+      googleCalendarId: calendarId,
       googleCalendarSyncedAt: new Date().toISOString(),
       googleCalendarSyncError: null,
     });

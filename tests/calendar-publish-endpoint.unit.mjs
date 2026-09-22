@@ -53,11 +53,12 @@ function setupMocks(t, {
   connection = { refreshToken: "cal-rt", needsReconnect: false },
   item = null,
   householdTimezone = null,
+  routing = { defaultCalendarId: null, childCalendarIds: {} },
   refreshResult = { ok: true, accessToken: "fresh-at" },
   insertResult = { ok: true, alreadyExisted: false, eventId: "derived-event-id" },
   linkageWriteError = null,
 } = {}) {
-  const calls = { getItem: [], setItemGoogleCalendarFields: [], insertCalendarEvent: [], refreshCalendarAccessToken: [] };
+  const calls = { getItem: [], setItemGoogleCalendarFields: [], insertCalendarEvent: [], refreshCalendarAccessToken: [], getGoogleCalendarRouting: [] };
 
   t.mock.module("../api/_auth.js", {
     namedExports: {
@@ -94,6 +95,7 @@ function setupMocks(t, {
   t.mock.module("../api/_householdProfileStore.js", {
     namedExports: {
       getHouseholdTimezone: async () => householdTimezone,
+      getGoogleCalendarRouting: async () => { calls.getGoogleCalendarRouting.push(true); return routing; },
     },
   });
   t.mock.module("../api/_itemsStore.js", {
@@ -351,4 +353,365 @@ test("IDEMPOTENCY / RECOVERY: if the linkage write itself fails, the endpoint re
 
   assert.strictEqual(state.body.ok, false);
   assert.strictEqual(calls.insertCalendarEvent.length, 1, "the Google insert was still attempted (and, in reality, would have succeeded)");
+});
+
+// ============ Slice C.1C — routing resolution ============
+test("ROUTING: single child with a mapping publishes to the mapped calendarId", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: "family@group.calendar.google.com", childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "hayden@group.calendar.google.com");
+});
+
+test("ROUTING: single child with no mapping, but a default exists, publishes to the default calendarId", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["payton-id"] },
+    routing: { defaultCalendarId: "family@group.calendar.google.com", childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "family@group.calendar.google.com");
+});
+
+test("ROUTING: single child with no mapping and no default falls back to primary", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["payton-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: {} },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "primary");
+});
+
+test("ROUTING: family-wide item (childIds: []) with a default publishes to the default calendarId", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: [] },
+    routing: { defaultCalendarId: "family@group.calendar.google.com", childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "family@group.calendar.google.com");
+});
+
+test("ROUTING: family-wide item with no default falls back to primary", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: [] },
+    routing: { defaultCalendarId: null, childCalendarIds: {} },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "primary");
+});
+
+test("ROUTING: multi-child item with a default publishes to the default calendarId (never one child's individual mapping)", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id", "payton-id"] },
+    routing: { defaultCalendarId: "family@group.calendar.google.com", childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com", "payton-id": "payton@group.calendar.google.com" } },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "family@group.calendar.google.com");
+});
+
+test("ROUTING: multi-child item with no default falls back to primary", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id", "payton-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: {} },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "primary");
+});
+
+test("ROUTING: an unknown/unmapped child never resolves to another child's mapped calendar", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["unknown-child-id"] },
+    routing: { defaultCalendarId: "family@group.calendar.google.com", childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com", "payton-id": "payton@group.calendar.google.com" } },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  const usedCalendarId = calls.insertCalendarEvent[0].calendarId;
+  assert.notStrictEqual(usedCalendarId, "hayden@group.calendar.google.com");
+  assert.notStrictEqual(usedCalendarId, "payton@group.calendar.google.com");
+  assert.strictEqual(usedCalendarId, "family@group.calendar.google.com", "falls through to the household default, never another child's calendar");
+});
+
+// ============ Slice C.1C — persistence: the ACTUAL resolved calendarId is stored on the Item ============
+test("PERSISTENCE: a mapped-child publish stores the child's calendar id on the Item, not \"primary\"", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(calls.setItemGoogleCalendarFields[0].fields.googleCalendarId, "hayden@group.calendar.google.com");
+});
+
+test("PERSISTENCE: a family-wide publish stores the default calendar id on the Item", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: [] },
+    routing: { defaultCalendarId: "family@group.calendar.google.com", childCalendarIds: {} },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(calls.setItemGoogleCalendarFields[0].fields.googleCalendarId, "family@group.calendar.google.com");
+});
+
+test("PERSISTENCE: a fallback publish (nothing configured) still stores the literal \"primary\" (only as the ACTUAL resolved destination, not a hardcoded assumption)", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: [] },
+    routing: { defaultCalendarId: null, childCalendarIds: {} },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(calls.setItemGoogleCalendarFields[0].fields.googleCalendarId, "primary");
+});
+
+// ============ Slice C.1C — idempotency: routing is never re-resolved for an already-published Item ============
+test("IDEMPOTENCY: an already-published Item never re-resolves routing at all (getGoogleCalendarRouting is never called)", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"], googleCalendarEventId: "already-there", googleCalendarSyncedAt: "2026-01-01T00:00:00.000Z" },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(state.body.alreadyPublished, true);
+  assert.strictEqual(calls.getGoogleCalendarRouting.length, 0, "routing must never be resolved for an already-published Item");
+  assert.strictEqual(calls.insertCalendarEvent.length, 0);
+});
+
+test("IDEMPOTENCY: changing routing config never moves an already-published Item — its stored googleCalendarId is untouched", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"], googleCalendarEventId: "already-there", googleCalendarId: "old-calendar@group.calendar.google.com", googleCalendarSyncedAt: "2026-01-01T00:00:00.000Z" },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "a-totally-different-calendar@group.calendar.google.com" } },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(state.body.alreadyPublished, true);
+  assert.strictEqual(calls.setItemGoogleCalendarFields.length, 0, "no write at all — the Item's existing linkage is left completely alone");
+});
+
+test("IDEMPOTENCY: a second publish attempt on an already-published Item never creates another event", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, googleCalendarEventId: "already-there", googleCalendarSyncedAt: "2026-01-01T00:00:00.000Z" },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(calls.insertCalendarEvent.length, 0);
+});
+
+// ============ Slice C.1C — stale/invalid saved mapping ============
+test("STALE ROUTE: a configured mapped calendar that Google reports not-found/not-writable fails with CALENDAR_ROUTE_INVALID, no linkage written", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "deleted-calendar@group.calendar.google.com" } },
+    insertResult: { ok: false, notFound: true, error: "Google Calendar could not find or write to the configured calendar." },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, false);
+  assert.strictEqual(state.body.code, "CALENDAR_ROUTE_INVALID");
+  assert.match(state.body.error, /Update Calendar Routing/);
+  assert.strictEqual(calls.setItemGoogleCalendarFields.length, 0, "Item linkage must never be written on a stale-route failure");
+});
+
+test("STALE ROUTE: a stale DEFAULT calendar mapping also fails with CALENDAR_ROUTE_INVALID (not just per-child mappings)", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: [] },
+    routing: { defaultCalendarId: "deleted-family-calendar@group.calendar.google.com", childCalendarIds: {} },
+    insertResult: { ok: false, notFound: true, error: "not found" },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.code, "CALENDAR_ROUTE_INVALID");
+  assert.strictEqual(calls.setItemGoogleCalendarFields.length, 0);
+});
+
+test("STALE ROUTE: never silently falls back to primary or another calendar — only one insert attempt is ever made", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: "family@group.calendar.google.com", childCalendarIds: { "hayden-id": "deleted-calendar@group.calendar.google.com" } },
+    insertResult: { ok: false, notFound: true, error: "not found" },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(calls.insertCalendarEvent.length, 1, "exactly one attempt — no retry against the default or primary");
+  assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "deleted-calendar@group.calendar.google.com");
+});
+
+test("STALE ROUTE: when nothing is configured at all (source is \"primary\"), a not-found result from Google is NOT reported as CALENDAR_ROUTE_INVALID", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: [] },
+    routing: { defaultCalendarId: null, childCalendarIds: {} },
+    insertResult: { ok: false, notFound: true, error: "not found" },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.notStrictEqual(state.body.code, "CALENDAR_ROUTE_INVALID", "an unconfigured fallback to primary failing is a generic error, not a stale-mapping error");
+  assert.strictEqual(calls.setItemGoogleCalendarFields.length, 0);
+});
+
+test("STALE ROUTE: differentiated from needsReconnect — a stale mapping never sets needsReconnect", async (t) => {
+  setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "deleted-calendar@group.calendar.google.com" } },
+    insertResult: { ok: false, notFound: true, error: "not found" },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.notStrictEqual(state.body.needsReconnect, true);
+});
+
+// ============ Post-approval correction: quota/rate 403 must never be treated as a stale route ============
+test("STALE ROUTE CORRECTION: a mapped calendar + quota/rate 403 (client reports it with no notFound flag) is a generic publish error, NOT CALENDAR_ROUTE_INVALID", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+    // The corrected api/_googleCalendarClient.js never sets notFound for a
+    // quota/rate 403 (see its own isCalendarWriteAccessDeniedError tests) —
+    // this simulates exactly that real return shape at the endpoint boundary.
+    insertResult: { ok: false, error: "Google Calendar could not create this event (status 403)." },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, false);
+  assert.notStrictEqual(state.body.code, "CALENDAR_ROUTE_INVALID", "a quota/rate-limit failure must never be reported as a stale/invalid routing configuration");
+  assert.strictEqual(calls.setItemGoogleCalendarFields.length, 0, "no linkage write on any insert failure");
+});
+
+test("STALE ROUTE CORRECTION: a quota/rate 403 never triggers a fallback to primary — exactly the configured calendarId is the only one ever attempted", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+    insertResult: { ok: false, error: "Google Calendar could not create this event (status 403)." },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(calls.insertCalendarEvent.length, 1, "exactly one attempt — no retry against primary or any other calendar");
+  assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "hayden@group.calendar.google.com");
+});
+
+test("STALE ROUTE CORRECTION: a quota/rate 403 never sets needsReconnect", async (t) => {
+  setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+    insertResult: { ok: false, error: "Google Calendar could not create this event (status 403)." },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.notStrictEqual(state.body.needsReconnect, true);
+});
+
+test("STALE ROUTE CORRECTION: the saved routing configuration itself is preserved (this endpoint never writes to routing config on any insert failure)", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+    insertResult: { ok: false, error: "Google Calendar could not create this event (status 403)." },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+  // This endpoint has no routing-config write path at all (routing is
+  // owned by src/data/googleCalendarRouting.js, Slice C.1B) — asserting
+  // no unexpected linkage write is the closest structural proof available
+  // that a publish failure can't have side-effected the stored mapping.
+  assert.strictEqual(calls.setItemGoogleCalendarFields.length, 0);
+});
+
+test("invalid_grant during token refresh still sets needsReconnect exactly as before (unaffected by the 403-classification correction)", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+    refreshResult: { ok: false, needsReconnect: true },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.needsReconnect, true);
+  assert.strictEqual(calls.insertCalendarEvent.length, 0, "insert is never attempted once token refresh has already failed with invalid_grant");
+});
+
+test("STALE ROUTE: differentiated from a generic network failure — a genuine (non-notFound) insert failure is NOT reported as CALENDAR_ROUTE_INVALID", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+    insertResult: { ok: false, error: "Google Calendar could not create this event (status 500)." },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.notStrictEqual(state.body.code, "CALENDAR_ROUTE_INVALID");
+  assert.strictEqual(calls.setItemGoogleCalendarFields.length, 0);
+});
+
+test("No configured mapping/default still publishes to primary normally (fallback path unaffected by the stale-route guard)", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: {} },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "primary");
+  assert.strictEqual(calls.setItemGoogleCalendarFields[0].fields.googleCalendarId, "primary");
 });

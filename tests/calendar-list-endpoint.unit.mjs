@@ -84,6 +84,7 @@ function setupMocks(t, {
   t.mock.module("../api/_householdProfileStore.js", {
     namedExports: {
       getHouseholdTimezone: async () => null,
+      getGoogleCalendarRouting: async () => ({ defaultCalendarId: null, childCalendarIds: {} }),
     },
   });
   t.mock.module("../api/_itemsStore.js", {

@@ -81,7 +81,10 @@ function setupMocks(t, { authenticated = true, rateLimited = false } = {}) {
     namedExports: { getGmailConnection: async () => null },
   });
   t.mock.module("../api/_householdProfileStore.js", {
-    namedExports: { getHouseholdTimezone: async () => "America/New_York" },
+    namedExports: {
+      getHouseholdTimezone: async () => "America/New_York",
+      getGoogleCalendarRouting: async () => ({ defaultCalendarId: null, childCalendarIds: {} }),
+    },
   });
   t.mock.module("../api/_itemsStore.js", {
     namedExports: {

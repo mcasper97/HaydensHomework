@@ -12,18 +12,30 @@
  * client-safe module never needs a Node-only module in its dependency
  * graph (see that file's own header comment).
  *
- * listCalendars (Slice C.1A) is read-only support for future routing
- * configuration (Slice C.1B) — it is not called by insertCalendarEvent or
- * api/calendar-publish.js, which this slice leaves untouched. No
- * update/delete event methods yet — Slice C is create-only (see
- * api/calendar-publish.js); those are Slice D/E's concern.
+ * listCalendars (Slice C.1A) is read-only support for routing
+ * configuration (Slice C.1B) — it is a separate call from
+ * insertCalendarEvent. No update/delete event methods yet — Slice C is
+ * create-only (see api/calendar.js's publish action); those are Slice
+ * D/E's concern.
  */
 import crypto from "node:crypto";
 import { refreshAccessToken } from "./_googleOAuth.js";
 import { markGoogleCalendarConnectionNeedsReconnect } from "./_googleCalendarConnectionsStore.js";
 
-const CALENDAR_EVENTS_ENDPOINT = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 const CALENDAR_LIST_ENDPOINT = "https://www.googleapis.com/calendar/v3/users/me/calendarList";
+
+/**
+ * eventsEndpoint(calendarId) -> the events.insert URL for that calendar.
+ * calendarId is treated as an OPAQUE string (Slice C.1C) — it may be the
+ * literal alias "primary", the connected account's own email address, or
+ * a group-calendar id (typically "<hash>@group.calendar.google.com") —
+ * never assumed to be any particular shape, and always
+ * encodeURIComponent'd, since Google calendar ids can contain "@" and
+ * other characters that are not URL-path-safe as-is.
+ */
+function eventsEndpoint(calendarId) {
+  return `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
+}
 
 /**
  * deriveGoogleEventId(itemId) -> a deterministic, Google-compliant event id
@@ -39,7 +51,7 @@ const CALENDAR_LIST_ENDPOINT = "https://www.googleapis.com/calendar/v3/users/me/
  *
  * Deterministic: the SAME itemId always produces the SAME event id, every
  * time, on every server instance — this is the actual idempotency
- * defense (see api/calendar-publish.js's own doc comment), not merely
+ * defense (see api/calendar.js's own doc comment), not merely
  * "check googleCalendarEventId is null first". A retried publish attempt
  * (whether from a genuine double-click or a recovery from a prior
  * partial failure) always targets the exact same Google event.
@@ -89,27 +101,96 @@ export async function refreshCalendarAccessToken(uid, connection, { fetchFn = fe
   }
 }
 
+// Reason codes Google uses on a 403 for quota/rate/usage-limit conditions
+// — NEVER a "this calendar doesn't exist or isn't writable" signal, even
+// though both surface as the same 403 status code. Conflating these was
+// a real bug in an earlier pass: treating every insert 403 as a stale
+// route would have told a parent to go "fix" a routing config that was
+// never actually the problem, on what's usually a transient condition.
+const QUOTA_OR_RATE_REASONS = new Set([
+  "userRateLimitExceeded",
+  "rateLimitExceeded",
+  "quotaExceeded",
+  "dailyLimitExceeded",
+  "dailyLimitExceededUnreg",
+]);
+
+// Reason codes that DO narrowly indicate "the authenticated user doesn't
+// have sufficient write access to this specific calendar" — Google's
+// documented reason for events.insert against a calendar you can't write
+// to (or that no longer exists in a way the API can resolve write access
+// for) is "forbidden"; "insufficientPermissions"/"notACalendarUser" are
+// included as the same category should Google's API surface them here.
+const WRITE_ACCESS_DENIED_REASONS = new Set([
+  "forbidden",
+  "insufficientPermissions",
+  "notACalendarUser",
+]);
+
 /**
- * insertCalendarEvent({ accessToken, event, fetchFn? }) -> normalized result
+ * isCalendarWriteAccessDeniedError(json) -> boolean
  *
- * `event` already carries its own deterministic `id` (see
+ * Narrow, server-side-only inspection of a 403 events.insert response
+ * (same documented Google error shape as calendarList.list's own
+ * classifier in this file's listCalendars — see
+ * isCalendarListScopeMissingError in api/calendar-list.js's usage) to
+ * distinguish "this specific calendar isn't writable" from every OTHER
+ * reason Google returns a 403 on events.insert (quota, per-user rate
+ * limiting, daily limits). A 403 status code ALONE is not evidence of
+ * either — only a matching, positively-identified reason code is. If the
+ * body is unparseable or carries no recognized reason at all, this
+ * returns false (NOT route-invalid) — there must be positive evidence of
+ * a write-access problem before telling a parent their routing
+ * configuration is broken; the default is a generic, retryable failure.
+ */
+function isCalendarWriteAccessDeniedError(json) {
+  const errors = Array.isArray(json?.error?.errors) ? json.error.errors : [];
+  if (errors.some((e) => QUOTA_OR_RATE_REASONS.has(e?.reason))) return false;
+  return errors.some((e) => WRITE_ACCESS_DENIED_REASONS.has(e?.reason));
+}
+
+/**
+ * insertCalendarEvent({ accessToken, calendarId, event, fetchFn? }) -> normalized result
+ *
+ * `calendarId` (Slice C.1C) is the actual destination — resolved by
+ * src/organizer/calendarRouting.js's resolveGoogleCalendarId, never
+ * hardcoded to "primary" here. Treated as opaque (see eventsEndpoint
+ * above). `event` already carries its own deterministic `id` (see
  * deriveGoogleEventId above / calendarEventMapping.js). A 409 response
- * means Google already has an event at this id — per Google's own
- * documented behavior, this means a PRIOR insert with this same
- * deterministic id already succeeded (most likely a retry after this
- * server's earlier Firestore linkage write failed) — this is treated as
- * success, not an error, so the caller can proceed to (re)persist the
- * Item's linkage fields without ever creating a duplicate event.
+ * means Google already has an event at this id ON THIS CALENDAR — per
+ * Google's own documented behavior, this means a PRIOR insert with this
+ * same deterministic id already succeeded (most likely a retry after
+ * this server's earlier Firestore linkage write failed) — this is
+ * treated as success, not an error, so the caller can proceed to
+ * (re)persist the Item's linkage fields without ever creating a
+ * duplicate event. (Google event ids are unique per calendar, not
+ * globally — a 409 here is specifically "this id already exists on THIS
+ * calendarId", which is exactly the recovery case this is meant to
+ * catch, since a retry always targets the same calendarId as the
+ * original attempt within one publish call.)
+ *
+ * `notFound: true` (route/destination invalid) is reported ONLY when:
+ *   - the response is a 404 (the calendarId itself doesn't exist), or
+ *   - the response is a 403 whose body narrowly indicates insufficient
+ *     write access to THIS calendar (isCalendarWriteAccessDeniedError
+ *     above) — NEVER for a 403 that's actually quota/rate limiting
+ *     (post-approval correction: a bare 403 status is not, by itself,
+ *     evidence of either condition — see that function's own doc
+ *     comment). A quota/rate 403, or any other non-matching failure, is
+ *     a plain generic error instead — the caller (api/calendar.js) must
+ *     never treat it as a reason to blame the household's routing
+ *     configuration.
  *
  * Deliberately never logs the raw response body — it may contain the
  * event's own title/description (a child's homework detail) or other
  * account-scoped content; only a short, safe summary is ever surfaced in
- * the returned `error` string.
+ * the returned `error` string, and the narrow reason-code inspection
+ * above never leaks further than the boolean it produces.
  */
-export async function insertCalendarEvent({ accessToken, event, fetchFn = fetch }) {
+export async function insertCalendarEvent({ accessToken, calendarId, event, fetchFn = fetch }) {
   let res;
   try {
-    res = await fetchFn(CALENDAR_EVENTS_ENDPOINT, {
+    res = await fetchFn(eventsEndpoint(calendarId), {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
       body: JSON.stringify(event),
@@ -122,11 +203,21 @@ export async function insertCalendarEvent({ accessToken, event, fetchFn = fetch 
     return { ok: true, alreadyExisted: true, eventId: event.id };
   }
 
+  if (res.status === 404) {
+    return { ok: false, notFound: true, error: "Google Calendar could not find the configured calendar." };
+  }
+
   let json = null;
   try {
     json = await res.json();
   } catch {
-    // Non-JSON body — fall through to the generic status-based error below.
+    // Non-JSON body — can't be narrowly classified as write-access-denied,
+    // so this falls through to the generic status-based error below, same
+    // as any other unparseable failure response.
+  }
+
+  if (res.status === 403 && isCalendarWriteAccessDeniedError(json)) {
+    return { ok: false, notFound: true, error: "Google Calendar could not write to the configured calendar." };
   }
 
   if (!res.ok) {
@@ -173,9 +264,9 @@ function isCalendarListScopeMissingError(json) {
  *                                            | { ok: false, scopeMissing: true }
  *                                            | { ok: false, error }
  *
- * Calendar List support (Slice C.1A) — used only by api/calendar-list.js,
- * for future routing configuration (Slice C.1B); not called by
- * calendar-publish.js, which is untouched by this slice.
+ * Calendar List support (Slice C.1A) — used by api/calendar.js's "list"
+ * action for routing configuration (Slice C.1B); not called by the
+ * "publish" action, which uses insertCalendarEvent instead.
  *
  * Filters to calendars the parent can actually publish to
  * (accessRole "writer" or "owner" — Google's other roles, "reader" and

@@ -33,7 +33,7 @@ test("A Firestore-style mixed-case id still round-trips deterministically", () =
 });
 
 // ============ insertCalendarEvent ============
-test("insertCalendarEvent: a fresh 200/201 response returns the created event id", async () => {
+test("insertCalendarEvent: a fresh 200/201 response returns the created event id (calendarId: primary)", async () => {
   const fetchFn = async (url, options) => {
     assert.strictEqual(url, "https://www.googleapis.com/calendar/v3/calendars/primary/events");
     assert.strictEqual(options.method, "POST");
@@ -42,7 +42,7 @@ test("insertCalendarEvent: a fresh 200/201 response returns the created event id
     assert.strictEqual(body.id, "det-id-1");
     return { ok: true, status: 200, json: async () => ({ id: "det-id-1", summary: "Test Event" }) };
   };
-  const result = await insertCalendarEvent({ accessToken: "test-access-token", event: { id: "det-id-1", summary: "Test Event" }, fetchFn });
+  const result = await insertCalendarEvent({ accessToken: "test-access-token", calendarId: "primary", event: { id: "det-id-1", summary: "Test Event" }, fetchFn });
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.alreadyExisted, false);
   assert.strictEqual(result.eventId, "det-id-1");
@@ -50,30 +50,132 @@ test("insertCalendarEvent: a fresh 200/201 response returns the created event id
 
 test("insertCalendarEvent: a 409 duplicate is treated as SUCCESS (already exists), not an error — the idempotency recovery path", async () => {
   const fetchFn = async () => ({ ok: false, status: 409, json: async () => ({ error: { message: "The requested identifier already exists." } }) });
-  const result = await insertCalendarEvent({ accessToken: "test-access-token", event: { id: "det-id-2", summary: "Test Event" }, fetchFn });
+  const result = await insertCalendarEvent({ accessToken: "test-access-token", calendarId: "primary", event: { id: "det-id-2", summary: "Test Event" }, fetchFn });
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.alreadyExisted, true);
   assert.strictEqual(result.eventId, "det-id-2");
 });
 
-test("insertCalendarEvent: a genuine failure (e.g. 400/500) is reported as an error, not treated as success", async () => {
+test("insertCalendarEvent: a genuine failure (e.g. 500) is reported as an error, not treated as success", async () => {
   const fetchFn = async () => ({ ok: false, status: 500, json: async () => ({ error: { message: "Internal error" } }) });
-  const result = await insertCalendarEvent({ accessToken: "test-access-token", event: { id: "det-id-3" }, fetchFn });
+  const result = await insertCalendarEvent({ accessToken: "test-access-token", calendarId: "primary", event: { id: "det-id-3" }, fetchFn });
   assert.strictEqual(result.ok, false);
   assert.ok(result.error);
+  assert.strictEqual(result.notFound, undefined, "a plain 500 must never be reported as notFound");
 });
 
 test("insertCalendarEvent: a network failure is reported as an error, never throws", async () => {
   const fetchFn = async () => { throw new Error("network down"); };
-  const result = await insertCalendarEvent({ accessToken: "t", event: { id: "det-id-4" }, fetchFn });
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: "primary", event: { id: "det-id-4" }, fetchFn });
   assert.strictEqual(result.ok, false);
 });
 
 test("insertCalendarEvent: never logs/returns the raw Google response body verbatim on failure", async () => {
   const secretDetail = "SUPER_SENSITIVE_EVENT_DESCRIPTION_TEXT";
   const fetchFn = async () => ({ ok: false, status: 400, json: async () => ({ error: { message: "bad request", details: secretDetail } }) });
-  const result = await insertCalendarEvent({ accessToken: "t", event: { id: "det-id-5" }, fetchFn });
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: "primary", event: { id: "det-id-5" }, fetchFn });
   assert.ok(!result.error.includes(secretDetail), "the raw response body's content must never be echoed back in the error string");
+});
+
+// ============ insertCalendarEvent — calendarId routing (Slice C.1C) ============
+test("insertCalendarEvent: a group calendar id is used verbatim (URL-encoded) as the destination, not hardcoded to primary", async () => {
+  const fetchFn = async (url) => {
+    assert.strictEqual(url, `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent("hayden-cal@group.calendar.google.com")}/events`);
+    return { ok: true, status: 200, json: async () => ({ id: "det-id-6" }) };
+  };
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: "hayden-cal@group.calendar.google.com", event: { id: "det-id-6" }, fetchFn });
+  assert.strictEqual(result.ok, true);
+});
+
+test("insertCalendarEvent: URL-encodes a calendarId containing '@' and other special characters", async () => {
+  const weirdCalendarId = "some+weird id@group.calendar.google.com";
+  const fetchFn = async (url) => {
+    assert.ok(url.includes(encodeURIComponent(weirdCalendarId)), "the calendarId must be percent-encoded into the URL path");
+    assert.ok(!url.includes(" "), "a raw space must never appear unescaped in the URL");
+    return { ok: true, status: 200, json: async () => ({ id: "det-id-7" }) };
+  };
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: weirdCalendarId, event: { id: "det-id-7" }, fetchFn });
+  assert.strictEqual(result.ok, true);
+});
+
+test("insertCalendarEvent: a 404 (calendar not found) is reported as notFound: true, distinct from a generic error", async () => {
+  const fetchFn = async () => ({ ok: false, status: 404, json: async () => ({ error: { message: "Not Found" } }) });
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: "deleted-calendar@group.calendar.google.com", event: { id: "det-id-8" }, fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.notFound, true);
+});
+
+// ---- 403 classification (post-approval correction: a bare 403 status is
+// NOT sufficient on its own — Google uses 403 for quota/rate/usage-limit
+// conditions too, which must never be misreported as a stale route) ----
+test("insertCalendarEvent: a 403 with reason 'forbidden' (insufficient write access) is reported as notFound: true", async () => {
+  const fetchFn = async () => ({
+    ok: false,
+    status: 403,
+    json: async () => ({ error: { code: 403, message: "Forbidden", errors: [{ domain: "calendar", reason: "forbidden", message: "Forbidden" }] } }),
+  });
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: "no-access-calendar@group.calendar.google.com", event: { id: "det-id-9" }, fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.notFound, true);
+});
+
+test("insertCalendarEvent: a 403 with reason 'userRateLimitExceeded' is a generic failure, NOT notFound", async () => {
+  const fetchFn = async () => ({
+    ok: false,
+    status: 403,
+    json: async () => ({ error: { code: 403, message: "User Rate Limit Exceeded", errors: [{ domain: "usageLimits", reason: "userRateLimitExceeded", message: "User Rate Limit Exceeded" }] } }),
+  });
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: "hayden@group.calendar.google.com", event: { id: "det-id-11" }, fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.notFound, undefined, "a rate-limit 403 must never be misreported as a stale/invalid route");
+  assert.ok(result.error);
+});
+
+test("insertCalendarEvent: a 403 with reason 'rateLimitExceeded' is a generic failure, NOT notFound", async () => {
+  const fetchFn = async () => ({
+    ok: false,
+    status: 403,
+    json: async () => ({ error: { code: 403, message: "Rate Limit Exceeded", errors: [{ domain: "usageLimits", reason: "rateLimitExceeded", message: "Rate Limit Exceeded" }] } }),
+  });
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: "hayden@group.calendar.google.com", event: { id: "det-id-12" }, fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.notFound, undefined);
+  assert.ok(result.error);
+});
+
+test("insertCalendarEvent: a 403 with reason 'quotaExceeded' is a generic failure, NOT notFound", async () => {
+  const fetchFn = async () => ({
+    ok: false,
+    status: 403,
+    json: async () => ({ error: { code: 403, message: "Quota Exceeded", errors: [{ domain: "usageLimits", reason: "quotaExceeded", message: "Quota Exceeded" }] } }),
+  });
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: "hayden@group.calendar.google.com", event: { id: "det-id-13" }, fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.notFound, undefined);
+  assert.ok(result.error);
+});
+
+test("insertCalendarEvent: a 403 with no parseable/matching reason at all is NOT notFound (status alone is not evidence)", async () => {
+  const fetchFn = async () => ({ ok: false, status: 403, json: async () => ({ error: { message: "Forbidden" } }) });
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: "some-calendar@group.calendar.google.com", event: { id: "det-id-14" }, fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.notFound, undefined);
+  assert.ok(result.error);
+});
+
+test("insertCalendarEvent: a 500 remains a generic failure, not notFound", async () => {
+  const fetchFn = async () => ({ ok: false, status: 500, json: async () => ({ error: { message: "Internal error" } }) });
+  const result = await insertCalendarEvent({ accessToken: "t", calendarId: "hayden@group.calendar.google.com", event: { id: "det-id-15" }, fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.notFound, undefined);
+});
+
+test("insertCalendarEvent: the event payload itself is completely unaffected by which calendarId is targeted", async () => {
+  const event = { id: "det-id-10", summary: "Spring Concert", start: { date: "2026-10-01" }, end: { date: "2026-10-02" } };
+  let sentBody = null;
+  const fetchFn = async (url, options) => { sentBody = JSON.parse(options.body); return { ok: true, status: 200, json: async () => ({ id: event.id }) }; };
+  await insertCalendarEvent({ accessToken: "t", calendarId: "family@group.calendar.google.com", event, fetchFn });
+  assert.deepStrictEqual(sentBody, event);
 });
 
 // ============ listCalendars (Slice C.1A) ============

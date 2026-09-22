@@ -111,7 +111,10 @@ function setupMocks(t, { gmailConn = null, calendarConn = null, authenticated = 
     },
   });
   t.mock.module("../api/_householdProfileStore.js", {
-    namedExports: { getHouseholdTimezone: async () => null },
+    namedExports: {
+      getHouseholdTimezone: async () => null,
+      getGoogleCalendarRouting: async () => ({ defaultCalendarId: null, childCalendarIds: {} }),
+    },
   });
   t.mock.module("../api/_itemsStore.js", {
     namedExports: {
