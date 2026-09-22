@@ -29,21 +29,24 @@ import { buildSourceContext } from "./sourceContext.js";
  * `child` for what ItemForm offers; candidateToDraftItem.js still decides
  * the actual prefill from each candidate's own configured target.
  *
- * Four distinct exit actions (Review Inbox slice, product correction):
+ * Four distinct exit actions (Review Inbox slice; "×" corrected again —
+ * Review Inbox is durable, so closing is never destructive):
  *   "Approve & Add"  -> approve/commit (handleApprove, unchanged).
  *   "Reject" (ItemForm's Cancel button, relabeled) -> reject
- *     (reviewStatus: "rejected") via handleReject.
+ *     (reviewStatus: "rejected") via handleReject — the ONLY action that
+ *     ever writes "rejected". Explicit and permanent: the candidate
+ *     disappears from the Review Inbox and its count decrements.
  *   "Review later"   -> onClose, writes nothing (the candidate is already
- *     "pending" by construction) — the modal just closes.
- *   "×"              -> does NOT reject immediately (a second product
- *     correction after the first one over-corrected this). It opens a
- *     small, local "Discard this suggestion?" confirmation
- *     (confirmingDiscard state below) with "Keep reviewing" (dismisses
- *     the confirmation only, changes nothing) and "Discard" (calls the
- *     SAME handleReject "Reject" already uses — never a second copy of
- *     that write, never a new lifecycle status). This is the one place a
- *     confirmation step exists in this component; it is not a reusable
- *     dialog component, just a local render branch.
+ *     "pending" by construction) — the modal just closes, candidate stays
+ *     pending and visible in the Review Inbox, count unchanged.
+ *   "×"              -> identical to "Review later": onClose, writes
+ *     nothing, no confirmation. A parent with several pending candidates
+ *     needs to be able to close this modal to reach Parent Tools or
+ *     anywhere else without it being treated as a decision about the
+ *     candidate on screen. (Earlier revisions had "×" open a "Discard
+ *     this suggestion?" confirmation defaulting toward reject-like
+ *     behavior — removed; that treated a routine close as potentially
+ *     destructive, which is wrong now that Review Inbox is durable.)
  *
  * Recovery mode (Slice 2) — a candidate reopened here whose reviewStatus is
  * already "approved" (never written by a fresh approval anymore, see
@@ -58,8 +61,9 @@ import { buildSourceContext } from "./sourceContext.js";
  *     nothing written yet") is false for a candidate already past pending —
  *     leaving it at "approved" is not a safe no-op the way it is from
  *     "pending".
- *   - "×" simply closes (onClose) with no confirmation — there is nothing
- *     to discard; the candidate's own status is left exactly as it was.
+ *   - "×" simply closes (onClose), same as every other mode — there is
+ *     nothing to discard; the candidate's own status is left exactly as it
+ *     was, remaining recoverable/visible in its own inbox.
  *   - The submit button ("Finish Adding") calls the exact same
  *     handleApprove -> commitCandidateToItem used by a normal approval;
  *     commitCandidateToItem's own idempotent-recovery logic (existing Item
@@ -72,18 +76,9 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
   const [queue, setQueue] = useState(candidates);
   const [error, setError] = useState("");
   const [sourceContext, setSourceContext] = useState(null);
-  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
   const current = queue[0];
   const resolvedCount = candidates.length - queue.length;
-
-  // Reset the confirmation whenever the candidate on screen changes (e.g.
-  // advancing to the next item in a multi-candidate batch after a
-  // Reject/Discard/Approve) — a confirmation about candidate A must never
-  // linger onto candidate B.
-  useEffect(() => {
-    setConfirmingDiscard(false);
-  }, [current?.id]);
 
   // Compact "Source" context (#26, Commit 5 live-validation fix) — reads
   // persisted SourceRecord provenance, not the transient Check Email
@@ -147,37 +142,6 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
     advance();
   };
 
-  // Small, local confirmation — deliberately not a reusable dialog
-  // component or a second copy of the reject write. "Keep reviewing"
-  // touches only this component's own confirmingDiscard state; "Discard"
-  // calls the exact same handleReject the "Reject" button already uses.
-  if (confirmingDiscard) {
-    return (
-      <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-        <div className="bg-white rounded-3xl shadow-xl p-6 w-full max-w-sm">
-          <h3 className="text-lg font-extrabold text-gray-900 mb-1">Discard this suggestion?</h3>
-          <p className="text-sm text-gray-600 mb-4">It won't appear in your Review Inbox.</p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setConfirmingDiscard(false)}
-              className="flex-1 px-4 py-2 rounded-2xl font-extrabold text-gray-500 border border-gray-300"
-            >
-              Keep reviewing
-            </button>
-            <button
-              type="button"
-              onClick={handleReject}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white font-extrabold py-2 rounded-2xl"
-            >
-              Discard
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-3xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
@@ -186,19 +150,14 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
             {isRecovery ? "Needs attention" : familyChildren ? "Review email import" : "Review photo import"}
             {candidates.length > 1 ? ` (${resolvedCount + 1} of ${candidates.length})` : ""}
           </h2>
-          {/* Recovery mode (Slice 2): "×" is a plain close, no confirmation
-              — there is nothing to discard, and the candidate's own status
-              is left exactly as it was. Normal mode (Review Inbox slice,
-              second product correction): "×" no longer rejects immediately
-              — it opens the local "Discard this suggestion?" confirmation
-              above. Nothing is written until the parent explicitly picks
-              Discard there (which reuses handleReject, the exact same
-              write "Reject" below performs). A parent who wants to defer
-              without deciding uses "Review later" instead (see its own
-              comment). */}
+          {/* "×" always just closes — no confirmation, no write. Identical
+              to "Review later": the candidate (in either mode) is left
+              exactly as it was, still visible/recoverable in its own
+              inbox. See the module doc comment above for why this is no
+              longer treated as a potentially-destructive action. */}
           <button
             type="button"
-            onClick={isRecovery ? onClose : () => setConfirmingDiscard(true)}
+            onClick={onClose}
             aria-label="Close"
             className="text-gray-400 hover:text-gray-700 text-2xl leading-none px-2"
           >

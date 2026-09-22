@@ -5,15 +5,18 @@
  * wiring (single subscription driving both the Parent Tools badge and the
  * inbox list, plus the reopened CandidateReviewModal + auto-close).
  *
- * Includes two post-launch product corrections to CandidateReviewModal.jsx's
+ * Includes three post-launch product corrections to CandidateReviewModal.jsx's
  * exit actions. First correction: the explicit, distinctly-labeled "Review
  * later" action is what leaves a candidate pending and visible in the
  * inbox — "×" no longer implicitly means that. Second correction
- * (superseding the first correction's own "×" behavior): "×" does NOT
- * reject immediately — it opens a small local "Discard this suggestion?"
- * confirmation; only its "Discard" button actually rejects (reusing the
- * exact same handleReject "Reject" already calls); "Keep reviewing" leaves
- * the candidate pending and reopens the same modal.
+ * (superseding the first correction's own "×" behavior): "×" opened a
+ * small local "Discard this suggestion?" confirmation defaulting toward a
+ * reject-like decision. Third correction (superseding the second): Review
+ * Inbox is durable, so closing the modal is never destructive — "×" is
+ * back to a plain, immediate close with NO confirmation, behaving exactly
+ * like "Review later" (leaves the candidate pending, still visible in the
+ * inbox, count unchanged). Only the explicit "Reject" button ever writes
+ * reviewStatus:"rejected".
  *
  * Also covers Slice 2 (Candidate-to-Item Idempotency + Recovery): a
  * candidate stranded at reviewStatus:"approved" (impossible for a FRESH
@@ -21,8 +24,8 @@
  * reachable by a legacy candidate from before Slice 2) now appears in the
  * inbox tagged "Needs attention" instead of being invisible, and reopening
  * it renders CandidateReviewModal's restricted recovery UI (no Reject, no
- * Review later, "×" closes with no confirmation, submit reads "Finish
- * Adding") rather than the normal four-action review UI.
+ * Review later, "×" closes immediately, submit reads "Finish Adding")
+ * rather than the normal four-action review UI.
  *
  * Exercises the guest/local-demo storage path (localStorage-backed), same
  * as every other *.playwright.cjs file in this suite. Real photo/email
@@ -136,7 +139,7 @@ function candidate(overrides) {
   ok('Persisted pending candidate (legacy, no target) appears', await visible('Field Trip Form'));
   ok('Persisted pending candidate (family-targeted) appears', await visible('Back to School Night'));
   ok('Persisted pending candidate (missing SourceRecord) appears', await visible('Book Report'));
-  ok('Persisted pending candidate (for the ×-reject check below) appears', await visible('Permission Slip'));
+  ok('Persisted pending candidate (for the "×" close-behavior check below) appears', await visible('Permission Slip'));
   ok('Each pending candidate appears exactly once', (await page.getByText('Spelling Test').count()) === 1);
   ok('Inbox subtext shows the correct pending+needs-attention count', await visible('6 items awaiting review'));
 
@@ -194,36 +197,19 @@ function candidate(overrides) {
   await page.waitForSelector('text=Review Inbox');
   ok('A "Review later"-deferred candidate survives navigating away (Family Board) and back', await visible('Spelling Test'));
 
-  // ============ "×" opens a discard confirmation; it does NOT reject by itself ============
+  // ============ "×" closes immediately — same as "Review later", no confirmation (Review Inbox is durable) ============
   const xRejectRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Permission Slip' });
   await xRejectRow.getByText('Review', { exact: true }).click();
+  ok('CandidateReviewModal reopens for "Permission Slip"', await page.locator('form').getByPlaceholder('Title').inputValue().then((v) => v === 'Permission Slip'));
   await page.locator('button[aria-label="Close"]').click();
   await page.waitForTimeout(150);
 
-  ok('Clicking "×" alone shows the "Discard this suggestion?" confirmation', await visible('Discard this suggestion?'));
-  ok('The confirmation explains the consequence ("It won\'t appear in your Review Inbox.")', await visible("It won't appear in your Review Inbox."));
+  ok('Clicking "×" no longer opens a "Discard this suggestion?" confirmation', !(await visible('Discard this suggestion?')));
+  ok('Clicking "×" closes the modal immediately (no lingering form)', !(await page.locator('form').isVisible().catch(() => false)));
   stored = await readCandidates();
-  ok('Clicking "×" alone does NOT change reviewStatus (still "pending")', stored.find((c) => c.id === 'cand-x-reject')?.reviewStatus === 'pending');
-  ok('The candidate is still in the pending inbox while the confirmation is open (nothing written yet)', stored.filter((c) => c.reviewStatus === 'pending').some((c) => c.id === 'cand-x-reject'));
-
-  // ---- "Keep reviewing" leaves it pending and reopens the same modal ----
-  await page.getByRole('button', { name: 'Keep reviewing' }).click();
-  await page.waitForTimeout(150);
-  ok('"Keep reviewing" dismisses the confirmation and leaves CandidateReviewModal open', await page.locator('form').isVisible());
-  ok('"Keep reviewing" changes nothing — the same candidate\'s title is still shown in the reopened form', await page.locator('form').getByPlaceholder('Title').inputValue().then((v) => v === 'Permission Slip'));
-  stored = await readCandidates();
-  ok('"Keep reviewing" does not change reviewStatus (still "pending")', stored.find((c) => c.id === 'cand-x-reject')?.reviewStatus === 'pending');
-
-  // ---- Clicking "×" again, then "Discard", actually rejects ----
-  await page.locator('button[aria-label="Close"]').click();
-  await page.waitForTimeout(150);
-  ok('Clicking "×" a second time reopens the same confirmation', await visible('Discard this suggestion?'));
-  await page.getByRole('button', { name: 'Discard' }).click();
-  await page.waitForTimeout(300);
-
-  ok('"Discard" removes the candidate from the pending inbox', !(await visible('Permission Slip')));
-  stored = await readCandidates();
-  ok('"Discard" rejects the candidate (reviewStatus becomes "rejected") — reuses the existing reject path, not a new status', stored.find((c) => c.id === 'cand-x-reject')?.reviewStatus === 'rejected');
+  ok('Clicking "×" does NOT change reviewStatus (still "pending")', stored.find((c) => c.id === 'cand-x-reject')?.reviewStatus === 'pending');
+  ok('The candidate remains visible in the Review Inbox after "×"', await visible('Permission Slip'));
+  ok('The Parent Tools badge/count is unchanged after "×" (still 6 — same persisted behavior as "Review later")', await parentToolsButton.getByText('6', { exact: true }).isVisible().catch(() => false));
 
   // ============ 13. Missing SourceRecord remains reviewable ============
   const missingRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Book Report' });
