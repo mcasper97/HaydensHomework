@@ -60,10 +60,11 @@ export async function disconnectCalendar() {
 
 /**
  * getCalendarList() -> [{ id, summary, primary, accessRole }, ...]
- * Slice C.1A — server-side Calendar List support, exposed here for the
- * temporary "Test Calendar List" Parent Tools validation control (see
- * AuthShell.jsx) ahead of C.1B's real routing-configuration UI, which
- * will call this same function. Throws on failure — a
+ * Slice C.1A server-side Calendar List support; consumed by Slice C.1B's
+ * GoogleCalendarRoutingPanel (AuthShell.jsx) to populate its calendar
+ * selectors. (Slice C.1A's own temporary "Test Calendar List" live-
+ * validation control that first exercised this function has been removed
+ * now that the real routing UI supersedes it.) Throws on failure — a
  * CALENDAR_LIST_SCOPE_MISSING code (see api/calendar.js's own doc
  * comment) arrives as `err.code`, exactly like every other authedFetch
  * caller's error-code handling here; the caller decides how to display
