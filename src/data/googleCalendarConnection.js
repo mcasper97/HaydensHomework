@@ -1,15 +1,21 @@
 /* ============================== Google Calendar connection (client) ==============================
  * Slice B — mirrors src/data/gmailConnection.js's exact pattern. Thin
- * client wrapper around the Calendar-connection API endpoints
- * (api/calendar-oauth-start.js, api/calendar-status.js,
- * api/calendar-disconnect.js). The client never talks to Google directly
- * for any of this — every call goes through our own server, which is the
- * only thing that ever holds the OAuth credential (see
- * api/_googleCalendarConnectionsStore.js).
+ * client wrapper around the Calendar API. The client never talks to
+ * Google directly for any of this — every call goes through our own
+ * server, which is the only thing that ever holds the OAuth credential
+ * (see api/_googleCalendarConnectionsStore.js).
+ *
+ * Post-Slice-C.1A infrastructure change: every action below now goes
+ * through the single consolidated api/calendar.js action router
+ * (?action=status|list|oauth-start|disconnect|publish) instead of five
+ * separate serverless functions — a route-shape change only, to stay
+ * under Vercel's Hobby-plan function-count limit. Every return shape
+ * below is unchanged. api/calendar-oauth-callback.js (Google's own
+ * browser-redirect target) is untouched and not called from here at all.
  *
  * Slice C adds publishItemToGoogleCalendar — still no Calendar event data
  * or token of any kind is ever visible client-side; this only calls
- * api/calendar-publish.js and returns its browser-safe result.
+ * api/calendar.js?action=publish and returns its browser-safe result.
  */
 import { auth } from "../Firebase.js";
 
@@ -34,7 +40,7 @@ async function authedFetch(path, options = {}) {
 }
 
 export async function getCalendarStatus() {
-  const data = await authedFetch("/api/calendar-status", { method: "GET" });
+  const data = await authedFetch("/api/calendar?action=status", { method: "GET" });
   return {
     connected: !!data.connected,
     needsReconnect: !!data.needsReconnect,
@@ -44,12 +50,12 @@ export async function getCalendarStatus() {
 
 /** Starts the Calendar OAuth flow and navigates the browser to Google's consent screen. */
 export async function startCalendarOAuth() {
-  const data = await authedFetch("/api/calendar-oauth-start", { method: "POST" });
+  const data = await authedFetch("/api/calendar?action=oauth-start", { method: "POST" });
   window.location.href = data.authUrl;
 }
 
 export async function disconnectCalendar() {
-  await authedFetch("/api/calendar-disconnect", { method: "POST" });
+  await authedFetch("/api/calendar?action=disconnect", { method: "POST" });
 }
 
 /**
@@ -61,7 +67,7 @@ export async function disconnectCalendar() {
  * this is ever collected.
  */
 export async function publishItemToGoogleCalendar(itemId, { optionalEndTime } = {}) {
-  const data = await authedFetch("/api/calendar-publish", {
+  const data = await authedFetch("/api/calendar?action=publish", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ itemId, ...(optionalEndTime ? { optionalEndTime } : {}) }),

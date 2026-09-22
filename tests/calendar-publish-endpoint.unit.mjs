@@ -1,18 +1,23 @@
 /**
- * Focused unit tests for Slice C's actual serverless endpoint handler —
- * api/calendar-publish.js. Imports and CALLS the real, unmodified handler
- * (never a reimplemented/mirrored copy of its orchestration logic),
- * mirroring tests/calendar-connection-endpoints.unit.mjs's own
- * established mocking strategy from Slice B: each of the handler's
- * dependency modules (_auth.js, _googleCalendarConnectionsStore.js,
- * _householdProfileStore.js, _itemsStore.js, _googleCalendarClient.js)
- * is mocked directly per test via t.mock.module, so each test's
- * freshImport of the handler resolves cleanly regardless of any earlier
- * cached instance from another test. src/organizer/calendarEventMapping.js
- * is NOT mocked — it's pure, dependency-free, and already covered in
- * detail by tests/calendar-event-mapping.unit.mjs, so it runs for real
- * here too, proving the endpoint is actually wired to the real mapping
- * logic (not a duplicated copy of its validation rules).
+ * Focused unit tests for the "publish" action of the consolidated
+ * api/calendar.js action router (formerly api/calendar-publish.js, its
+ * own separate serverless function — folded in as part of the
+ * post-Slice-C.1A Vercel-function-count consolidation). Imports and
+ * CALLS the real, unmodified handler (never a reimplemented/mirrored
+ * copy of its orchestration logic), mirroring
+ * tests/calendar-connection-endpoints.unit.mjs's own established mocking
+ * strategy: each of calendar.js's SEVEN dependency modules is mocked
+ * directly per test via t.mock.module — all seven, every time, not just
+ * the ones "publish" itself touches, because calendar.js is now one file
+ * with one static import graph regardless of which action a request
+ * dispatches to, and ES module linking is static (importing a name that
+ * doesn't exist on a mocked module throws at import time). See
+ * calendar-connection-endpoints.unit.mjs's own doc comment for the full
+ * explanation. src/organizer/calendarEventMapping.js is NOT mocked —
+ * it's pure, dependency-free, and already covered in detail by
+ * tests/calendar-event-mapping.unit.mjs, so it runs for real here too,
+ * proving the endpoint is actually wired to the real mapping logic (not
+ * a duplicated copy of its validation rules).
  *
  * REQUIRES Node's experimental module-mocking support. Run with:
  *   node --experimental-test-module-mocks tests/calendar-publish-endpoint.unit.mjs
@@ -27,7 +32,7 @@ function freshImport(specifier) {
 }
 
 function fakeReqRes(body) {
-  const req = { method: "POST", headers: { authorization: "Bearer fake-token" }, body };
+  const req = { method: "POST", headers: { authorization: "Bearer fake-token" }, query: { action: "publish" }, body };
   const state = { statusCode: null, body: null };
   const res = {
     status(code) { state.statusCode = code; return this; },
@@ -37,10 +42,11 @@ function fakeReqRes(body) {
 }
 
 /**
- * Registers fresh, per-test mocks for every dependency api/calendar-publish.js
- * imports. Returns `calls`, a record of what the (real) handler actually
- * did with its (mocked) dependencies, so tests can assert on behavior
- * rather than on implementation details.
+ * Registers fresh, per-test mocks for every dependency api/calendar.js
+ * imports (all seven — see the module doc comment above). Returns
+ * `calls`, a record of what the (real) handler actually did with its
+ * (mocked) dependencies, so tests can assert on behavior rather than on
+ * implementation details.
  */
 function setupMocks(t, {
   authenticated = true,
@@ -62,9 +68,27 @@ function setupMocks(t, {
       checkRateLimit: () => true,
     },
   });
+  t.mock.module("../api/_googleOAuth.js", {
+    namedExports: {
+      revokeToken: async () => true,
+      generateState: () => "unused-state",
+      generatePkcePair: () => ({ codeVerifier: "unused-verifier", codeChallenge: "unused-challenge" }),
+      buildAuthorizationUrl: () => "https://accounts.google.com/unused",
+      getOAuthConfig: () => ({ clientId: "unused", clientSecret: "unused", redirectUri: "unused" }),
+      CALENDAR_SCOPES: ["https://www.googleapis.com/auth/calendar.events"],
+    },
+  });
   t.mock.module("../api/_googleCalendarConnectionsStore.js", {
     namedExports: {
       getGoogleCalendarConnection: async () => connection,
+      deleteGoogleCalendarConnection: async () => {},
+      sanitizeGoogleCalendarConnectionForClient: () => ({ connected: false, needsReconnect: false, connectedAt: null }),
+      createOAuthState: async () => {},
+    },
+  });
+  t.mock.module("../api/_gmailConnectionsStore.js", {
+    namedExports: {
+      getGmailConnection: async () => null,
     },
   });
   t.mock.module("../api/_householdProfileStore.js", {
@@ -86,6 +110,7 @@ function setupMocks(t, {
       deriveGoogleEventId: (itemId) => `derived-${itemId}`,
       refreshCalendarAccessToken: async (uid, conn) => { calls.refreshCalendarAccessToken.push({ uid, conn }); return refreshResult; },
       insertCalendarEvent: async (args) => { calls.insertCalendarEvent.push(args); return insertResult; },
+      listCalendars: async () => ({ ok: true, calendars: [] }),
     },
   });
 
@@ -110,7 +135,7 @@ const BASE_ITEM = {
 
 test("SECURITY: requires Firebase authentication", async (t) => {
   setupMocks(t, { authenticated: false });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(state.statusCode, 401);
@@ -118,7 +143,7 @@ test("SECURITY: requires Firebase authentication", async (t) => {
 
 test("SERVER: not connected returns a clear NOT_CONNECTED error, no Item read attempted", async (t) => {
   const calls = setupMocks(t, { connection: null });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(state.body.ok, false);
@@ -128,7 +153,7 @@ test("SERVER: not connected returns a clear NOT_CONNECTED error, no Item read at
 
 test("SERVER: needsReconnect connection is handled — clear result, no Google insert attempted", async (t) => {
   const calls = setupMocks(t, { connection: { refreshToken: "cal-rt", needsReconnect: true } });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(state.body.ok, false);
@@ -138,7 +163,7 @@ test("SERVER: needsReconnect connection is handled — clear result, no Google i
 
 test("SERVER: item not found returns 404", async (t) => {
   setupMocks(t, { item: null });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "does-not-exist" });
   await handler(req, res);
   assert.strictEqual(state.statusCode, 404);
@@ -147,7 +172,7 @@ test("SERVER: item not found returns 404", async (t) => {
 
 test("SERVER: correct household Item is loaded (uid from the verified token, itemId from the request)", async (t) => {
   const calls = setupMocks(t, { item: { ...BASE_ITEM } });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(calls.getItem.length, 1);
@@ -157,7 +182,7 @@ test("SERVER: correct household Item is loaded (uid from the verified token, ite
 
 test("IDEMPOTENCY: an already-published Item returns alreadyPublished, never calls insert again", async (t) => {
   const calls = setupMocks(t, { item: { ...BASE_ITEM, googleCalendarEventId: "already-there", googleCalendarSyncedAt: "2026-01-01T00:00:00.000Z" } });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(state.body.ok, true);
@@ -168,7 +193,7 @@ test("IDEMPOTENCY: an already-published Item returns alreadyPublished, never cal
 
 test("SERVER: successful publish (all-day item) writes all four Item Calendar fields", async (t) => {
   const calls = setupMocks(t, { item: { ...BASE_ITEM } });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
 
@@ -185,7 +210,7 @@ test("SERVER: successful publish (all-day item) writes all four Item Calendar fi
 
 test("SECURITY: no response body ever contains a token field, on any path", async (t) => {
   setupMocks(t, { item: { ...BASE_ITEM } });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   const serialized = JSON.stringify(state.body);
@@ -196,7 +221,7 @@ test("SECURITY: no response body ever contains a token field, on any path", asyn
 
 test("SERVER: a failed Google insert does NOT write any linkage, Item stays untouched", async (t) => {
   const calls = setupMocks(t, { item: { ...BASE_ITEM }, insertResult: { ok: false, error: "Google Calendar could not create this event (status 500)." } });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(state.body.ok, false);
@@ -205,7 +230,7 @@ test("SERVER: a failed Google insert does NOT write any linkage, Item stays unto
 
 test("RECONNECT: invalid_grant during token refresh returns needsReconnect, never attempts insert", async (t) => {
   const calls = setupMocks(t, { item: { ...BASE_ITEM }, refreshResult: { ok: false, needsReconnect: true } });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(state.body.ok, false);
@@ -216,7 +241,7 @@ test("RECONNECT: invalid_grant during token refresh returns needsReconnect, neve
 
 test("MAPPING (via the real, unmocked calendarEventMapping.js): a recurring item is rejected with RECURRING_NOT_SUPPORTED, no Google call attempted", async (t) => {
   const calls = setupMocks(t, { item: { ...BASE_ITEM, schedule: { recurring: true, weekdays: [1] } } });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(state.body.ok, false);
@@ -226,7 +251,7 @@ test("MAPPING (via the real, unmocked calendarEventMapping.js): a recurring item
 
 test("MAPPING: an unsupported type (chore) is rejected with UNSUPPORTED_TYPE", async (t) => {
   setupMocks(t, { item: { ...BASE_ITEM, type: "chore" } });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(state.body.code, "UNSUPPORTED_TYPE");
@@ -234,7 +259,7 @@ test("MAPPING: an unsupported type (chore) is rejected with UNSUPPORTED_TYPE", a
 
 test("MAPPING: a timed item with no household timezone is blocked with MISSING_HOUSEHOLD_TIMEZONE", async (t) => {
   setupMocks(t, { item: { ...BASE_ITEM, allDay: false, startTime: "17:00", endTime: "20:00" }, householdTimezone: null });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(state.body.code, "MISSING_HOUSEHOLD_TIMEZONE");
@@ -242,7 +267,7 @@ test("MAPPING: a timed item with no household timezone is blocked with MISSING_H
 
 test("MAPPING: a startTime-only item with no optionalEndTime is blocked with MISSING_END_TIME", async (t) => {
   setupMocks(t, { item: { ...BASE_ITEM, allDay: false, startTime: "17:00", endTime: null }, householdTimezone: "America/New_York" });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
   assert.strictEqual(state.body.code, "MISSING_END_TIME");
@@ -250,7 +275,7 @@ test("MAPPING: a startTime-only item with no optionalEndTime is blocked with MIS
 
 test("SERVER: a supplied optionalEndTime successfully publishes a start-only timed item", async (t) => {
   const calls = setupMocks(t, { item: { ...BASE_ITEM, allDay: false, startTime: "17:00", endTime: null }, householdTimezone: "America/New_York" });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1", optionalEndTime: "18:00" });
   await handler(req, res);
   assert.strictEqual(state.body.ok, true);
@@ -263,7 +288,7 @@ test("MAPPING (via the real, unmocked calendarEventMapping.js): an assignment wi
     item: { ...BASE_ITEM, id: "item-2", type: "assignment", allDay: true, startDate: null, dueDate: "2026-10-08", dueTime: "15:00" },
     householdTimezone: null, // due-based items never need one — proves it's never required
   });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-2" });
   await handler(req, res);
 
@@ -278,7 +303,7 @@ test("MAPPING (via the real, unmocked calendarEventMapping.js): an assignment wi
 
 test("MAPPING: an assignment with dueTime never triggers MISSING_END_TIME even without an optionalEndTime supplied", async (t) => {
   setupMocks(t, { item: { ...BASE_ITEM, id: "item-3", type: "assignment", allDay: true, startDate: null, dueDate: "2026-10-08", dueTime: "15:00" } });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-3" }); // no optionalEndTime in the request body
   await handler(req, res);
   assert.strictEqual(state.body.ok, true);
@@ -289,7 +314,7 @@ test("MAPPING: an assignment with dueTime never leaks internal/provenance metada
   const calls = setupMocks(t, {
     item: { ...BASE_ITEM, id: "item-4", type: "assignment", allDay: true, startDate: null, dueDate: "2026-10-08", dueTime: "15:00", notes: "Bring calculator." },
   });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res } = fakeReqRes({ itemId: "item-4" });
   await handler(req, res);
   const description = calls.insertCalendarEvent[0].event.description;
@@ -309,7 +334,7 @@ test("IDEMPOTENCY / RECOVERY: Google insert recognizes a prior success (409-dupl
     item: { ...BASE_ITEM }, // still unlinked — googleCalendarEventId: null
     insertResult: { ok: true, alreadyExisted: true, eventId: "derived-event-id" },
   });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
 
@@ -320,7 +345,7 @@ test("IDEMPOTENCY / RECOVERY: Google insert recognizes a prior success (409-dupl
 
 test("IDEMPOTENCY / RECOVERY: if the linkage write itself fails, the endpoint reports an error but the Google event already exists — a further retry (simulated separately above) recovers", async (t) => {
   const calls = setupMocks(t, { item: { ...BASE_ITEM }, linkageWriteError: new Error("simulated Firestore write failure") });
-  const handler = (await freshImport("../api/calendar-publish.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
   const { req, res, state } = fakeReqRes({ itemId: "item-1" });
   await handler(req, res);
 

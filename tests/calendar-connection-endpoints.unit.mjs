@@ -1,29 +1,38 @@
 /**
- * Focused unit tests for Slice B's actual serverless endpoint handlers —
- * api/calendar-status.js, api/calendar-disconnect.js, and the symmetric
- * conditional-revoke fix in api/gmail-disconnect.js. These import and
- * CALL the real, unmodified handler functions (never a reimplemented/
- * mirrored copy of their orchestration logic) — the exact production
- * conditional-revoke decision under test.
+ * Focused unit tests for the "status" and "disconnect" actions of the
+ * consolidated api/calendar.js action router, plus the symmetric
+ * conditional-revoke fix in api/gmail-disconnect.js (untouched by the
+ * consolidation — still its own separate file/function). These import and
+ * CALL the real, unmodified handler (never a reimplemented/mirrored copy
+ * of its orchestration logic) — the exact production conditional-revoke
+ * decision under test.
  *
- * Mocking strategy note: each handler's own connection-store dependency
- * (_googleCalendarConnectionsStore.js / _gmailConnectionsStore.js) is
- * mocked directly per test, rather than mocking the lower-level
- * firebase-admin/firestore package. Those store modules' OWN real
- * Firestore-reading logic is already fully covered, against a real fake
- * Firestore db, in tests/calendar-oauth.unit.mjs and
- * tests/gmail-oauth.unit.mjs — this file exists specifically to exercise
- * the DISCONNECT HANDLERS' conditional-revoke orchestration, which is
- * what's actually safety-critical here. Mocking one level lower
- * (firebase-admin/firestore) was tried first and found to bind stale
- * across tests once a store module had been evaluated once in this
- * process (an ES module's static import binds to whatever its dependency
- * resolved to at that module's own first evaluation, not per later
- * mock.module call) — mocking the store modules themselves side-steps
- * that entirely, since each test's freshImport of the HANDLER causes a
- * fresh resolution of its own static imports, which t.mock.module
- * correctly intercepts every time regardless of any earlier cached
- * (real) instance from another test.
+ * Post-consolidation note: api/calendar.js statically imports from SEVEN
+ * dependency modules (_auth.js, _googleCalendarConnectionsStore.js,
+ * _gmailConnectionsStore.js, _householdProfileStore.js, _itemsStore.js,
+ * _googleCalendarClient.js, _googleOAuth.js) regardless of which `action`
+ * a given request dispatches to, because it's all one file/module now.
+ * setupMocks below therefore mocks ALL seven, every time, providing every
+ * named export calendar.js actually imports from each — even the ones
+ * irrelevant to the status/disconnect scenarios this file exercises —
+ * because ES module linking is static: importing a name that doesn't
+ * exist on a mocked module throws at import time regardless of whether
+ * that name is ever called at runtime. calendarEventMapping.js is left
+ * REAL/unmocked throughout (pure, dependency-free, already covered
+ * separately — same principle as calendar-publish-endpoint.unit.mjs).
+ *
+ * Mocking strategy note (unchanged from before consolidation): each
+ * dependency is mocked directly per test, rather than mocking a
+ * lower-level shared package like firebase-admin/firestore — mocking a
+ * lower-level dependency was found earlier in this project to bind stale
+ * across tests once a module had been evaluated once in this process (an
+ * ES module's static import binds to whatever its dependency resolved to
+ * at that module's own first evaluation, not per later mock.module call).
+ * Mocking each of calendar.js's OWN direct dependencies side-steps that
+ * entirely, since each test's freshImport of calendar.js causes a fresh
+ * resolution of its own static imports, which t.mock.module correctly
+ * intercepts every time regardless of any earlier cached (real) instance
+ * from another test.
  *
  * REQUIRES Node's experimental module-mocking support. Run with:
  *   node --experimental-test-module-mocks tests/calendar-connection-endpoints.unit.mjs
@@ -42,8 +51,8 @@ function sanitizeCalendar(data) {
   return { connected: true, needsReconnect: !!data.needsReconnect, connectedAt: data.connectedAt ?? null };
 }
 
-function fakeReqRes() {
-  const req = { method: "POST", headers: { authorization: "Bearer fake-token" } };
+function fakeReqRes({ method = "POST", query = {} } = {}) {
+  const req = { method, headers: { authorization: "Bearer fake-token" }, query };
   const state = { statusCode: null, body: null };
   const res = {
     status(code) { state.statusCode = code; return this; },
@@ -53,17 +62,20 @@ function fakeReqRes() {
 }
 
 /**
- * Registers fresh, per-test mocks for every dependency the endpoint
- * handlers under test import. `gmailConn`/`calendarConn` seed the
- * starting state (null = "not connected"); `authenticated: false` makes
- * requireFirebaseUser throw, exactly like a missing/invalid token would.
- * Returns mutable state so a test can assert what a handler actually did
- * (deleted the connection? called revoke, and with which token?).
+ * Registers fresh, per-test mocks for every dependency api/calendar.js
+ * imports (see the module doc comment above for why all seven are always
+ * provided). `gmailConn`/`calendarConn` seed the starting state (null =
+ * "not connected"); `authenticated: false` makes requireFirebaseUser
+ * throw, exactly like a missing/invalid token would. Returns mutable
+ * state so a test can assert what a handler actually did (deleted the
+ * connection? called revoke, and with which token? rate-limited which
+ * key?).
  */
-function setupMocks(t, { gmailConn = null, calendarConn = null, authenticated = true } = {}) {
+function setupMocks(t, { gmailConn = null, calendarConn = null, authenticated = true, rateLimited = false } = {}) {
   const revokeCalls = [];
   const gmailState = { conn: gmailConn };
   const calendarState = { conn: calendarConn };
+  const rateLimitCalls = [];
 
   t.mock.module("../api/_auth.js", {
     namedExports: {
@@ -71,12 +83,17 @@ function setupMocks(t, { gmailConn = null, calendarConn = null, authenticated = 
         if (!authenticated) throw new Error("no valid token");
         return { uid: "parent-uid-1" };
       },
-      checkRateLimit: () => true,
+      checkRateLimit: (key) => { rateLimitCalls.push(key); return !rateLimited; },
     },
   });
   t.mock.module("../api/_googleOAuth.js", {
     namedExports: {
       revokeToken: async (token) => { revokeCalls.push(token); return true; },
+      generateState: () => "unused-state",
+      generatePkcePair: () => ({ codeVerifier: "unused-verifier", codeChallenge: "unused-challenge" }),
+      buildAuthorizationUrl: () => "https://accounts.google.com/unused",
+      getOAuthConfig: () => ({ clientId: "unused", clientSecret: "unused", redirectUri: "unused" }),
+      CALENDAR_SCOPES: ["https://www.googleapis.com/auth/calendar.events"],
     },
   });
   t.mock.module("../api/_googleCalendarConnectionsStore.js", {
@@ -84,6 +101,7 @@ function setupMocks(t, { gmailConn = null, calendarConn = null, authenticated = 
       getGoogleCalendarConnection: async () => calendarState.conn,
       deleteGoogleCalendarConnection: async () => { calendarState.conn = null; },
       sanitizeGoogleCalendarConnectionForClient: sanitizeCalendar,
+      createOAuthState: async () => {},
     },
   });
   t.mock.module("../api/_gmailConnectionsStore.js", {
@@ -92,17 +110,33 @@ function setupMocks(t, { gmailConn = null, calendarConn = null, authenticated = 
       deleteGmailConnection: async () => { gmailState.conn = null; },
     },
   });
+  t.mock.module("../api/_householdProfileStore.js", {
+    namedExports: { getHouseholdTimezone: async () => null },
+  });
+  t.mock.module("../api/_itemsStore.js", {
+    namedExports: {
+      getItem: async () => null,
+      setItemGoogleCalendarFields: async () => {},
+    },
+  });
+  t.mock.module("../api/_googleCalendarClient.js", {
+    namedExports: {
+      deriveGoogleEventId: (itemId) => `derived-${itemId}`,
+      refreshCalendarAccessToken: async () => ({ ok: true, accessToken: "unused-at" }),
+      insertCalendarEvent: async () => ({ ok: true, alreadyExisted: false, eventId: "unused-event-id" }),
+      listCalendars: async () => ({ ok: true, calendars: [] }),
+    },
+  });
 
-  return { revokeCalls, gmailState, calendarState };
+  return { revokeCalls, gmailState, calendarState, rateLimitCalls };
 }
 
-// ============ calendar-status.js: security — token never leaks ============
-test("calendar-status: disconnected returns connected=false, no token field of any kind", async (t) => {
-  const { } = setupMocks(t, {});
-  const handler = (await freshImport("../api/calendar-status.js")).default;
+// ============ calendar.js?action=status: security — token never leaks ============
+test("calendar?action=status: disconnected returns connected=false, no token field of any kind", async (t) => {
+  setupMocks(t, {});
+  const handler = (await freshImport("../api/calendar.js")).default;
 
-  const { req, res, state } = fakeReqRes();
-  req.method = "GET";
+  const { req, res, state } = fakeReqRes({ method: "GET", query: { action: "status" } });
   await handler(req, res);
 
   assert.strictEqual(state.statusCode, 200);
@@ -112,12 +146,11 @@ test("calendar-status: disconnected returns connected=false, no token field of a
   assert.ok(!("accessToken" in state.body), "accessToken must never appear in the status response");
 });
 
-test("calendar-status: connected returns connected=true, refreshToken never returned", async (t) => {
+test("calendar?action=status: connected returns connected=true, refreshToken never returned", async (t) => {
   setupMocks(t, { calendarConn: { refreshToken: "super-secret-rt", needsReconnect: false, connectedAt: "2026-01-01T00:00:00.000Z" } });
-  const handler = (await freshImport("../api/calendar-status.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
 
-  const { req, res, state } = fakeReqRes();
-  req.method = "GET";
+  const { req, res, state } = fakeReqRes({ method: "GET", query: { action: "status" } });
   await handler(req, res);
 
   assert.strictEqual(state.body.connected, true);
@@ -125,39 +158,48 @@ test("calendar-status: connected returns connected=true, refreshToken never retu
   assert.ok(!JSON.stringify(state.body).includes("super-secret-rt"), "the raw token value must never appear anywhere in the response");
 });
 
-test("calendar-status: needsReconnect is surfaced correctly", async (t) => {
+test("calendar?action=status: needsReconnect is surfaced correctly", async (t) => {
   setupMocks(t, { calendarConn: { refreshToken: "rt", needsReconnect: true, connectedAt: "2026-01-01T00:00:00.000Z" } });
-  const handler = (await freshImport("../api/calendar-status.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
 
-  const { req, res, state } = fakeReqRes();
-  req.method = "GET";
+  const { req, res, state } = fakeReqRes({ method: "GET", query: { action: "status" } });
   await handler(req, res);
 
   assert.strictEqual(state.body.connected, true);
   assert.strictEqual(state.body.needsReconnect, true);
 });
 
-test("calendar-status: requires Firebase authentication", async (t) => {
+test("calendar?action=status: requires Firebase authentication", async (t) => {
   setupMocks(t, { authenticated: false });
-  const handler = (await freshImport("../api/calendar-status.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
 
-  const { req, res, state } = fakeReqRes();
-  req.method = "GET";
+  const { req, res, state } = fakeReqRes({ method: "GET", query: { action: "status" } });
   await handler(req, res);
 
   assert.strictEqual(state.statusCode, 401);
 });
 
-// ============ DISCONNECT SCENARIOS ============
+test("calendar?action=status: is NEVER rate-limited (unthrottled, exactly like the pre-consolidation calendar-status.js)", async (t) => {
+  const { rateLimitCalls } = setupMocks(t, {});
+  const handler = (await freshImport("../api/calendar.js")).default;
+
+  const { req, res, state } = fakeReqRes({ method: "GET", query: { action: "status" } });
+  await handler(req, res);
+
+  assert.strictEqual(state.statusCode, 200);
+  assert.strictEqual(rateLimitCalls.length, 0, "status must call checkRateLimit zero times");
+});
+
+// ============ DISCONNECT SCENARIOS (action=disconnect) ============
 
 test("Scenario A: Gmail + Calendar connected, disconnect Calendar -> local Calendar credential deleted, Google revoke NOT called, Gmail credential remains", async (t) => {
   const { revokeCalls, gmailState, calendarState } = setupMocks(t, {
     gmailConn: { refreshToken: "gmail-rt", emailAddress: "a@example.com", needsReconnect: false, connectedAt: "2026-01-01T00:00:00.000Z" },
     calendarConn: { refreshToken: "calendar-rt", needsReconnect: false, connectedAt: "2026-01-01T00:00:00.000Z" },
   });
-  const handler = (await freshImport("../api/calendar-disconnect.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
 
-  const { req, res, state } = fakeReqRes();
+  const { req, res, state } = fakeReqRes({ method: "POST", query: { action: "disconnect" } });
   await handler(req, res);
 
   assert.strictEqual(state.statusCode, 200);
@@ -170,9 +212,9 @@ test("Scenario B: Calendar only connected, disconnect Calendar -> Google revoke 
   const { revokeCalls, calendarState } = setupMocks(t, {
     calendarConn: { refreshToken: "calendar-rt", needsReconnect: false, connectedAt: "2026-01-01T00:00:00.000Z" },
   });
-  const handler = (await freshImport("../api/calendar-disconnect.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
 
-  const { req, res, state } = fakeReqRes();
+  const { req, res, state } = fakeReqRes({ method: "POST", query: { action: "disconnect" } });
   await handler(req, res);
 
   assert.strictEqual(state.statusCode, 200);
@@ -187,7 +229,7 @@ test("Scenario C: Gmail + Calendar connected, disconnect Gmail -> local Gmail cr
   });
   const handler = (await freshImport("../api/gmail-disconnect.js")).default;
 
-  const { req, res, state } = fakeReqRes();
+  const { req, res, state } = fakeReqRes({ method: "POST" });
   await handler(req, res);
 
   assert.strictEqual(state.statusCode, 200);
@@ -202,7 +244,7 @@ test("Scenario D: Gmail only connected, disconnect Gmail -> existing remote revo
   });
   const handler = (await freshImport("../api/gmail-disconnect.js")).default;
 
-  const { req, res, state } = fakeReqRes();
+  const { req, res, state } = fakeReqRes({ method: "POST" });
   await handler(req, res);
 
   assert.strictEqual(state.statusCode, 200);
@@ -210,21 +252,21 @@ test("Scenario D: Gmail only connected, disconnect Gmail -> existing remote revo
   assert.strictEqual(gmailState.conn, null, "Gmail's local credential must still be deleted");
 });
 
-test("calendar-disconnect: requires Firebase authentication", async (t) => {
+test("calendar?action=disconnect: requires Firebase authentication", async (t) => {
   setupMocks(t, { authenticated: false });
-  const handler = (await freshImport("../api/calendar-disconnect.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
 
-  const { req, res, state } = fakeReqRes();
+  const { req, res, state } = fakeReqRes({ method: "POST", query: { action: "disconnect" } });
   await handler(req, res);
 
   assert.strictEqual(state.statusCode, 401);
 });
 
-test("calendar-disconnect: disconnecting when nothing was ever connected is a clean no-op, no revoke attempted", async (t) => {
+test("calendar?action=disconnect: disconnecting when nothing was ever connected is a clean no-op, no revoke attempted", async (t) => {
   const { revokeCalls } = setupMocks(t, {});
-  const handler = (await freshImport("../api/calendar-disconnect.js")).default;
+  const handler = (await freshImport("../api/calendar.js")).default;
 
-  const { req, res, state } = fakeReqRes();
+  const { req, res, state } = fakeReqRes({ method: "POST", query: { action: "disconnect" } });
   await handler(req, res);
 
   assert.strictEqual(state.statusCode, 200);
@@ -235,8 +277,25 @@ test("gmail-disconnect: requires Firebase authentication", async (t) => {
   setupMocks(t, { authenticated: false });
   const handler = (await freshImport("../api/gmail-disconnect.js")).default;
 
-  const { req, res, state } = fakeReqRes();
+  const { req, res, state } = fakeReqRes({ method: "POST" });
   await handler(req, res);
 
   assert.strictEqual(state.statusCode, 401);
+});
+
+// ============ ROUTER: action-namespaced rate-limit keys (post-consolidation requirement) ============
+test("calendar?action=disconnect and calendar?action=oauth-start use DIFFERENT rate-limit keys for the same uid (independent budgets, matching pre-consolidation isolation)", async (t) => {
+  const { rateLimitCalls } = setupMocks(t, {});
+  const handler = (await freshImport("../api/calendar.js")).default;
+
+  const disconnectReq = fakeReqRes({ method: "POST", query: { action: "disconnect" } });
+  await handler(disconnectReq.req, disconnectReq.res);
+
+  const oauthStartReq = fakeReqRes({ method: "POST", query: { action: "oauth-start" } });
+  await handler(oauthStartReq.req, oauthStartReq.res);
+
+  assert.strictEqual(rateLimitCalls.length, 2);
+  assert.notStrictEqual(rateLimitCalls[0], rateLimitCalls[1], "disconnect and oauth-start must use distinct rate-limit keys, not a single shared bucket");
+  assert.ok(rateLimitCalls[0].includes("disconnect"));
+  assert.ok(rateLimitCalls[1].includes("oauth-start"));
 });
