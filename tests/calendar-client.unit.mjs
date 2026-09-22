@@ -1,6 +1,7 @@
 /**
  * Focused unit tests for Slice C's api/_googleCalendarClient.js —
- * deriveGoogleEventId, insertCalendarEvent, refreshCalendarAccessToken.
+ * deriveGoogleEventId, insertCalendarEvent, refreshCalendarAccessToken —
+ * plus Slice C.1A's listCalendars.
  * `refreshCalendarAccessToken`'s invalid_grant path calls
  * markGoogleCalendarConnectionNeedsReconnect, which needs the real
  * Firebase Admin SDK unless mocked — hence this whole file uses Node's
@@ -12,7 +13,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert";
-import { deriveGoogleEventId, insertCalendarEvent } from "../api/_googleCalendarClient.js";
+import { deriveGoogleEventId, insertCalendarEvent, listCalendars } from "../api/_googleCalendarClient.js";
 
 // ============ deriveGoogleEventId ============
 test("IDEMPOTENCY — the same itemId always produces the same event id", () => {
@@ -73,6 +74,134 @@ test("insertCalendarEvent: never logs/returns the raw Google response body verba
   const fetchFn = async () => ({ ok: false, status: 400, json: async () => ({ error: { message: "bad request", details: secretDetail } }) });
   const result = await insertCalendarEvent({ accessToken: "t", event: { id: "det-id-5" }, fetchFn });
   assert.ok(!result.error.includes(secretDetail), "the raw response body's content must never be echoed back in the error string");
+});
+
+// ============ listCalendars (Slice C.1A) ============
+function calendarListFetch(items, { status = 200 } = {}) {
+  return async (url, options) => {
+    assert.strictEqual(url, "https://www.googleapis.com/calendar/v3/users/me/calendarList");
+    assert.strictEqual(options.method, "GET");
+    assert.strictEqual(options.headers.Authorization, "Bearer test-access-token");
+    return { ok: status < 400, status, json: async () => ({ items }) };
+  };
+}
+
+test("listCalendars: a writer calendar is included", async () => {
+  const fetchFn = calendarListFetch([{ id: "cal-writer@group.calendar.google.com", summary: "Hayden", primary: false, accessRole: "writer" }]);
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.calendars.length, 1);
+  assert.strictEqual(result.calendars[0].accessRole, "writer");
+});
+
+test("listCalendars: an owner calendar is included", async () => {
+  const fetchFn = calendarListFetch([{ id: "mike@example.com", summary: "Mike's", primary: true, accessRole: "owner" }]);
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.calendars.length, 1);
+  assert.strictEqual(result.calendars[0].accessRole, "owner");
+});
+
+test("listCalendars: a reader calendar is excluded (can't receive events.insert)", async () => {
+  const fetchFn = calendarListFetch([{ id: "readonly-cal", summary: "Read only", primary: false, accessRole: "reader" }]);
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.calendars.length, 0);
+});
+
+test("listCalendars: a freeBusyReader calendar is excluded", async () => {
+  const fetchFn = calendarListFetch([{ id: "fb-cal", summary: "Free/busy only", primary: false, accessRole: "freeBusyReader" }]);
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.calendars.length, 0);
+});
+
+test("listCalendars: writer/owner calendars are kept, reader/freeBusyReader are dropped, in a mixed list", async () => {
+  const fetchFn = calendarListFetch([
+    { id: "a", summary: "A", primary: false, accessRole: "owner" },
+    { id: "b", summary: "B", primary: false, accessRole: "reader" },
+    { id: "c", summary: "C", primary: false, accessRole: "writer" },
+    { id: "d", summary: "D", primary: false, accessRole: "freeBusyReader" },
+  ]);
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.deepStrictEqual(result.calendars.map((c) => c.id).sort(), ["a", "c"]);
+});
+
+test("listCalendars: result is stripped to exactly id/summary/primary/accessRole — no other Google fields leak through", async () => {
+  const fetchFn = calendarListFetch([{
+    id: "cal-1",
+    summary: "Family",
+    primary: true,
+    accessRole: "owner",
+    backgroundColor: "#ff0000",
+    colorId: "12",
+    timeZone: "America/New_York",
+    description: "Secret household notes",
+    conferenceProperties: { allowedConferenceSolutionTypes: ["hangoutsMeet"] },
+    notificationSettings: { notifications: [] },
+  }]);
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.deepStrictEqual(Object.keys(result.calendars[0]).sort(), ["accessRole", "id", "primary", "summary"]);
+});
+
+// ---- Scope-missing classification (post-approval correction: a bare 403
+// status is NOT sufficient on its own — see isCalendarListScopeMissingError
+// in api/_googleCalendarClient.js) ----
+test("listCalendars: 403 + reason 'insufficientPermissions' is reported as scopeMissing", async () => {
+  const fetchFn = async () => ({
+    ok: false,
+    status: 403,
+    json: async () => ({ error: { code: 403, message: "Insufficient Permission", errors: [{ domain: "global", reason: "insufficientPermissions", message: "Insufficient Permission" }] } }),
+  });
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.scopeMissing, true);
+  assert.strictEqual(result.error, undefined, "scopeMissing must be a distinct signal, not bundled with a generic error message");
+});
+
+test("listCalendars: 403 + 'insufficient authentication scopes' message (no reason code) is reported as scopeMissing", async () => {
+  const fetchFn = async () => ({
+    ok: false,
+    status: 403,
+    json: async () => ({ error: { code: 403, message: "Request had insufficient authentication scopes." } }),
+  });
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.scopeMissing, true);
+});
+
+test("listCalendars: 403 + a quota/rate-limit reason is NOT scopeMissing — it's a generic failure", async () => {
+  const fetchFn = async () => ({
+    ok: false,
+    status: 403,
+    json: async () => ({ error: { code: 403, message: "User Rate Limit Exceeded", errors: [{ domain: "usageLimits", reason: "userRateLimitExceeded", message: "User Rate Limit Exceeded" }] } }),
+  });
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.scopeMissing, undefined, "a quota/rate-limit 403 must never be misreported as scope-missing");
+  assert.ok(result.error, "a quota/rate-limit 403 still surfaces as a generic, retryable error");
+});
+
+test("listCalendars: 403 with no parseable/matching body is NOT scopeMissing (status alone is not evidence)", async () => {
+  const fetchFn = async () => ({ ok: false, status: 403, json: async () => ({ error: { message: "Forbidden" } }) });
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.scopeMissing, undefined);
+  assert.ok(result.error);
+});
+
+test("listCalendars: a genuine failure (e.g. 500) is a generic error, not scopeMissing", async () => {
+  const fetchFn = async () => ({ ok: false, status: 500, json: async () => ({ error: { message: "Internal error" } }) });
+  const result = await listCalendars({ accessToken: "test-access-token", fetchFn });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.scopeMissing, undefined);
+  assert.ok(result.error);
+});
+
+test("listCalendars: a network failure is reported as an error, never throws", async () => {
+  const fetchFn = async () => { throw new Error("network down"); };
+  const result = await listCalendars({ accessToken: "t", fetchFn });
+  assert.strictEqual(result.ok, false);
 });
 
 // ============ refreshCalendarAccessToken — invalid_grant marks needsReconnect ============

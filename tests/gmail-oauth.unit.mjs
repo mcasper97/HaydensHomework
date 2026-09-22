@@ -59,9 +59,11 @@ ok("Does not request the email scope", !GMAIL_SCOPES.includes("email"));
 
 // ============ _googleOAuth.js: Gmail and Calendar scope lists stay independent (Slice B) ============
 ok("GMAIL_SCOPES and CALENDAR_SCOPES are two distinct, non-overlapping lists", !GMAIL_SCOPES.some((s) => CALENDAR_SCOPES.includes(s)));
-ok("CALENDAR_SCOPES requests exactly calendar.events, nothing else", CALENDAR_SCOPES.length === 1 && CALENDAR_SCOPES[0] === "https://www.googleapis.com/auth/calendar.events");
+ok("CALENDAR_SCOPES requests exactly calendar.events and calendar.calendarlist.readonly, nothing else (Slice C.1A)", CALENDAR_SCOPES.length === 2 && CALENDAR_SCOPES.includes("https://www.googleapis.com/auth/calendar.events") && CALENDAR_SCOPES.includes("https://www.googleapis.com/auth/calendar.calendarlist.readonly"));
 ok("CALENDAR_SCOPES does not request the broader calendar scope", !CALENDAR_SCOPES.includes("https://www.googleapis.com/auth/calendar"));
+ok("CALENDAR_SCOPES does not request the broader calendarlist scope (readonly variant only)", !CALENDAR_SCOPES.includes("https://www.googleapis.com/auth/calendar.calendarlist"));
 ok("CALENDAR_SCOPES does not request an identity/profile scope", !CALENDAR_SCOPES.includes("openid") && !CALENDAR_SCOPES.includes("email"));
+ok("Gmail scopes are unchanged by the Slice C.1A Calendar scope expansion", GMAIL_SCOPES.length === 1 && GMAIL_SCOPES[0] === "https://www.googleapis.com/auth/gmail.readonly");
 
 // ============ generateState ============
 {
@@ -105,6 +107,8 @@ ok("CALENDAR_SCOPES does not request an identity/profile scope", !CALENDAR_SCOPE
   // ---- Slice B: passing CALENDAR_SCOPES to the SAME shared builder produces a Calendar-scoped URL, and doesn't disturb Gmail's own env var ----
   const calendarUrl = new URL(buildAuthorizationUrl({ state: "abc123", codeChallenge: "xyz789", scopes: CALENDAR_SCOPES }));
   ok("Calendar auth URL contains calendar.events", calendarUrl.searchParams.get("scope").includes("https://www.googleapis.com/auth/calendar.events"));
+  // ---- Slice C.1A: the auth URL now requests BOTH Calendar scopes ----
+  ok("Calendar auth URL also contains calendar.calendarlist.readonly (Slice C.1A)", calendarUrl.searchParams.get("scope").includes("https://www.googleapis.com/auth/calendar.calendarlist.readonly"));
   ok("Calendar auth URL does NOT contain gmail.readonly", !calendarUrl.searchParams.get("scope").includes("gmail.readonly"));
   ok(
     "Calendar auth URL (built with no redirectUriEnvVar override) still falls back to Gmail's default redirect env var — proving the default truly matches Gmail's pre-existing behavior",

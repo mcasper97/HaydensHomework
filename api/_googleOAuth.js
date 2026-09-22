@@ -56,15 +56,29 @@ const DEFAULT_REDIRECT_URI_ENV_VAR = "GOOGLE_OAUTH_REDIRECT_URI";
 // address got connected.
 export const GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
 
-// Exactly the one scope Google Calendar publishing needs (Slice B — no
-// event reads/writes happen yet, but this is the scope Slice C's create/
-// update/delete calls will use). Deliberately NOT the broader
-// auth/calendar scope (which also grants calendar-list/settings/ACL
-// management this app never needs) or a readonly-only variant (which
-// wouldn't support later publishing). No identity/profile scope is
-// requested — Phase 1 never stores or displays the connected account's
-// email address for Calendar (see api/calendar-oauth-callback.js).
-export const CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events"];
+// The two scopes Google Calendar publishing + routing configuration need
+// (Slice B: calendar.events for event create/update/delete; Slice C.1A
+// adds calendar.calendarlist.readonly, read-only access to the list of
+// the account's calendars, so Parent Tools can offer them as routing
+// targets — see api/calendar-list.js). Deliberately NOT the broader
+// auth/calendar scope (which also grants settings/ACL management this app
+// never needs) — calendarlist.readonly is the narrowest scope that
+// exposes calendarList.list. No identity/profile scope is requested —
+// Phase 1 never stores or displays the connected account's email address
+// for Calendar (see api/calendar-oauth-callback.js).
+//
+// IMPORTANT: adding a scope here does NOT retroactively grant it to any
+// already-connected account's stored refresh token — OAuth grants are
+// per-consent, not per-code-change. An existing connection keeps working
+// for event publishing (calendar.events, unchanged) but will get a 403
+// from calendarList.list until the parent reconnects and re-consents to
+// this new scope list (see api/calendar-list.js's own doc comment for how
+// that distinction is surfaced without conflating it with a broken/
+// invalid_grant connection).
+export const CALENDAR_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+];
 
 /**
  * getOAuthConfig(redirectUriEnvVar) -> { clientId, clientSecret, redirectUri }
