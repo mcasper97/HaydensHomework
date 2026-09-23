@@ -121,6 +121,25 @@ ok("getSenderTargetLabel shows Family", getSenderTargetLabel({ targetType: "fami
 ok("getSenderTargetLabel shows Ask during review", getSenderTargetLabel({ targetType: "review", childId: null }, CHILDREN) === "Ask during review");
 ok("getSenderTargetLabel degrades gracefully if the target child was since removed", getSenderTargetLabel({ targetType: "child", childId: "deleted-child-id" }, CHILDREN) === "Unknown learner");
 
+// ============ IDENTITY SAFETY: renaming a child (same id, new display name) ============
+{
+  // Simulates the Settings > Children rename flow: "Hayden" -> "Henry",
+  // canonical id ("hayden-abc123") unchanged. A sender's stored target
+  // (targetChildId: "hayden-abc123") is keyed purely by that id and must
+  // keep resolving to the SAME sender after the rename — never orphaned,
+  // never silently reassigned to a different learner.
+  const target = { targetType: "child", childId: "hayden-abc123" };
+  const before = getSenderTargetLabel(target, CHILDREN);
+  const renamedChildren = CHILDREN.map((c) => (c.id === "hayden-abc123" ? { ...c, name: "Henry" } : c));
+  const after = getSenderTargetLabel(target, renamedChildren);
+  ok("A sender's target label reflects the CURRENT name post-rename (still resolves the same child by id)", before === "Hayden" && after === "Henry");
+
+  const optionsAfterRename = buildSenderTargetOptions(renamedChildren);
+  ok("The dropdown option for that child's id shows the renamed display name", optionsAfterRename.some((o) => o.value === "child:hayden-abc123" && o.label === "Henry"));
+  ok("The dropdown option's value (id-keyed) is unchanged by the rename", optionsAfterRename.some((o) => o.value === "child:hayden-abc123"));
+  ok("No new/duplicate option was created for the renamed child (still exactly one entry for that id)", optionsAfterRename.filter((o) => o.value === "child:hayden-abc123").length === 1);
+}
+
 // ============ sender email normalization still works alongside targets ============
 {
   // Re-import to confirm nothing about adding targetType broke the existing

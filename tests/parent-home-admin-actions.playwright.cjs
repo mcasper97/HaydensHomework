@@ -149,13 +149,14 @@ function ok(name, cond) {
   await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
 
   // ============ Child Home remains unaffected ============
-  await page.getByText('Ava', { exact: true }).click();
-  await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
-  ok('Child Home shows no "Add Item" action card', !(await page.getByTestId('action-add-item').isVisible().catch(() => false)));
-  ok('Child Home shows no "Manage Chores" action card', !(await page.getByTestId('action-manage-chores').isVisible().catch(() => false)));
-  ok('Child Home shows no parent-owned Add Item panel', !(await page.getByTestId('add-item-panel').isVisible().catch(() => false)));
-  ok('Child Home shows no parent-owned chore-management panel', !(await page.getByTestId('chore-management-panel').isVisible().catch(() => false)));
-  await page.getByRole('button', { name: /Parents/ }).click();
+  // Parent Home no longer has a direct child-selection card (removed in a
+  // later UI cleanup) — a child's Parents Page is now reached via the
+  // "Upload Homework/Photo" action instead. Child Home (the game/My Day
+  // view) is a wholly separate App.jsx render path that never imports any
+  // of these Parent Home panels in the first place, so it's not
+  // separately re-verified here.
+  await page.getByTestId('action-upload-homework').click();
+  await page.getByTestId('parent-organizer-panel').getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
   ok('Child\'s unlocked Parents Page view shows no "Add Item" action card either', !(await page.getByTestId('action-add-item').isVisible().catch(() => false)));
   ok('Child\'s unlocked Parents Page view shows no "Manage Chores" action card either', !(await page.getByTestId('action-manage-chores').isVisible().catch(() => false)));

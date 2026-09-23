@@ -263,6 +263,50 @@ const ParentHome = ({
     setSaving(false);
   };
 
+  // Renames an existing child's display name in place — never touches
+  // child.id or any other field, never adds/removes an array entry (the
+  // updated array has the exact same ids/length as before, just one
+  // entry's `name` replaced), so every existing reference keyed by child
+  // id (Google Calendar childCalendarIds, Gmail sender targetChildId,
+  // Items' childIds, chore templates) keeps resolving unchanged. Mirrors
+  // addChild's guest/real-account persistence split, but writes the whole
+  // `children` array (arrayUnion can only append, never edit an existing
+  // element) rather than appending a new one.
+  const renameChild = async (childId, newName) => {
+    const name = newName.trim();
+    if (!name) throw new Error("Name can't be empty.");
+    const current = children.find((c) => c.id === childId);
+    if (!current || current.name === name) return; // no-op — nothing to persist
+    const updated = children.map((c) => (c.id === childId ? { ...c, name } : c));
+
+    if (user.isAdmin) {
+      localStorage.setItem("crestly_admin_children", JSON.stringify(updated));
+      setChildren(updated);
+      return;
+    }
+    try {
+      const profileRef = doc(db, "users", user.uid);
+      await setDoc(profileRef, { children: updated }, { merge: true });
+      setChildren(updated);
+    } catch (e) {
+      console.error("Rename child failed:", e);
+      throw new Error("Couldn't save — please try again.");
+    }
+  };
+
+  // Settings > Children > "View Child" — reuses the exact same
+  // selectedChild/onSwitchChild navigation AuthShell.jsx already provides
+  // (onSelectChild here is AuthShell's handleSelectChild, the identical
+  // function the now-removed Parent Home learner cards used to call). No
+  // new routing/state: this just gives that existing entry point a new
+  // home in Settings. Looks the child up by canonical id (never by
+  // whatever name happens to be showing) so a rename never affects which
+  // account this opens.
+  const viewChild = (childId) => {
+    const child = children.find((c) => c.id === childId);
+    if (child) onSelectChild(child);
+  };
+
   if (showSettings) {
     return (
       <SettingsPage
@@ -296,6 +340,8 @@ const ParentHome = ({
         saveError={saveError}
         setSaveError={setSaveError}
         addChild={addChild}
+        renameChild={renameChild}
+        viewChild={viewChild}
         googleCalendarRouting={googleCalendarRouting}
         onRoutingSaved={setGoogleCalendarRouting}
         deviceMode={deviceMode}
@@ -431,38 +477,6 @@ const ParentHome = ({
           ) : (
             <GmailCheckEmailAction ctx={{ uid: user.uid, isAdmin: false }} childProfiles={children} />
           )
-        )}
-
-        {loading ? (
-          <div className="text-center py-12">
-            <div className="text-4xl mb-3 animate-pulse">⭐</div>
-            <p className="text-gray-400">Loading...</p>
-          </div>
-        ) : (
-          <div className="mt-2">
-            <h2 className="text-gray-400 text-sm font-semibold mb-3">Learners</h2>
-            {children.length === 0 ? (
-              <p className="text-gray-500 text-sm mb-4">No children yet — add one in Settings.</p>
-            ) : (
-              <div className="space-y-3">
-                {children.map(child => (
-                  <button
-                    key={child.id}
-                    onClick={() => onSelectChild(child)}
-                    className="w-full flex items-center gap-4 p-5 rounded-3xl text-left transition hover:opacity-90"
-                    style={{ background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}
-                  >
-                    <span className="text-4xl">{child.emoji}</span>
-                    <div>
-                      <div className="text-xl font-display text-white">{child.name}</div>
-                      <div className="text-purple-300 text-sm">Tap to start learning</div>
-                    </div>
-                    <div className="ml-auto text-white text-2xl">→</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
         )}
       </div>
     </div>

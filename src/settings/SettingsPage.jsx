@@ -52,6 +52,8 @@ const SettingsPage = ({
   saveError,
   setSaveError,
   addChild,
+  renameChild,
+  viewChild,
   googleCalendarRouting,
   onRoutingSaved,
   deviceMode,
@@ -105,6 +107,8 @@ const SettingsPage = ({
           saveError={saveError}
           setSaveError={setSaveError}
           addChild={addChild}
+          renameChild={renameChild}
+          viewChild={viewChild}
         />
 
         {/* Gmail/Calendar integrations require a real Firebase-authenticated

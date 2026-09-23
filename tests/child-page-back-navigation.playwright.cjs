@@ -5,16 +5,22 @@
  * Root cause this covers: AuthShell.jsx already passed an `onSwitchChild`
  * callback into <App> on the normal (non-locked) parent-device flow — pure
  * navigation, resets AuthShell's selectedChild back to null so ParentHome
- * (formerly ChildSelector) renders again, with no device-mode change, no
- * sign-out, no data write. It was simply never wired to a visible control on
- * the child's Home screen. This test covers both required scenarios:
+ * renders again, with no device-mode change, no sign-out, no data write.
+ *
+ * History: an earlier UI cleanup removed Parent Home's direct
+ * child-selection cards with no replacement, which made this normal,
+ * unlocked Home entry temporarily unreachable through any UI action (a
+ * disclosed finding at the time). A follow-up added "View Child" to
+ * Settings' Children section (src/settings/ChildManagementSection.jsx,
+ * viewChild in src/ParentHome.jsx) specifically to restore this — it
+ * reuses AuthShell.jsx's existing selectedChild/onSwitchChild/
+ * handleSelectChild machinery verbatim (same function the old cards
+ * called), just from a new location. This file exercises that restored
+ * entry point.
+ *
+ * This test covers both required scenarios:
  *   1. normal parent-device flow: the control exists, works, and is safe
  *   2. locked Child Mode: no such control is exposed — PIN is still required
- *
- * A later UI/IA refactor renamed the Parent page's heading to "Parent Home"
- * and moved Device Mode (lock-to-child) controls into the permanent Settings
- * page — this file exercises the updated navigation, same underlying
- * App.jsx behavior (untouched by that refactor).
  *
  * Exercises the guest/local-demo path (no live Firebase project needed).
  *
@@ -48,6 +54,12 @@ function ok(name, cond) {
   const guestEnter = () => page.getByText('Continue without an account').click();
   const readChildren = () => page.evaluate(() => JSON.parse(localStorage.getItem('crestly_admin_children') || '[]'));
   const readDeviceMode = () => page.evaluate(() => localStorage.getItem('crestly_device_mode'));
+  const viewAvaFromSettings = async () => {
+    await page.getByTestId('action-settings').click();
+    await page.waitForSelector('text=Settings');
+    await page.getByRole('button', { name: 'View Child' }).click();
+    await page.waitForSelector('text=My Day', { timeout: 5000 });
+  };
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await guestEnter();
@@ -62,20 +74,19 @@ function ok(name, cond) {
   await page.getByText('← Parent Home').click();
   await page.waitForSelector('text=Parent Home');
 
-  // ============ 1. Normal authenticated parent-device flow ============
+  // ============ 1. Normal authenticated parent-device flow (via Settings > Children > View Child) ============
   const childrenBefore = await readChildren();
   const deviceModeBefore = await readDeviceMode();
 
-  await page.getByText('Ava', { exact: true }).click();
-  await page.waitForSelector('text=My Day');
+  await viewAvaFromSettings();
   ok('Normal flow: child Home shows a "Back to Parent Page" control', await visible('Back to Parent Page'));
   ok('Normal flow: child Home still shows the existing "Parents" control too (unchanged)', await page.getByRole('button', { name: /Parents/ }).isVisible());
   ok('Normal flow: the label is exactly "Back to Parent Page", not vague ("Back"/"Home"/"Exit")', await page.getByRole('button', { name: 'Back to Parent Page' }).isVisible());
 
   await page.getByRole('button', { name: 'Back to Parent Page' }).click();
   await page.waitForSelector('text=Parent Home', { timeout: 5000 });
-  ok('Clicking it returns to Parent Home / the learner selector', await visible('Parent Home'));
-  ok('The learner card (Ava) is visible again on Parent Home', await visible('Ava'));
+  ok('Clicking it returns to Parent Home', await visible('Parent Home'));
+  ok('Parent Home stays learner-card-free after returning (unaffected by View Child)', !(await page.getByText('Learners').isVisible().catch(() => false)));
 
   const childrenAfter = await readChildren();
   const deviceModeAfter = await readDeviceMode();
@@ -84,8 +95,7 @@ function ok(name, cond) {
   ok('Child data is unaltered by this navigation', JSON.stringify(childrenBefore) === JSON.stringify(childrenAfter));
 
   // Re-enter and confirm the round trip is repeatable (not a one-shot control).
-  await page.getByText('Ava', { exact: true }).click();
-  await page.waitForSelector('text=My Day');
+  await viewAvaFromSettings();
   ok('Control is present again on a fresh entry (repeatable)', await visible('Back to Parent Page'));
   await page.getByRole('button', { name: 'Back to Parent Page' }).click();
   await page.waitForSelector('text=Parent Home', { timeout: 5000 });

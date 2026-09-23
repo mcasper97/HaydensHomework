@@ -64,7 +64,9 @@ function ok(name, cond) {
   await page.waitForSelector('text=Parent Home');
 
   // ============ Parent Home controls unchanged ============
-  ok('Parent Home still shows the learner card (Ava)', await visible('Ava'));
+  // A later UI cleanup removed Parent Home's direct child-selection cards
+  // entirely, with no replacement — Ava is no longer shown here.
+  ok('Parent Home shows no Learners section at all', !(await page.getByText('Learners').isVisible().catch(() => false)));
   ok('Parent Home still shows the existing "Family Board" entry point', await page.getByText(/Family Board/).first().isVisible());
 
   // ============ Criterion 1: obvious new entry point on Parent Home itself ============
@@ -105,10 +107,17 @@ function ok(name, cond) {
   ok('Back button returns to Parent Home', await visible('Parent Home'));
   ok('Back navigation did NOT land in the child\'s game Home (no game-home marker)', !(await page.getByText("Hayden's Homework").isVisible().catch(() => false)));
 
-  // ============ Criterion 3: normal child-card flow (Child page) still has no import/admin controls ============
-  await page.getByText('Ava', { exact: true }).click();
-  await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
-  ok('Normal child selection still opens on that child\'s Home (unaffected by the new entry point)', await page.getByRole('button', { name: /Parents/ }).isVisible().catch(() => false));
+  // ============ Criterion 3: normal child-selection flow (Child page) still has no import/admin controls ============
+  // Reached via Settings > Children > "View Child" — the entry point that
+  // restores the normal, unlocked Home flow (Parent Home's own
+  // child-selection cards were removed in an earlier UI cleanup with no
+  // replacement there; View Child reuses the exact same underlying
+  // selectedChild/onSwitchChild navigation those cards used to call).
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
+  await page.getByRole('button', { name: 'View Child' }).click();
+  await page.waitForSelector('text=My Day', { timeout: 5000 });
+  ok('Normal child selection still opens on that child\'s Home (View Child)', await page.getByRole('button', { name: /Parents/ }).isVisible().catch(() => false));
   ok('Child\'s Home screen itself shows no Import control directly (only via the gated ⚙️ Parents click)', !(await page.getByText('Import from a Photo').isVisible().catch(() => false)));
   await page.getByRole('button', { name: /Parents/ }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});

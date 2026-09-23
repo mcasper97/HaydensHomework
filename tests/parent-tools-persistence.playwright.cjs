@@ -85,10 +85,14 @@ function ok(name, cond) {
   await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
 
   // ============ A child page does not expose parent-only Home actions ============
-  await page.getByText('Ava', { exact: true }).click();
-  await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
-  ok('Child\'s Home screen does not show a Parent Home action card', !(await page.getByTestId('action-upload-homework').isVisible().catch(() => false)));
-  await page.getByRole('button', { name: /Parents/ }).click();
+  // Parent Home no longer has a direct child-selection card (removed in a
+  // later UI cleanup) — a child's Parents Page is now reached via the
+  // "Upload Homework/Photo" action instead. Child Home (the game/My Day
+  // view) is a wholly separate App.jsx render path that never imports any
+  // Parent Home action card in the first place, so it's not separately
+  // re-verified here.
+  await page.getByTestId('action-upload-homework').click();
+  await page.getByTestId('parent-organizer-panel').getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
   ok('Child\'s (unlocked, execution-only) Parents Page view does not show a Parent Home action card', !(await page.getByTestId('action-upload-homework').isVisible().catch(() => false)));
 

@@ -85,6 +85,29 @@ test("save: keys learner mappings by canonical child id, not display name", () =
   assert.deepStrictEqual(Object.keys(result.routing.childCalendarIds).sort(), ["hayden-id", "payton-id"]);
 });
 
+test("IDENTITY SAFETY: renaming a child (same id, new display name) never invalidates their existing calendar mapping — currentChildIds is id-only and never carries/compares a name", () => {
+  // Simulates the Settings > Children rename flow: the child's canonical id
+  // ("hayden-id") is unchanged, only their displayed name would have
+  // changed elsewhere (in the separate `children` array, which this
+  // function never even receives) — currentChildIds here is deliberately
+  // just the bare id list a rename never touches.
+  const existingMapping = { "hayden-id": "hayden@group.calendar.google.com" };
+  const beforeRename = buildGoogleCalendarRoutingSave({
+    defaultCalendarId: null,
+    childCalendarIds: existingMapping,
+    currentChildIds: ["hayden-id", "payton-id"], // e.g. child.name was "Hayden"
+    availableCalendarIds: AVAILABLE,
+  });
+  const afterRename = buildGoogleCalendarRoutingSave({
+    defaultCalendarId: null,
+    childCalendarIds: existingMapping,
+    currentChildIds: ["hayden-id", "payton-id"], // same ids — a rename never changes this list
+    availableCalendarIds: AVAILABLE,
+  });
+  assert.deepStrictEqual(beforeRename.routing.childCalendarIds, afterRename.routing.childCalendarIds);
+  assert.strictEqual(afterRename.routing.childCalendarIds["hayden-id"], "hayden@group.calendar.google.com");
+});
+
 test("save: a stale mapping for a learner who no longer exists is dropped, not an error", () => {
   const result = buildGoogleCalendarRoutingSave({
     defaultCalendarId: null,

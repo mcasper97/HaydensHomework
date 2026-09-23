@@ -142,10 +142,15 @@ function ok(name, cond) {
   ok('Type gating: Family Event has NO topic/unit (non-academic type)', !(await form.getByPlaceholder('Topic (optional)').isVisible().catch(() => false)));
   await form.getByRole('button', { name: 'Cancel' }).click();
 
-  // ============ Child Mode surfaces topic/unit too ============
+  // ============ Child Home surfaces topic/unit too ============
+  // Reached via Settings > Children > "View Child" — Parent Home's own
+  // child-selection cards were removed in an earlier UI cleanup, and View
+  // Child now reuses that exact same underlying navigation instead.
   await page.getByText('← Back').click();
   await page.waitForSelector('text=Parent Home');
-  await page.getByText('Ava', { exact: true }).click();
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
+  await page.getByRole('button', { name: 'View Child' }).click();
   await page.waitForSelector('text=My Day');
   ok('Child Mode: due-today academic item shows topic in My Day', await visible('Long division'));
 

@@ -87,10 +87,11 @@ const TINY_JPEG_BASE64 =
     localStorage.removeItem('crestly_admin_ingestion_candidates');
   });
 
-  // Navigate to the per-child Parents Page (where the photo-import card lives).
-  await page.getByText('Ava', { exact: true }).click();
-  await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
-  await page.getByRole('button', { name: /Parents/ }).click();
+  // Navigate to the per-child Parents Page (where the photo-import card
+  // lives) via the "Upload Homework/Photo" action — Parent Home no longer
+  // has a direct child-selection card (removed in a later UI cleanup).
+  await page.getByTestId('action-upload-homework').click();
+  await page.getByTestId('parent-organizer-panel').getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Import from a Photo', { timeout: 5000 }).catch(() => {});
 
   ok('Photo-import card is present on the Parents Page', await page.getByText('Import from a Photo').isVisible().catch(() => false));

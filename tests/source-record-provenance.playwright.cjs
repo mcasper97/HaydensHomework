@@ -149,15 +149,12 @@ function ok(name, cond) {
   await page.reload({ waitUntil: 'networkidle' });
   await guestEnter();
   await page.waitForSelector('text=Parent Home');
-  // CSV import lives on the per-child "Parents Page" (Settings gear), not
-  // the Family Board — select the child, then open Parents.
-  await page.getByText('Ava', { exact: true }).click();
-  await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
-  const parentsBtn = page.getByRole('button', { name: /Parents/ });
-  if (await parentsBtn.isVisible().catch(() => false)) {
-    await parentsBtn.click();
-    await page.waitForSelector('text=Import Teacher Plan', { timeout: 5000 }).catch(() => {});
-  }
+  // CSV import lives on the per-child "Parents Page", reached via Parent
+  // Home's "Upload Homework/Photo" action (Parent Home no longer has a
+  // direct child-selection card — removed in a later UI cleanup).
+  await page.getByTestId('action-upload-homework').click();
+  await page.getByTestId('parent-organizer-panel').getByText('Ava', { exact: true }).click();
+  await page.waitForSelector('text=Import Teacher Plan', { timeout: 5000 }).catch(() => {});
 
   const csvContent =
     'record_type,test_name,test_subject,test_date\n' +

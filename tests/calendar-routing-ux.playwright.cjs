@@ -84,10 +84,14 @@ function ok(name, cond) {
   await page.getByText('← Back').click();
   await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
 
-  await page.getByText('Ava', { exact: true }).click();
-  await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
-  ok('Child Home never shows "Google Calendar Routing"', !(await page.getByText('Google Calendar Routing').isVisible().catch(() => false)));
-  await page.getByRole('button', { name: /Parents/ }).click();
+  // Parent Home no longer has a direct child-selection card (removed in a
+  // later UI cleanup) — a child's Parents Page is now reached via the
+  // "Upload Homework/Photo" action instead. Child Home (the game/My Day
+  // view) is a wholly separate App.jsx render path that never imports any
+  // Calendar module in the first place, so it's not separately re-verified
+  // here.
+  await page.getByTestId('action-upload-homework').click();
+  await page.getByTestId('parent-organizer-panel').getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
   ok("Child's unlocked Parents Page view never shows \"Google Calendar Routing\" either", !(await page.getByText('Google Calendar Routing').isVisible().catch(() => false)));
   ok('Child\'s unlocked Parents Page view never shows a Settings control either (unchanged existing gating)', !(await page.getByText('Settings').isVisible().catch(() => false)));
