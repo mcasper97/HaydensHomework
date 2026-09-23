@@ -55,9 +55,9 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
 
-  await page.getByTestId('action-settings').click();
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
@@ -76,20 +76,21 @@ function ok(name, cond) {
   ok('The removed temporary control\'s data-testid is gone from the DOM entirely', (await page.locator('[data-testid="calendar-list-validation-control"]').count()) === 0);
 
   // ============ Guest/child/shared surfaces never expose the routing panel ============
-  await page.getByText('← Parent Home').click();
-  await page.waitForSelector('text=Parent Home');
-  await page.getByText(/Family Board/).first().click();
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-family').click();
   await page.waitForSelector('text=🔆 Today');
   ok('Family Board never shows "Google Calendar Routing"', !(await page.getByText('Google Calendar Routing').isVisible().catch(() => false)));
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 }).catch(() => {});
 
-  // Parent Home no longer has a direct child-selection card (removed in a
-  // later UI cleanup) — a child's Parents Page is now reached via the
-  // "Upload Homework/Photo" action instead. Child Home (the game/My Day
-  // view) is a wholly separate App.jsx render path that never imports any
-  // Calendar module in the first place, so it's not separately re-verified
-  // here.
+  // Board Selector's Learners section is a direct child-selection entry
+  // point (navigation refactor), but a child's Parents Page (used here) is
+  // specifically reached via Parent Board's "Upload Homework/Photo" action
+  // instead. Child Home (the game/My Day view) is a wholly separate
+  // App.jsx render path that never imports any Calendar module in the
+  // first place, so it's not separately re-verified here.
+  await page.getByTestId('board-parent').click();
   await page.getByTestId('action-upload-homework').click();
   await page.getByTestId('parent-organizer-panel').getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});

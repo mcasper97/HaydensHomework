@@ -11,7 +11,7 @@ import App from "./App.jsx";
 import FamilyBoard from "./FamilyBoard.jsx";
 import ParentUnlock from "./ParentUnlock.jsx";
 import LandingPage from "./LandingPage.jsx";
-import ParentHome from "./ParentHome.jsx";
+import BoardSelector from "./BoardSelector.jsx";
 import {
   getDeviceMode,
   setDeviceMode as persistDeviceMode,
@@ -25,7 +25,7 @@ import { setPin as savePin } from "./data/parentPin.js";
 
 // Local-only guest/demo profile — NOT a privilege level and NOT tied to any
 // real household's Firestore data. `isAdmin` here just means "use the
-// crestly_admin_* localStorage keys instead of Firestore" (see ParentHome.jsx
+// crestly_admin_* localStorage keys instead of Firestore" (see BoardSelector.jsx
 // and FamilyBoard below); the name is kept only so existing local demo data
 // under those keys keeps working. Entry no longer requires (or checks) any
 // credential — see the "Continue without an account" button in LandingPage.
@@ -190,12 +190,12 @@ const AuthShell = () => {
 
   // Which view a newly-selected child's App instance should open on.
   // Normally "home" (every existing entry point). Set to "parents" only by
-  // Parent Home's "Upload Homework/Photo" action (handleOpenChildImport
+  // Parent Board's "Upload Homework/Photo" action (handleOpenChildImport
   // below) so that link lands directly on the Parents Page instead of the
   // child's game Home. Deliberately NOT
   // reachable from Family Board / Shared Display or any child-facing
   // page — import/admin functionality only ever originates from this
-  // authenticated Parent Home screen (see ParentHome.jsx).
+  // authenticated Parent Board screen (see ParentBoard.jsx).
   const [childEntryView, setChildEntryView] = useState("home");
 
   // Read once at mount — this doesn't change during the session.
@@ -301,7 +301,7 @@ const AuthShell = () => {
 
   // Local-only guest/demo entry — no credential, no Firebase Auth session,
   // no access to any real household's Firestore data (see GUEST_USER above
-  // and the isAdmin-gated localStorage branches in ParentHome.jsx/FamilyBoard).
+  // and the isAdmin-gated localStorage branches in BoardSelector.jsx/FamilyBoard).
   const handleGuestEntry = () => {
     setUser(GUEST_USER);
   };
@@ -316,8 +316,8 @@ const AuthShell = () => {
     setParentUnlockedView(null);
   };
 
-  // Called only from Parent Home's "Upload Homework/Photo" action (see
-  // ParentHome.jsx) — never from Family Board / Shared Display or any
+  // Called only from Parent Board's "Upload Homework/Photo" action (see
+  // ParentBoard.jsx) — never from Family Board / Shared Display or any
   // child-facing page, per product rule (those surfaces are execution-only
   // and must not expose import/admin functionality). Deliberately does NOT
   // call handleSelectChild / applyLockedChildId — this is pure navigation
@@ -520,11 +520,11 @@ const AuthShell = () => {
         />
       );
     }
-    // ParentHome auto-forwards into the locked child (deviceMode==="child")
+    // BoardSelector auto-forwards into the locked child (deviceMode==="child")
     // once it finishes loading, unless parentUnlockedView === "switch" is
     // temporarily showing the picker after a successful Parent Unlock.
     return (
-      <ParentHome
+      <BoardSelector
         user={user}
         onSelectChild={handleSelectChild}
         onSignOut={handleSignOut}

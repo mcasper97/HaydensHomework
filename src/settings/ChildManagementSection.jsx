@@ -4,25 +4,25 @@ export const CHILD_EMOJIS = ["🦁", "🐯", "🐺", "🦊", "🐻", "🐼", "�
 
 /* ─────────────────────── Child Management Section ───────────────────────
  * Existing child/learner list + "Add a learner" form, plus inline
- * rename/edit for an existing child's display name, plus a "View Child"
- * action per row. Moved out of ChildSelector's inline JSX in AuthShell.jsx
- * (UI/IA refactor) into Settings' Children section. No behavior change to
- * add — canonical child IDs are generated exactly as before (see addChild
- * in ParentHome.jsx); this is a controlled/presentational component only.
+ * rename/edit for an existing child's display name. Moved out of
+ * ChildSelector's inline JSX in AuthShell.jsx (UI/IA refactor) into
+ * Settings' Children section. No behavior change to add — canonical child
+ * IDs are generated exactly as before (see addChild in BoardSelector.jsx);
+ * this is a controlled/presentational component only.
  *
- * "View Child" is the one remaining entry point into a child's own Home
- * experience now that Parent Home's direct child-selection cards are
- * gone (a later UI cleanup removed them, no replacement there) — it calls
- * the parent-supplied viewChild(childId), which reuses AuthShell.jsx's
- * existing selectedChild/onSwitchChild navigation verbatim (see
- * ParentHome.jsx's viewChild). No new routing, no new selection state.
+ * "View Child" was removed here (navigation refactor) — every current
+ * learner now has its own destination directly on Board Selector
+ * (BoardSelector.jsx), which calls the exact same selectedChild
+ * navigation path this section's old View Child button used to call, so
+ * keeping a second copy of that entry point here would have been
+ * redundant. Rename/Add learner are unaffected.
  *
  * Rename only ever updates the existing child record's `name` field (see
- * renameChild in ParentHome.jsx) — it never changes child.id, never
+ * renameChild in BoardSelector.jsx) — it never changes child.id, never
  * adds/removes an array entry, and so never disturbs anything keyed by
  * that id elsewhere (Google Calendar childCalendarIds, Gmail sender
- * targetChildId, Items' childIds, chore templates, and View Child's own
- * id-based lookup). Editing state is kept local to this component (which
+ * targetChildId, Items' childIds, chore templates, Board Selector's own
+ * learner buttons). Editing state is kept local to this component (which
  * child row, if any, is mid-edit) since it's pure UI state that nothing
  * else needs; only the persisted rename itself goes through the
  * parent-supplied renameChild.
@@ -40,7 +40,6 @@ const ChildManagementSection = ({
   setSaveError,
   addChild,
   renameChild,
-  viewChild,
 }) => {
   const [editingChildId, setEditingChildId] = useState(null);
   const [editNameInput, setEditNameInput] = useState("");
@@ -118,13 +117,6 @@ const ChildManagementSection = ({
               <>
                 <span className="text-2xl">{child.emoji}</span>
                 <span className="text-white font-semibold flex-1">{child.name}</span>
-                <button
-                  onClick={() => viewChild(child.id)}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white shrink-0"
-                  style={{ background: "#5B2D8E" }}
-                >
-                  View Child
-                </button>
                 <button
                   onClick={() => startEdit(child)}
                   className="text-xs font-semibold text-indigo-300 underline hover:text-indigo-100 shrink-0"

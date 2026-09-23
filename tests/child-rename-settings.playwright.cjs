@@ -1,24 +1,28 @@
 /**
  * Focused regression test for the "next small UI cleanup" and its
- * follow-up:
- *   1. Parent Home no longer renders a Learners / child-card section.
+ * follow-ups:
+ *   1. Parent Board no longer renders a Learners / child-card section —
+ *      every current learner instead has its own direct entry point on
+ *      Board Selector, the pure-launcher signed-in landing page (see
+ *      src/BoardSelector.jsx).
  *   2. Settings' Children section gains inline rename/edit of an existing
  *      child's display name (src/settings/ChildManagementSection.jsx,
- *      renameChild in src/ParentHome.jsx).
- *   3. Settings' Children section also gains a "View Child" action per
- *      row (viewChild in src/ParentHome.jsx) — restoring, from Settings
- *      instead of Parent Home, the normal/unlocked entry point into a
- *      child's own Home that #1's card removal had made unreachable. It
- *      reuses AuthShell.jsx's existing selectedChild/onSwitchChild/
- *      handleSelectChild navigation verbatim — no new routing, no new
- *      selection state — and selects strictly by canonical child id.
+ *      renameChild in src/BoardSelector.jsx).
+ *   3. Settings' Children section's "View Child" action (added by an
+ *      earlier round to restore reachability after Parent Home's Learners
+ *      section was first removed) has since been removed again — now
+ *      redundant, because Board Selector's own Learners section reuses
+ *      AuthShell.jsx's existing selectedChild/onSwitchChild/
+ *      handleSelectChild navigation verbatim, selecting strictly by
+ *      canonical child id, and is the primary entry point for every
+ *      current learner.
  *
  * Identity safety is the core property under test throughout: renaming
  * only ever updates the existing child record's `name` field — never
- * child.id, never adds/removes an array entry — and View Child always
- * resolves the correct child by that same unchanging id, before and
- * after a rename. See tests/calendar-routing-persistence.unit.mjs's and
- * tests/gmail-sender-targets.unit.mjs's own new "IDENTITY SAFETY" unit
+ * child.id, never adds/removes an array entry — and Board Selector's
+ * learner buttons always resolve the correct child by that same unchanging
+ * id, before and after a rename. See tests/calendar-routing-persistence.unit.mjs's
+ * and tests/gmail-sender-targets.unit.mjs's own new "IDENTITY SAFETY" unit
  * tests for the id-keyed-mapping proofs (Calendar routing / Gmail sender
  * targets) that can't be exercised end-to-end here since guest mode has no
  * real Gmail/Calendar connection to attach those mappings to (same
@@ -58,17 +62,18 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
 
-  // ============ 1. Parent Home no longer renders Learners / child cards ============
-  ok('Parent Home shows no "Learners" heading', !(await page.getByText('Learners').isVisible().catch(() => false)));
-  ok('Parent Home still shows product/header area (title + email)', await visible('Parent Home'));
-  ok('Parent Home still shows the action-card grid (Parent Tools)', await page.getByTestId('action-settings').isVisible());
-  ok('Parent Home still shows Family Board access', await page.getByText(/Family Board/).first().isVisible());
+  // ============ 1. Board Selector is the launcher; no learners yet means no Learners section ============
+  ok('Board Selector shows no "Learners" heading before any learner exists', !(await page.getByText('Learners').isVisible().catch(() => false)));
+  ok('Board Selector shows the Family Board entry point', await page.getByTestId('board-family').isVisible());
+  ok('Board Selector shows the Parent Board entry point', await page.getByTestId('board-parent').isVisible());
+  ok('Board Selector shows the Settings entry point', await page.getByTestId('board-settings').isVisible());
+  ok('Board Selector shows Sign out', await page.getByText('Sign out').isVisible());
 
-  // Add a learner via Settings (only remaining entry point) — also proves
-  // "Add learner still works" unchanged.
-  await page.getByTestId('action-settings').click();
+  // Add a learner via Settings (only remaining entry point for creating a
+  // child) — also proves "Add learner still works" unchanged.
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Hayden');
@@ -79,18 +84,25 @@ function ok(name, cond) {
   const originalId = childrenAfterAdd.find((c) => c.name === 'Hayden')?.id;
   ok('Add learner still works: the created child has a stable canonical id', !!originalId);
 
-  await page.getByText('← Parent Home').click();
-  await page.waitForSelector('text=Parent Home');
-  ok('Parent Home still shows no "Learners" heading, even with a child present', !(await page.getByText('Learners').isVisible().catch(() => false)));
-  ok('Parent Home does not show a tappable child card for the new learner', !(await page.getByText('Tap to start learning').isVisible().catch(() => false)));
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  ok('Board Selector now shows a "Learners" heading once a learner exists', await visible('Learners'));
+  ok('Board Selector shows a tappable learner button for the new learner', await page.getByTestId('board-learner').isVisible());
+
+  // ---- Parent Board never renders a Learners section (Section 2 boundary) ----
+  await page.getByTestId('board-parent').click();
+  await page.waitForSelector('text=Parent Board');
+  ok('Parent Board shows no "Learners" heading', !(await page.getByText('Learners').isVisible().catch(() => false)));
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
 
   // ============ 2. Settings Children section still renders current children ============
-  await page.getByTestId('action-settings').click();
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   ok('Settings\' Children section shows the child\'s emoji/avatar', await visible('🦁'));
   ok('Settings\' Children section shows the child\'s current display name', await visible('Hayden'));
   ok('Settings\' Children section provides an Edit/Rename action', await page.getByRole('button', { name: 'Edit' }).isVisible());
-  ok('Settings\' Children section provides a View Child action', await page.getByRole('button', { name: 'View Child' }).isVisible());
+  ok('Settings\' Children section no longer provides a "View Child" action (redundant with Board Selector\'s Learners section)', !(await page.getByRole('button', { name: 'View Child' }).isVisible().catch(() => false)));
 
   // ============ 3. Cancel leaves data unchanged ============
   await page.getByRole('button', { name: 'Edit' }).click();
@@ -123,24 +135,27 @@ function ok(name, cond) {
   ok('The child\'s emoji is untouched by the rename', renamed?.emoji === '🦁');
   ok('The child\'s createdAt is untouched by the rename', !!renamed?.createdAt);
 
-  // ============ 5b. View Child opens the correct existing child, selected by canonical ID ============
-  // viewChild (ParentHome.jsx) looks the child up via children.find(c =>
-  // c.id === childId) using the id captured in this row's own onClick
-  // closure — so successfully reopening Home here, for a row whose
-  // display name just changed from "Hayden" to "Henry", is itself the
-  // proof: a name-based (rather than id-based) lookup would have failed
-  // to find "Hayden" anymore and broken this exact round trip.
-  ok('A renamed child can still be opened via View Child', await visible('Henry'));
-  await page.getByRole('button', { name: 'View Child' }).click();
+  // ============ 5b. Board Selector's learner button opens the correct existing child, selected by canonical ID ============
+  // Board Selector's learner buttons call onSelectChild(child) directly
+  // from a .map() over the current children array (src/BoardSelector.jsx)
+  // — so successfully reopening Home here, for a button whose display
+  // name just changed from "Hayden" to "Henry", is itself the proof: an
+  // id keyed purely by array position or a stale name would still resolve
+  // correctly since the button closes over the current child object, not
+  // a name string.
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  ok('A renamed child can still be opened via Board Selector\'s Learners section', await visible('Henry'));
+  await page.getByTestId('board-learner').click();
   await page.waitForSelector('text=My Day', { timeout: 5000 });
-  ok('View Child opens the existing Child Home/My Day experience', await visible('My Day'));
+  ok('Board Selector\'s learner button opens the existing Child Home/My Day experience', await visible('My Day'));
   const lockedChildIdAfterView = await page.evaluate(() => localStorage.getItem('crestly_locked_child_id'));
-  ok('View Child does not lock the device (no persisted lockedChildId as a side effect)', lockedChildIdAfterView === null);
+  ok('Selecting the child does not lock the device (no persisted lockedChildId as a side effect)', lockedChildIdAfterView === null);
 
-  ok('The existing "Back to Parent Page" behavior is reachable again via View Child', await visible('Back to Parent Page'));
+  ok('The existing "Back to Parent Page" behavior is reachable again from Board Selector\'s learner button', await visible('Back to Parent Page'));
   await page.getByRole('button', { name: 'Back to Parent Page' }).click();
-  await page.waitForSelector('text=Parent Home', { timeout: 5000 });
-  ok('Returning from View Child lands back in the normal Parent Home experience', await visible('Parent Home'));
+  await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 });
+  ok('Returning lands back on Board Selector', await visible('Haydens - Homework'));
 
   stored = await readChildren();
   ok('Viewing the child did not change its canonical id', stored.find((c) => c.name === 'Henry')?.id === originalId);
@@ -148,8 +163,8 @@ function ok(name, cond) {
   // ============ 6. Rename survives a full page refresh ============
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Home');
-  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   ok('The renamed display name is shown again after a full page refresh', await visible('Henry'));
 
@@ -164,27 +179,29 @@ function ok(name, cond) {
   const paytonId = stored.find((c) => c.name === 'Payton')?.id;
   ok('Payton has her own distinct canonical id, never confused with Henry\'s', !!paytonId && paytonId !== originalId);
 
-  // ============ 7b. View Child dispatches per-row, not a fixed/first child ============
-  // Two rows now exist; click specifically PAYTON's row's own View Child
-  // button (scoped to that row, not just "the first match") and confirm
-  // it opens successfully — proving each row's button is wired to that
-  // row's own id, not a shared/stale reference to whichever child was
-  // clicked first.
-  const paytonRow = page.locator('div').filter({ hasText: 'Payton' }).filter({ has: page.getByRole('button', { name: 'View Child' }) }).last();
-  await paytonRow.getByRole('button', { name: 'View Child' }).click();
+  // ============ 7b. Board Selector's learner buttons dispatch per-child, not a fixed/first child ============
+  // Two learners now exist; click specifically PAYTON's own learner button
+  // (scoped to that button, not just "the first match") and confirm it
+  // opens successfully — proving each button is wired to that child's own
+  // id, not a shared/stale reference to whichever child was clicked first.
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  const paytonBoardButton = page.getByTestId('board-learner').filter({ hasText: 'Payton' });
+  await paytonBoardButton.click();
   await page.waitForSelector('text=My Day', { timeout: 5000 });
-  ok('Clicking Payton\'s own row\'s View Child button opens a Child Home (row-scoped dispatch works)', await visible('My Day'));
+  ok('Clicking Payton\'s own learner button opens a Child Home (per-child dispatch works)', await visible('My Day'));
   await page.getByRole('button', { name: 'Back to Parent Page' }).click();
-  await page.waitForSelector('text=Parent Home', { timeout: 5000 });
+  await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 });
 
   // ============ 8. Child/shared/kiosk surfaces remain unaffected by the rename UI ============
-  await page.getByText(/Family Board/).first().click();
+  await page.getByTestId('board-family').click();
   await page.waitForSelector('text=🔆 Today');
   ok('Family Board shows the renamed child by their current name', await visible('Henry'));
   ok('Family Board never shows a rename/Edit control for children', !(await page.getByRole('button', { name: 'Edit' }).isVisible().catch(() => false)));
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 }).catch(() => {});
 
+  await page.getByTestId('board-parent').click();
   await page.getByTestId('action-upload-homework').click();
   await page.getByTestId('parent-organizer-panel').getByText('Henry', { exact: true }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});

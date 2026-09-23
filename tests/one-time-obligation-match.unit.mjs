@@ -233,7 +233,7 @@ ok(
 // ============ Production wiring — proves production code uses this helper, not a duplicate copy ============
 // UI/IA refactor note: handleCheckEmail (and everything it calls) moved out
 // of AuthShell.jsx into src/GmailCheckEmailAction.jsx — the Check Email
-// trigger is now a Parent Home action rather than inline Parent Tools JSX.
+// trigger is now a Parent Board action rather than inline Parent Tools JSX.
 // The logic itself is unchanged (see GmailCheckEmailAction.jsx's own doc
 // comment), so this wiring proof now points at its new home.
 {

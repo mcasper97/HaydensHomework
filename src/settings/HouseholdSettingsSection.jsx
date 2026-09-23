@@ -4,8 +4,9 @@ import React from "react";
  * Family name + household timezone. Moved out of ChildSelector's inline
  * JSX in AuthShell.jsx (UI/IA refactor) into Settings' Household section.
  * No behavior change — this is a controlled/presentational component; all
- * state and the actual save handlers still live in ParentHome.jsx exactly
- * where they did before (household profile load/save is unchanged), and
+ * state and the actual save handlers still live in BoardSelector.jsx
+ * (the authenticated root screen — household profile load/save is
+ * unchanged), and
  * are simply passed down as props. Extracted as its own component so a
  * future first-run Setup wizard can reuse it without duplicating this
  * markup or its save logic.

@@ -8,7 +8,7 @@ import ItemForm from "./ItemForm.jsx";
  * Add Item — the "+ type" quick-create row and its ItemForm-for-a-new-item
  * submit logic (createSourceRecord + createItem), extracted out of
  * ParentOrganizer.jsx (SHIP BLOCKER correction) so it can also be opened
- * directly from Parent Home (src/ParentHome.jsx) without navigating into
+ * directly from Parent Board (src/ParentBoard.jsx) without navigating into
  * Family Board, and without a duplicated copy of the create logic.
  * ParentOrganizer.jsx now renders this same component for its own "+ type"
  * affordance instead of its former inline copy — Family Board's Add Item

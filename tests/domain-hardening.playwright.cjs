@@ -43,15 +43,15 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await guestEnter();
-  await page.waitForSelector('text=Parent Home');
-  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
-  await page.getByText('← Parent Home').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
 
   // ============ Backward compatibility: pre-seed an "old" item with no new fields ============
   await page.evaluate(() => {
@@ -72,7 +72,7 @@ function ok(name, cond) {
     localStorage.setItem('crestly_admin_items', JSON.stringify(legacy));
   });
 
-  await page.getByText(/Family Board/).first().click();
+  await page.getByTestId('board-family').click();
   await page.waitForSelector('text=🔆 Today');
   ok('Backward-compat: pre-existing item (no new fields) loads and displays', await visible('Old Science Test'));
 
@@ -143,14 +143,12 @@ function ok(name, cond) {
   await form.getByRole('button', { name: 'Cancel' }).click();
 
   // ============ Child Home surfaces topic/unit too ============
-  // Reached via Settings > Children > "View Child" — Parent Home's own
-  // child-selection cards were removed in an earlier UI cleanup, and View
-  // Child now reuses that exact same underlying navigation instead.
+  // Reached directly via Board Selector's own Learners section (navigation
+  // refactor) — the same canonical selectedChild navigation the removed
+  // "View Child" Settings button used to call.
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Home');
-  await page.getByTestId('action-settings').click();
-  await page.waitForSelector('text=Settings');
-  await page.getByRole('button', { name: 'View Child' }).click();
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-learner').click();
   await page.waitForSelector('text=My Day');
   ok('Child Mode: due-today academic item shows topic in My Day', await visible('Long division'));
 

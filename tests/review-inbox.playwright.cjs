@@ -1,11 +1,12 @@
 /**
  * End-to-end regression test for the durable Review Inbox (Slice 1) —
  * src/organizer/ReviewInboxPanel.jsx, src/data/ingestionCandidatesRepository.js's
- * subscribePendingIngestionCandidates, and src/ParentHome.jsx's wiring
- * (single subscription driving both Parent Home's "Review Inbox" action-card
+ * subscribePendingIngestionCandidates, and src/ParentBoard.jsx's wiring
+ * (single subscription driving both Parent Board's "Review Inbox" action-card
  * badge and the inbox list, plus the reopened CandidateReviewModal +
  * auto-close). A later UI/IA refactor replaced the old "Parent Tools"
- * toggle button + badge with this action-card grid (see ParentHome.jsx) and
+ * toggle button + badge with this action-card grid (see ParentBoard.jsx,
+ * reached from the Board Selector launcher — see BoardSelector.jsx) and
  * moved add-learner into the permanent Settings page — no change to the
  * underlying subscription/badge-count logic itself.
  *
@@ -103,19 +104,19 @@ function candidate(overrides) {
   const writeCandidates = (list) => page.evaluate(([k, l]) => localStorage.setItem(k, JSON.stringify(l)), [CANDIDATES_KEY, list]);
   const reviewInboxCard = () => page.getByTestId('action-review-inbox');
   const addLearner = async (name) => {
-    await page.getByTestId('action-settings').click();
+    await page.getByTestId('board-settings').click();
     await page.waitForSelector('text=Settings');
     await page.getByText('+ Add a learner').click();
     await page.getByPlaceholder("Child's name").fill(name);
     await page.getByText('Add Learner').click();
     await page.waitForSelector(`text=${name}`);
-    await page.getByText('← Parent Home').click();
-    await page.waitForSelector('text=Parent Home');
+    await page.getByText('← All Boards').click();
+    await page.waitForSelector('text=Haydens - Homework');
   };
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
   await addLearner('Ava');
   const avaId = (await page.evaluate(() => JSON.parse(localStorage.getItem('crestly_admin_children') || '[]')))[0]?.id;
   ok('Learner Ava was created with a stable id', !!avaId);
@@ -134,7 +135,13 @@ function candidate(overrides) {
   await writeCandidates([childTargeted, legacyNoTarget, familyTargeted, missingSource, xRejectTarget, alreadyApproved, alreadyRejected, alreadyCommitted, alreadyCorroborated]);
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-parent').click();
+  // Parent Board's pending-candidate subscription starts fresh on this
+  // mount (a brand-new component instance, unlike the old single
+  // ParentHome landing page) — give it a moment to resolve before reading
+  // the badge, same as every other async-persistence wait in this suite.
+  await page.waitForTimeout(300);
 
   // ============ Badge visible before opening the Review Inbox action ============
   // 6, not 5: the 5 pending candidates PLUS the legacy "approved" recovery
@@ -164,7 +171,16 @@ function candidate(overrides) {
   ok('A normal pending row does NOT carry the "Needs attention" tag', !(await page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Spelling Test' }).getByTestId('review-inbox-needs-attention').isVisible().catch(() => false)));
 
   // ============ Badge and inbox agree (same subscription) ============
+  // The badge lives on the action grid, hidden while this focused tool
+  // view is open (Section 3's "grid replaced, not expanded beneath")  —
+  // step back to the grid to read it, then return. Since ParentBoard never
+  // unmounts across this round trip (only its local parentTool state
+  // toggles), the badge and the inbox list are still proven to share the
+  // exact same subscription, not just the same initial value.
+  await page.getByText('← Back to Parent Board').click();
   ok('The action-card badge and the inbox list agree on the pending+needs-attention count (6)', (await reviewInboxCard().textContent() || '').includes('6'));
+  await reviewInboxCard().click();
+  await page.waitForSelector('text=awaiting review');
 
   // ============ 5. Review reopens the existing CandidateReviewModal; 15/16. child-context restoration ============
   const childRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Spelling Test' });
@@ -193,15 +209,19 @@ function candidate(overrides) {
   // ============ 3/4. A "Review later"-deferred candidate survives refresh; survives navigation away/back ============
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-parent').click();
   await reviewInboxCard().click();
   await page.waitForSelector('text=awaiting review');
   ok('A "Review later"-deferred candidate survives a full page refresh', await visible('Spelling Test'));
 
-  await page.getByText(/Family Board/).first().click();
+  await page.getByText('← Back to Parent Board').click();
+  await page.getByText('← All Boards').click();
+  await page.getByTestId('board-family').click();
   await page.waitForSelector('text=🔆 Today');
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-parent').click();
   await reviewInboxCard().click();
   await page.waitForSelector('text=awaiting review');
   ok('A "Review later"-deferred candidate survives navigating away (Family Board) and back', await visible('Spelling Test'));
@@ -218,7 +238,10 @@ function candidate(overrides) {
   stored = await readCandidates();
   ok('Clicking "×" does NOT change reviewStatus (still "pending")', stored.find((c) => c.id === 'cand-x-reject')?.reviewStatus === 'pending');
   ok('The candidate remains visible in the Review Inbox after "×"', await visible('Permission Slip'));
+  await page.getByText('← Back to Parent Board').click();
   ok('The action-card badge/count is unchanged after "×" (still 6 — same persisted behavior as "Review later")', (await reviewInboxCard().textContent() || '').includes('6'));
+  await reviewInboxCard().click();
+  await page.waitForSelector('text=awaiting review');
 
   // ============ 13. Missing SourceRecord remains reviewable ============
   const missingRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Book Report' });
@@ -322,7 +345,8 @@ function candidate(overrides) {
   await page.evaluate((k) => localStorage.setItem(k, 'not valid json{{{'), CANDIDATES_KEY);
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-parent').click();
   await reviewInboxCard().click();
   await page.waitForSelector('text=No items waiting for review.');
   // Guest mode's own JSON.parse failure is caught internally and reads as
@@ -334,28 +358,30 @@ function candidate(overrides) {
   // can genuinely produce a distinguishable network/permission failure).
   ok('A malformed guest localStorage value fails closed to an empty (not crashed) inbox', await visible('No items waiting for review.'));
 
-  // ============ 12/16. Review Inbox action only on Parent Home — Family Board / Shared Display never expose it ============
+  // ============ 12/16. Review Inbox action only on Parent Board — Board Selector / Family Board / Shared Display never expose it ============
   await page.evaluate((k) => localStorage.removeItem(k), CANDIDATES_KEY);
   await writeCandidates([candidate({ id: 'cand-visibility', title: 'Visibility Probe', createdAt: '2020-01-01T00:00:00.000Z' })]);
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
+  ok('Board Selector never shows the "Review Inbox" action card', !(await reviewInboxCard().isVisible().catch(() => false)));
 
-  await page.getByText(/Family Board/).first().click();
+  await page.getByTestId('board-family').click();
   await page.waitForSelector('text=🔆 Today');
   ok('Family Board never shows the "Review Inbox" action card', !(await reviewInboxCard().isVisible().catch(() => false)));
   ok('Family Board never shows a pending candidate title', !(await page.getByText('Visibility Probe').isVisible().catch(() => false)));
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 }).catch(() => {});
 
   // ============ 16. Child Experience never exposes it ============
-  // Parent Home no longer has a direct child-selection card (removed in a
-  // later UI cleanup) — a child's Parents Page is now reached via the
-  // "Upload Homework/Photo" action instead. Child Home (the game/My Day
-  // view) is a wholly separate App.jsx render path that never imports the
-  // Review Inbox action card in the first place, so it's not separately
-  // re-verified here.
+  // Board Selector's Learners section is a direct child-selection entry
+  // point (navigation refactor), but a child's Parents Page (used here) is
+  // specifically reached via Parent Board's "Upload Homework/Photo" action
+  // instead. Child Home (the game/My Day view) is a wholly separate
+  // App.jsx render path that never imports the Review Inbox action card in
+  // the first place, so it's not separately re-verified here.
   await addLearner('Payton');
+  await page.getByTestId('board-parent').click();
   await page.getByTestId('action-upload-homework').click();
   await page.getByTestId('parent-organizer-panel').getByText('Payton', { exact: true }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});

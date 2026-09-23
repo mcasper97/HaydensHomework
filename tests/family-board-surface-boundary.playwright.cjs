@@ -1,6 +1,6 @@
 /**
  * Surface-boundary regression test, written in response to an explicit
- * product-boundary audit of FamilyBoard.jsx following the Parent Home
+ * product-boundary audit of FamilyBoard.jsx following the Parent Board
  * Add Item / Manage Chores correction.
  *
  * FamilyBoard.jsx is a single file that renders TWO architecturally
@@ -14,11 +14,11 @@
  *     Item creation, no chore-definition management, ever.
  *   - kiosk=false → the full parent-admin board (Points strip, full-CRUD
  *     ParentOrganizer incl. AddItemPanel, inline Manage Chores block,
- *     OrganizerCalendar) — reached ONLY via Parent Home's own "Family
+ *     OrganizerCalendar) — reached ONLY via Board Selector's own "Family
  *     Board" button (an already-authenticated/guest parent session) or a
  *     successful Parent PIN unlock's "Open Parent Controls" from a locked
  *     Child Mode device. This branch requires the same access level as
- *     Parent Home itself; a child/shared-display viewer without that
+ *     Board Selector itself; a child/shared-display viewer without that
  *     unlock never reaches it.
  *
  * This file proves both halves of that boundary hold, end-to-end:
@@ -68,21 +68,22 @@ function ok(name, cond) {
     page.evaluate(() => (JSON.parse(localStorage.getItem('crestly_admin_chores') || '{}').completions) || {});
 
   // Set up: guest sign-in, a learner, and a seeded chore template — via the
-  // normal Settings/Parent Home flow, so this file only proves the shared
-  // surface's own boundary, not re-proving Parent Home's plumbing (already
+  // normal Settings/Parent Board flow, so this file only proves the shared
+  // surface's own boundary, not re-proving Parent Board's plumbing (already
   // covered by tests/parent-home-admin-actions.playwright.cjs).
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Home');
-  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
-  await page.getByText('← Parent Home').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
 
+  await page.getByTestId('board-parent').click();
   await page.getByTestId('action-manage-chores').click();
   await page.waitForSelector('[data-testid="chore-management-panel"]');
   const chorePanel = page.getByTestId('chore-management-panel');
@@ -90,14 +91,17 @@ function ok(name, cond) {
   await chorePanel.getByPlaceholder('e.g. Empty upstairs trash').fill('Set the table');
   await chorePanel.getByRole('button', { name: 'Add' }).click();
   await page.waitForTimeout(300);
-  ok('Setup: chore template seeded via Parent Home', Object.values(await readChoreTemplates()).flat().some((c) => c.text === 'Set the table'));
+  ok('Setup: chore template seeded via Parent Board', Object.values(await readChoreTemplates()).flat().some((c) => c.text === 'Set the table'));
 
   // ============ A/F: the parent-admin board (kiosk=false) — Family Board button ============
-  await page.getByText(/Family Board/).first().click();
+  await page.getByText('← Back to Parent Board').click();
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-family').click();
   await page.waitForSelector('text=🔆 Today');
-  ok('Family Board (kiosk=false, opened from the authenticated Parent Home session) shows its own Add Item row', await page.getByRole('button', { name: '+ Assignment' }).isVisible());
+  ok('Family Board (kiosk=false, opened from the authenticated Board Selector session) shows its own Add Item row', await page.getByRole('button', { name: '+ Assignment' }).isVisible());
 
-  // ---- ParentOrganizer's own Add Item flow (not just Parent Home's) actually persists an Item ----
+  // ---- ParentOrganizer's own Add Item flow (not just Parent Board's) actually persists an Item ----
   await page.getByRole('button', { name: '+ Assignment' }).click();
   const boardForm = page.locator('form');
   await boardForm.getByPlaceholder('Title').fill('Board-Created Worksheet');
@@ -109,10 +113,10 @@ function ok(name, cond) {
   ok('The item is visible on the board after creating it there directly', await visible('Board-Created Worksheet'));
 
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 }).catch(() => {});
 
   // ============ B/C/D/F: the real Shared Display (kiosk=true) via the local "Organizer display" setting ============
-  await page.getByTestId('action-settings').click();
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByText('🖥️ Organizer display').click();
   await page.waitForSelector('text=🔆 Today', { timeout: 5000 }).catch(() => {});
@@ -137,7 +141,7 @@ function ok(name, cond) {
 
   // Exit kiosk back to Parent mode.
   await page.getByRole('button', { name: 'Home' }).click();
-  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 }).catch(() => {});
 
   // ============ A/F: the real Shared Display (kiosk=true) via the ?board=1 URL — a second, independent entry point ============
   await page.goto(`${BASE}/?board=1`, { waitUntil: 'networkidle' });
@@ -147,7 +151,7 @@ function ok(name, cond) {
   ok('?board=1 kiosk route also shows no Item-creation controls', !(await page.getByRole('button', { name: '+ Assignment' }).isVisible().catch(() => false)));
   ok('?board=1 kiosk route also shows no chore-template add control', !(await page.getByText('+ Add a chore').isVisible().catch(() => false)));
   ok('?board=1 kiosk route also shows no per-chore remove control', !(await page.getByLabel('Remove chore').isVisible().catch(() => false)));
-  ok('?board=1 kiosk route shows no "Add Item"/"Manage Chores" Parent Home action cards (different code path, same guarantee)', !(await page.getByTestId('action-add-item').isVisible().catch(() => false)) && !(await page.getByTestId('action-manage-chores').isVisible().catch(() => false)));
+  ok('?board=1 kiosk route shows no "Add Item"/"Manage Chores" Parent Board action cards (different code path, same guarantee)', !(await page.getByTestId('action-add-item').isVisible().catch(() => false)) && !(await page.getByTestId('action-manage-chores').isVisible().catch(() => false)));
   ok('?board=1 kiosk route can still view the previously-created item', await visible('Board-Created Worksheet'));
 
   await browser.close();

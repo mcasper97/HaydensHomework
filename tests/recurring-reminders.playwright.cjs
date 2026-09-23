@@ -46,17 +46,17 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await guestEnter();
-  await page.waitForSelector('text=Parent Home');
-  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
-  await page.getByText('← Parent Home').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
 
-  await page.getByText(/Family Board/).first().click();
+  await page.getByTestId('board-family').click();
   await page.waitForSelector('text=🔆 Today');
 
   // ============ Create a recurring Reminder via ItemForm's Repeats section ============

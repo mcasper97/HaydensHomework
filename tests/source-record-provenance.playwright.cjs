@@ -47,15 +47,15 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await guestEnter();
-  await page.waitForSelector('text=Parent Home');
-  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
-  await page.getByText('← Parent Home').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
 
   // ============ Backward compatibility: pre-existing item, no sourceRecordId ============
   await page.evaluate(() => {
@@ -148,10 +148,10 @@ function ok(name, cond) {
   // drops back to the landing screen — re-enter guest mode before continuing.
   await page.reload({ waitUntil: 'networkidle' });
   await guestEnter();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
   // CSV import lives on the per-child "Parents Page", reached via Parent
-  // Home's "Upload Homework/Photo" action (Parent Home no longer has a
-  // direct child-selection card — removed in a later UI cleanup).
+  // Board's "Upload Homework/Photo" action.
+  await page.getByTestId('board-parent').click();
   await page.getByTestId('action-upload-homework').click();
   await page.getByTestId('parent-organizer-panel').getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Import Teacher Plan', { timeout: 5000 }).catch(() => {});

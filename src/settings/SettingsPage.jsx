@@ -16,10 +16,11 @@ import DeviceModeSettings from "../DeviceModeSettings.jsx";
  * out of AuthShell.jsx, plus small extracted Household/Child sections —
  * no configuration logic is duplicated here, only relocated and composed.
  *
- * Parent-only surface: only ever rendered from ParentHome, itself only
- * reachable once a real, authenticated (or guest) parent session exists —
- * never from the unauthenticated landing page, Child Home, Family Board,
- * or a locked/shared Display surface.
+ * Reachable as its own destination from Board Selector (navigation
+ * refactor — see BoardSelector.jsx), itself only reachable once a real,
+ * authenticated (or guest) parent session exists — never from the
+ * unauthenticated landing page, Child Home, Family Board, or a
+ * locked/shared Display surface.
  */
 const SettingsPage = ({
   user,
@@ -53,7 +54,6 @@ const SettingsPage = ({
   setSaveError,
   addChild,
   renameChild,
-  viewChild,
   googleCalendarRouting,
   onRoutingSaved,
   deviceMode,
@@ -70,7 +70,7 @@ const SettingsPage = ({
             onClick={onBack}
             className="text-gray-400 hover:text-white font-semibold text-sm"
           >
-            ← Parent Home
+            ← All Boards
           </button>
         </div>
 
@@ -108,7 +108,6 @@ const SettingsPage = ({
           setSaveError={setSaveError}
           addChild={addChild}
           renameChild={renameChild}
-          viewChild={viewChild}
         />
 
         {/* Gmail/Calendar integrations require a real Firebase-authenticated

@@ -71,16 +71,16 @@ const TINY_JPEG_BASE64 =
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await guestEnter();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
 
-  await page.getByTestId('action-settings').click();
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
-  await page.getByText('← Parent Home').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
 
   await page.evaluate(() => {
     localStorage.removeItem('crestly_admin_source_records');
@@ -88,8 +88,8 @@ const TINY_JPEG_BASE64 =
   });
 
   // Navigate to the per-child Parents Page (where the photo-import card
-  // lives) via the "Upload Homework/Photo" action — Parent Home no longer
-  // has a direct child-selection card (removed in a later UI cleanup).
+  // lives) via Parent Board's "Upload Homework/Photo" action.
+  await page.getByTestId('board-parent').click();
   await page.getByTestId('action-upload-homework').click();
   await page.getByTestId('parent-organizer-panel').getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Import from a Photo', { timeout: 5000 }).catch(() => {});

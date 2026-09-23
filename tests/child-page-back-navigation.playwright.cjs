@@ -4,19 +4,21 @@
  *
  * Root cause this covers: AuthShell.jsx already passed an `onSwitchChild`
  * callback into <App> on the normal (non-locked) parent-device flow — pure
- * navigation, resets AuthShell's selectedChild back to null so ParentHome
- * renders again, with no device-mode change, no sign-out, no data write.
+ * navigation, resets AuthShell's selectedChild back to null so Board
+ * Selector renders again, with no device-mode change, no sign-out, no data
+ * write.
  *
  * History: an earlier UI cleanup removed Parent Home's direct
  * child-selection cards with no replacement, which made this normal,
  * unlocked Home entry temporarily unreachable through any UI action (a
  * disclosed finding at the time). A follow-up added "View Child" to
- * Settings' Children section (src/settings/ChildManagementSection.jsx,
- * viewChild in src/ParentHome.jsx) specifically to restore this — it
- * reuses AuthShell.jsx's existing selectedChild/onSwitchChild/
- * handleSelectChild machinery verbatim (same function the old cards
- * called), just from a new location. This file exercises that restored
- * entry point.
+ * Settings' Children section to restore this. A later navigation refactor
+ * (see src/BoardSelector.jsx, src/settings/ChildManagementSection.jsx)
+ * removed "View Child" again — now redundant — because every current
+ * learner has its own direct entry point on the Board Selector launcher,
+ * reusing AuthShell.jsx's existing selectedChild/onSwitchChild/
+ * handleSelectChild machinery verbatim (same function View Child, and the
+ * cards before it, used to call). This file exercises that entry point.
  *
  * This test covers both required scenarios:
  *   1. normal parent-device flow: the control exists, works, and is safe
@@ -54,39 +56,38 @@ function ok(name, cond) {
   const guestEnter = () => page.getByText('Continue without an account').click();
   const readChildren = () => page.evaluate(() => JSON.parse(localStorage.getItem('crestly_admin_children') || '[]'));
   const readDeviceMode = () => page.evaluate(() => localStorage.getItem('crestly_device_mode'));
-  const viewAvaFromSettings = async () => {
-    await page.getByTestId('action-settings').click();
-    await page.waitForSelector('text=Settings');
-    await page.getByRole('button', { name: 'View Child' }).click();
+  const selectAvaFromBoardSelector = async () => {
+    await page.waitForSelector('text=Haydens - Homework');
+    await page.getByTestId('board-learner').click();
     await page.waitForSelector('text=My Day', { timeout: 5000 });
   };
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await guestEnter();
-  await page.waitForSelector('text=Parent Home');
+  await page.waitForSelector('text=Haydens - Homework');
 
-  await page.getByTestId('action-settings').click();
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
-  await page.getByText('← Parent Home').click();
-  await page.waitForSelector('text=Parent Home');
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
 
-  // ============ 1. Normal authenticated parent-device flow (via Settings > Children > View Child) ============
+  // ============ 1. Normal authenticated parent-device flow (via Board Selector's Learners section) ============
   const childrenBefore = await readChildren();
   const deviceModeBefore = await readDeviceMode();
 
-  await viewAvaFromSettings();
+  await selectAvaFromBoardSelector();
   ok('Normal flow: child Home shows a "Back to Parent Page" control', await visible('Back to Parent Page'));
   ok('Normal flow: child Home still shows the existing "Parents" control too (unchanged)', await page.getByRole('button', { name: /Parents/ }).isVisible());
   ok('Normal flow: the label is exactly "Back to Parent Page", not vague ("Back"/"Home"/"Exit")', await page.getByRole('button', { name: 'Back to Parent Page' }).isVisible());
 
   await page.getByRole('button', { name: 'Back to Parent Page' }).click();
-  await page.waitForSelector('text=Parent Home', { timeout: 5000 });
-  ok('Clicking it returns to Parent Home', await visible('Parent Home'));
-  ok('Parent Home stays learner-card-free after returning (unaffected by View Child)', !(await page.getByText('Learners').isVisible().catch(() => false)));
+  await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 });
+  ok('Clicking it returns to Board Selector', await visible('Haydens - Homework'));
+  ok('Board Selector still shows the Learners section after returning', await visible('Learners'));
 
   const childrenAfter = await readChildren();
   const deviceModeAfter = await readDeviceMode();
@@ -95,14 +96,14 @@ function ok(name, cond) {
   ok('Child data is unaltered by this navigation', JSON.stringify(childrenBefore) === JSON.stringify(childrenAfter));
 
   // Re-enter and confirm the round trip is repeatable (not a one-shot control).
-  await viewAvaFromSettings();
+  await selectAvaFromBoardSelector();
   ok('Control is present again on a fresh entry (repeatable)', await visible('Back to Parent Page'));
   await page.getByRole('button', { name: 'Back to Parent Page' }).click();
-  await page.waitForSelector('text=Parent Home', { timeout: 5000 });
-  ok('Second round trip also returns to Parent Home', await visible('Parent Home'));
+  await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 });
+  ok('Second round trip also returns to Board Selector', await visible('Haydens - Homework'));
 
   // ============ 2. Locked child-device flow: no bypass, PIN still required ============
-  await page.getByTestId('action-settings').click();
+  await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByRole('button', { name: /Lock to.*Ava/ }).click();
   await page.waitForSelector('text=Set a parent PIN');
