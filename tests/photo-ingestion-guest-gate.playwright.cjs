@@ -71,12 +71,16 @@ const TINY_JPEG_BASE64 =
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await guestEnter();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
 
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
+  await page.getByText('← Parent Home').click();
+  await page.waitForSelector('text=Parent Home');
 
   await page.evaluate(() => {
     localStorage.removeItem('crestly_admin_source_records');

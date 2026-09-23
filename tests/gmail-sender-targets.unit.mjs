@@ -133,8 +133,9 @@ ok("getSenderTargetLabel degrades gracefully if the target child was since remov
 ok("SENDER_TARGET_TYPES is exactly the three approved values", JSON.stringify(SENDER_TARGET_TYPES) === JSON.stringify(["child", "family", "review"]));
 
 // ============ Changing an existing sender's target ============
-// The dropdown on an existing sender row (see AuthShell.jsx's
-// GmailApprovedSendersPanel) calls parseSenderTargetValue(selectedValue) to
+// The dropdown on an existing sender row (see src/GmailApprovedSendersPanel.jsx,
+// moved out of AuthShell.jsx by a later UI/IA refactor, no logic change)
+// calls parseSenderTargetValue(selectedValue) to
 // build the new target, validates it, then persists it verbatim via
 // updateApprovedSenderTarget — this is exactly that transformation.
 {

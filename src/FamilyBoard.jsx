@@ -2,11 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db } from "./Firebase.js";
 import { migrateLegacyFamilyEvents } from "./data/itemsRepository.js";
+import { addChoreTemplate as addChoreTemplateToRepo, removeChoreTemplate as removeChoreTemplateFromRepo } from "./data/choreTemplatesRepository.js";
 import ParentOrganizer from "./organizer/ParentOrganizer.jsx";
 import OrganizerCalendar from "./organizer/OrganizerCalendar.jsx";
 import OrganizerDisplay from "./organizer/OrganizerDisplay.jsx";
 
-const uid4 = () => Math.random().toString(36).slice(2, 8);
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 /**
@@ -161,15 +161,24 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.migrated_familyEvents_v1, ctx.uid, ctx.isAdmin]);
 
-  /* ----------------------------- Chores (legacy model — unchanged in Phase 1) ----------------------------- */
+  /* ----------------------------- Chores (legacy model — unchanged in Phase 1) -----------------------------
+   * Template add/remove itself is delegated to data/choreTemplatesRepository.js
+   * (extracted so Parent Home's "Manage Chores" action can reuse the exact
+   * same persistence logic — see src/ChoreManagementPanel.jsx — without a
+   * duplicate copy). For a real account the write lands via that module's
+   * own setDoc, and this board's existing live onSnapshot subscription
+   * above picks up the change automatically, same as before extraction.
+   * For guest/admin mode (no live listener), local `profile` state is
+   * updated directly here with the templates the repository call returns,
+   * matching the immediate-update UX guest mode has always had.
+   */
   const addChoreTemplate = async (childId) => {
     const text = choreText.trim();
     const points = Math.max(0, parseInt(chorePointsInput, 10) || 0);
     if (!text) return;
-    const templates = { ...(profile.choreTemplates || {}) };
-    templates[childId] = [...(templates[childId] || []), { id: uid4(), text, points }];
     try {
-      await persistProfile({ choreTemplates: templates });
+      const templates = await addChoreTemplateToRepo(ctx, profile.choreTemplates, childId, text, points);
+      if (isAdmin) setProfile((prev) => ({ ...prev, choreTemplates: templates }));
       setChoreText("");
       setChorePointsInput("5");
       setAddChoreFor(null);
@@ -179,10 +188,9 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   };
 
   const removeChoreTemplate = async (childId, choreId) => {
-    const templates = { ...(profile.choreTemplates || {}) };
-    templates[childId] = (templates[childId] || []).filter((c) => c.id !== choreId);
     try {
-      await persistProfile({ choreTemplates: templates });
+      const templates = await removeChoreTemplateFromRepo(ctx, profile.choreTemplates, childId, choreId);
+      if (isAdmin) setProfile((prev) => ({ ...prev, choreTemplates: templates }));
     } catch (e) {
       console.error("Remove chore failed:", e);
     }

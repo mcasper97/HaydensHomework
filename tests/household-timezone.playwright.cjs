@@ -1,7 +1,10 @@
 /**
  * End-to-end regression test for Slice A (Google Calendar Phase 1
  * groundwork) — the canonical household timezone field (users/{uid}.timezone,
- * src/data/householdTimezone.js, and its Parent Tools UI in AuthShell.jsx).
+ * src/data/householdTimezone.js). Its UI now lives in the permanent Settings
+ * page's Household section (src/settings/HouseholdSettingsSection.jsx),
+ * relocated out of AuthShell.jsx's former Parent Tools panel by a later
+ * UI/IA refactor — no change to the underlying save/validate logic.
  *
  * This slice establishes the field only — no Google Calendar API call, no
  * Item schema change, no todayStr()/recurring/Organizer date-logic change.
@@ -37,10 +40,14 @@ function ok(name, cond) {
 
   const visible = async (text) => page.getByText(text).first().isVisible().catch(() => false);
   const lsGet = (k) => page.evaluate((key) => localStorage.getItem(key), k);
+  const tzInputLocator = () => page.locator('input[placeholder="e.g. America/New_York"]');
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
+
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
 
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
@@ -54,16 +61,13 @@ function ok(name, cond) {
   await page.waitForTimeout(150);
   ok('Baseline: family name saved before touching timezone at all', (await lsGet('crestly_admin_family_name')) === 'Casper');
 
-  // ============ Household Timezone panel is Parent-Tools-only ============
-  ok('Household Timezone panel is not visible before opening Parent Tools', !(await visible('Household Timezone')));
-  await page.getByText('Parent Tools').click();
-  await page.waitForSelector('text=Household Timezone');
-  ok('Household Timezone panel is visible once Parent Tools is open', await visible('Household Timezone'));
+  // ============ Timezone lives in Settings' Household section ============
+  ok('The timezone input is visible on the Settings page', await tzInputLocator().isVisible());
 
   // ============ Unset state: suggestion shown, NOT persisted automatically ============
   ok('No timezone is stored yet before any explicit save', (await lsGet('crestly_admin_timezone')) === null);
   ok('A "Suggested:" hint is shown for the unset state', await visible('Suggested:'));
-  const tzInput = page.locator('input[placeholder="e.g. America/New_York"]');
+  const tzInput = tzInputLocator();
   const suggestedValue = await tzInput.inputValue();
   ok('The input is pre-filled with a suggested (non-empty) value', !!suggestedValue && suggestedValue.length > 0);
   ok('Merely opening the panel with a suggestion visible still does NOT persist it', (await lsGet('crestly_admin_timezone')) === null);
@@ -91,7 +95,7 @@ function ok(name, cond) {
 
   // ---- Change to a different value ----
   await page.getByRole('button', { name: 'Change' }).click();
-  const tzInput2 = page.locator('input[placeholder="e.g. America/New_York"]');
+  const tzInput2 = tzInputLocator();
   ok('"Change" pre-fills the input with the CURRENT saved value, not a fresh suggestion', (await tzInput2.inputValue()) === 'America/Los_Angeles');
   await tzInput2.fill('Europe/London');
   await page.getByRole('button', { name: 'Save' }).click();
@@ -112,24 +116,26 @@ function ok(name, cond) {
   // ============ Timezone survives a full page refresh (reads back correctly) ============
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
-  await page.getByText('Parent Tools').click();
-  await page.waitForSelector('text=Household Timezone');
+  await page.waitForSelector('text=Parent Home');
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
   ok('The saved timezone is displayed again after a full page refresh', await visible('Europe/London'));
+  await page.getByText('← Parent Home').click();
+  await page.waitForSelector('text=Parent Home');
 
   // ============ Guest/child/shared surfaces never expose the timezone control ============
   await page.getByText(/Family Board/).first().click();
   await page.waitForSelector('text=🔆 Today');
-  ok('Family Board never shows "Household Timezone"', !(await page.getByText('Household Timezone').isVisible().catch(() => false)));
+  ok('Family Board never shows the timezone input', !(await tzInputLocator().isVisible().catch(() => false)));
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Page', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
 
   await page.getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
-  ok('Child Home never shows "Household Timezone"', !(await page.getByText('Household Timezone').isVisible().catch(() => false)));
+  ok('Child Home never shows the timezone control', !(await tzInputLocator().isVisible().catch(() => false)));
   await page.getByRole('button', { name: /Parents/ }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
-  ok("Child's unlocked Parents Page view never shows \"Household Timezone\" either", !(await page.getByText('Household Timezone').isVisible().catch(() => false)));
+  ok("Child's unlocked Parents Page view never shows the timezone control either", !(await tzInputLocator().isVisible().catch(() => false)));
 
   await browser.close();
   console.log(`\n${pass} passed, ${fail} failed`);

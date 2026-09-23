@@ -1,5 +1,5 @@
 /**
- * Focused regression test for the "Parent Page -> parent management
+ * Focused regression test for the "Parent Home -> parent management
  * workspace -> photo/CSV import" navigation fix.
  *
  * Product rule (corrected after an initial revision placed the entry point
@@ -8,8 +8,14 @@
  * complete) and must never expose admin functionality — import/upload,
  * edit, delete, source management, AI review, recurrence, or household
  * config. The entry point into Import must live on the authenticated
- * Parent Page itself, behind its own clearly-labeled "Parent Tools"
- * control — never inside Family Board, never on a child page.
+ * Parent Home itself, behind its own clearly-labeled "Upload Homework/Photo"
+ * action — never inside Family Board, never on a child page.
+ *
+ * A later UI/IA refactor replaced the single "Parent Tools" toggle with a
+ * touch-friendly action-card grid (see src/ParentHome.jsx) and moved
+ * configuration (add-learner, Device Mode, etc.) into a permanent Settings
+ * page (see src/settings/SettingsPage.jsx) — this file exercises the
+ * updated navigation, same product rule.
  *
  * Exercises the guest/local-demo path (no live Firebase project needed).
  *
@@ -44,25 +50,29 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await guestEnter();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
 
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
+  ok('Settings still shows the Device Mode selector', await visible('Device Mode'));
+  ok('Settings still shows the "👤 Parent device" option', await visible('Parent device'));
+  await page.getByText('← Parent Home').click();
+  await page.waitForSelector('text=Parent Home');
 
-  // ============ Parent Page controls unchanged ============
-  ok('Parent Page still shows the Device Mode selector', await visible('Device Mode'));
-  ok('Parent Page still shows the "👤 Parent device" option', await visible('Parent device'));
-  ok('Parent Page still shows the learner card (Ava)', await visible('Ava'));
-  ok('Parent Page still shows the existing "Family Board" entry point', await page.getByText(/Family Board/).first().isVisible());
+  // ============ Parent Home controls unchanged ============
+  ok('Parent Home still shows the learner card (Ava)', await visible('Ava'));
+  ok('Parent Home still shows the existing "Family Board" entry point', await page.getByText(/Family Board/).first().isVisible());
 
-  // ============ Criterion 1: obvious new entry point on the Parent Page itself ============
-  ok('Parent Page shows the new "Parent Tools" button', await visible('Parent Tools'));
-  ok('Import is NOT visible on the Parent Page before opening the panel', !(await visible('Import from Photo / CSV')));
+  // ============ Criterion 1: obvious new entry point on Parent Home itself ============
+  ok('Parent Home shows the "Upload Homework/Photo" action card', await page.getByTestId('action-upload-homework').isVisible());
+  ok('Import is NOT visible on Parent Home before opening the panel', !(await page.getByTestId('parent-organizer-panel').isVisible().catch(() => false)));
 
-  await page.getByText('Parent Tools').click();
-  ok('Clicking it reveals the Import panel, still on the Parent Page', await visible('Import from Photo / CSV'));
+  await page.getByTestId('action-upload-homework').click();
+  ok('Clicking it reveals the Import panel, still on Parent Home', await page.getByTestId('parent-organizer-panel').isVisible());
   const panel = page.locator('[data-testid="parent-organizer-panel"]');
   ok('Panel lists the learner to import for', await panel.locator('button', { hasText: 'Ava' }).isVisible());
 
@@ -72,27 +82,27 @@ function ok(name, cond) {
   ok('Family Board shows the Organizer ("🔆 Today")', await visible('🔆 Today'));
   ok('Family Board shows the Calendar ("📅 Coming Up")', await visible('📅 Coming Up'));
   ok('Family Board shows a create control (+ Assignment) — "Add" is present', await page.getByRole('button', { name: '+ Assignment' }).isVisible());
-  ok('Family Board does NOT show any Import control', !(await page.getByText('Import from Photo / CSV').isVisible().catch(() => false)));
+  ok('Family Board does NOT show any Import control', !(await page.getByTestId('parent-organizer-panel').isVisible().catch(() => false)));
   ok('Family Board does NOT show any Import control (alt text match)', !(await page.getByText('Import Teacher Plan').isVisible().catch(() => false)));
 
-  // ============ Criterion 5: import reachable only via the Parent Tools panel ============
+  // ============ Criterion 5: import reachable only via the Parent Home action ============
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Page', { timeout: 5000 }).catch(() => {});
-  ok('Family Board\'s own Back control returns to the Parent Page', await visible('Parent Page'));
+  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
+  ok('Family Board\'s own Back control returns to Parent Home', await visible('Parent Home'));
 
-  await page.getByText('Parent Tools').click();
-  await page.waitForSelector('text=Import from Photo / CSV');
+  await page.getByTestId('action-upload-homework').click();
+  await page.waitForSelector('[data-testid="parent-organizer-panel"]');
   await page.locator('[data-testid="parent-organizer-panel"] button', { hasText: 'Ava' }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
   ok('Clicking a learner in the panel lands directly on that child\'s Parents Page', await visible('Parents Page'));
   ok('The photo-import card is reachable from this entry point', await visible('Import from a Photo'));
   ok('The existing CSV-import card is also present (nothing removed)', await visible('Import Teacher Plan (CSV)'));
 
-  // ============ Criterion 4 / back navigation: returns to the Parent Page, not the child's game Home ============
+  // ============ Criterion 4 / back navigation: returns to Parent Home, not the child's game Home ============
   ok('Back button is labeled for returning to the Parent Page (not "Back to Home")', await visible('Back to Parent Page'));
   await page.getByText('Back to Parent Page').click();
-  await page.waitForSelector('text=Parent Page', { timeout: 5000 }).catch(() => {});
-  ok('Back button returns to the Parent Page', await visible('Parent Page'));
+  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
+  ok('Back button returns to Parent Home', await visible('Parent Home'));
   ok('Back navigation did NOT land in the child\'s game Home (no game-home marker)', !(await page.getByText("Hayden's Homework").isVisible().catch(() => false)));
 
   // ============ Criterion 3: normal child-card flow (Child page) still has no import/admin controls ============

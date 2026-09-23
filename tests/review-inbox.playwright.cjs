@@ -1,9 +1,13 @@
 /**
  * End-to-end regression test for the durable Review Inbox (Slice 1) —
  * src/organizer/ReviewInboxPanel.jsx, src/data/ingestionCandidatesRepository.js's
- * subscribePendingIngestionCandidates, and AuthShell.jsx's ChildSelector
- * wiring (single subscription driving both the Parent Tools badge and the
- * inbox list, plus the reopened CandidateReviewModal + auto-close).
+ * subscribePendingIngestionCandidates, and src/ParentHome.jsx's wiring
+ * (single subscription driving both Parent Home's "Review Inbox" action-card
+ * badge and the inbox list, plus the reopened CandidateReviewModal +
+ * auto-close). A later UI/IA refactor replaced the old "Parent Tools"
+ * toggle button + badge with this action-card grid (see ParentHome.jsx) and
+ * moved add-learner into the permanent Settings page — no change to the
+ * underlying subscription/badge-count logic itself.
  *
  * Includes three post-launch product corrections to CandidateReviewModal.jsx's
  * exit actions. First correction: the explicit, distinctly-labeled "Review
@@ -97,14 +101,22 @@ function candidate(overrides) {
   const visible = async (text) => page.getByText(text).first().isVisible().catch(() => false);
   const readCandidates = () => page.evaluate((k) => JSON.parse(localStorage.getItem(k) || '[]'), CANDIDATES_KEY);
   const writeCandidates = (list) => page.evaluate(([k, l]) => localStorage.setItem(k, JSON.stringify(l)), [CANDIDATES_KEY, list]);
+  const reviewInboxCard = () => page.getByTestId('action-review-inbox');
+  const addLearner = async (name) => {
+    await page.getByTestId('action-settings').click();
+    await page.waitForSelector('text=Settings');
+    await page.getByText('+ Add a learner').click();
+    await page.getByPlaceholder("Child's name").fill(name);
+    await page.getByText('Add Learner').click();
+    await page.waitForSelector(`text=${name}`);
+    await page.getByText('← Parent Home').click();
+    await page.waitForSelector('text=Parent Home');
+  };
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
-  await page.getByText('+ Add a learner').click();
-  await page.getByPlaceholder("Child's name").fill('Ava');
-  await page.getByText('Add Learner').click();
-  await page.waitForSelector('text=Ava');
+  await page.waitForSelector('text=Parent Home');
+  await addLearner('Ava');
   const avaId = (await page.evaluate(() => JSON.parse(localStorage.getItem('crestly_admin_children') || '[]')))[0]?.id;
   ok('Learner Ava was created with a stable id', !!avaId);
 
@@ -122,17 +134,16 @@ function candidate(overrides) {
   await writeCandidates([childTargeted, legacyNoTarget, familyTargeted, missingSource, xRejectTarget, alreadyApproved, alreadyRejected, alreadyCommitted, alreadyCorroborated]);
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
 
-  // ============ Badge visible before opening Parent Tools ============
+  // ============ Badge visible before opening the Review Inbox action ============
   // 6, not 5: the 5 pending candidates PLUS the legacy "approved" recovery
   // candidate (Slice 2 — see below), which now also counts.
-  const parentToolsButtonBefore = page.locator('button', { hasText: 'Parent Tools' });
-  ok('A pending-count badge is visible on the Parent Tools button before it is opened', await parentToolsButtonBefore.getByText('6', { exact: true }).isVisible().catch(() => false));
-  ok('Review Inbox panel is not visible before opening Parent Tools', !(await visible('Review Inbox')));
+  ok('A pending-count badge is visible on the "Review Inbox" action card before it is opened', (await reviewInboxCard().textContent() || '').includes('6'));
+  ok('Review Inbox panel is not visible before tapping the action card', !(await page.getByText('awaiting review').isVisible().catch(() => false)));
 
-  await page.getByText('Parent Tools').click();
-  await page.waitForSelector('text=Review Inbox');
+  await reviewInboxCard().click();
+  await page.waitForSelector('text=awaiting review');
 
   // ============ 1. Persisted pending candidates appear; 11. multiple shown once each ============
   ok('Persisted pending candidate (child-targeted) appears', await visible('Spelling Test'));
@@ -153,9 +164,7 @@ function candidate(overrides) {
   ok('A normal pending row does NOT carry the "Needs attention" tag', !(await page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Spelling Test' }).getByTestId('review-inbox-needs-attention').isVisible().catch(() => false)));
 
   // ============ Badge and inbox agree (same subscription) ============
-  const parentToolsButton = page.locator('button', { hasText: 'Parent Tools' });
-  const badgeVisible = await parentToolsButton.getByText('6', { exact: true }).isVisible().catch(() => false);
-  ok('The Parent Tools badge and the inbox list agree on the pending+needs-attention count (6)', badgeVisible);
+  ok('The action-card badge and the inbox list agree on the pending+needs-attention count (6)', (await reviewInboxCard().textContent() || '').includes('6'));
 
   // ============ 5. Review reopens the existing CandidateReviewModal; 15/16. child-context restoration ============
   const childRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Spelling Test' });
@@ -184,17 +193,17 @@ function candidate(overrides) {
   // ============ 3/4. A "Review later"-deferred candidate survives refresh; survives navigation away/back ============
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
-  await page.getByText('Parent Tools').click();
-  await page.waitForSelector('text=Review Inbox');
+  await page.waitForSelector('text=Parent Home');
+  await reviewInboxCard().click();
+  await page.waitForSelector('text=awaiting review');
   ok('A "Review later"-deferred candidate survives a full page refresh', await visible('Spelling Test'));
 
   await page.getByText(/Family Board/).first().click();
   await page.waitForSelector('text=🔆 Today');
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Page');
-  await page.getByText('Parent Tools').click();
-  await page.waitForSelector('text=Review Inbox');
+  await page.waitForSelector('text=Parent Home');
+  await reviewInboxCard().click();
+  await page.waitForSelector('text=awaiting review');
   ok('A "Review later"-deferred candidate survives navigating away (Family Board) and back', await visible('Spelling Test'));
 
   // ============ "×" closes immediately — same as "Review later", no confirmation (Review Inbox is durable) ============
@@ -209,7 +218,7 @@ function candidate(overrides) {
   stored = await readCandidates();
   ok('Clicking "×" does NOT change reviewStatus (still "pending")', stored.find((c) => c.id === 'cand-x-reject')?.reviewStatus === 'pending');
   ok('The candidate remains visible in the Review Inbox after "×"', await visible('Permission Slip'));
-  ok('The Parent Tools badge/count is unchanged after "×" (still 6 — same persisted behavior as "Review later")', await parentToolsButton.getByText('6', { exact: true }).isVisible().catch(() => false));
+  ok('The action-card badge/count is unchanged after "×" (still 6 — same persisted behavior as "Review later")', (await reviewInboxCard().textContent() || '').includes('6'));
 
   // ============ 13. Missing SourceRecord remains reviewable ============
   const missingRow = page.locator('[data-testid="review-inbox-row"]').filter({ hasText: 'Book Report' });
@@ -313,9 +322,9 @@ function candidate(overrides) {
   await page.evaluate((k) => localStorage.setItem(k, 'not valid json{{{'), CANDIDATES_KEY);
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
-  await page.getByText('Parent Tools').click();
-  await page.waitForSelector('text=Review Inbox');
+  await page.waitForSelector('text=Parent Home');
+  await reviewInboxCard().click();
+  await page.waitForSelector('text=No items waiting for review.');
   // Guest mode's own JSON.parse failure is caught internally and reads as
   // an empty list (documented, existing "fails closed silently" guest
   // behavior — see ingestionCandidatesRepository.js's readGuestCandidates).
@@ -325,32 +334,28 @@ function candidate(overrides) {
   // can genuinely produce a distinguishable network/permission failure).
   ok('A malformed guest localStorage value fails closed to an empty (not crashed) inbox', await visible('No items waiting for review.'));
 
-  // ============ 12/16. Parent Tools only — Family Board / Shared Display never expose it ============
+  // ============ 12/16. Review Inbox action only on Parent Home — Family Board / Shared Display never expose it ============
   await page.evaluate((k) => localStorage.removeItem(k), CANDIDATES_KEY);
   await writeCandidates([candidate({ id: 'cand-visibility', title: 'Visibility Probe', createdAt: '2020-01-01T00:00:00.000Z' })]);
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
 
   await page.getByText(/Family Board/).first().click();
   await page.waitForSelector('text=🔆 Today');
-  ok('Family Board never shows "Review Inbox"', !(await page.getByText('Review Inbox').isVisible().catch(() => false)));
+  ok('Family Board never shows the "Review Inbox" action card', !(await reviewInboxCard().isVisible().catch(() => false)));
   ok('Family Board never shows a pending candidate title', !(await page.getByText('Visibility Probe').isVisible().catch(() => false)));
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Page', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
 
   // ============ 16. Child Experience never exposes it ============
-  await page.getByText('+ Add a learner').click();
-  await page.getByPlaceholder("Child's name").fill('Payton');
-  await page.getByText('Add Learner').click();
-  await page.waitForSelector('text=Payton');
+  await addLearner('Payton');
   await page.getByText('Payton', { exact: true }).click();
   await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
-  ok('Child Home never shows "Review Inbox"', !(await page.getByText('Review Inbox').isVisible().catch(() => false)));
-  ok('Child Home never shows a "Parent Tools" control either (unchanged existing gating)', !(await page.getByText('Parent Tools').isVisible().catch(() => false)));
+  ok('Child Home never shows the "Review Inbox" action card', !(await reviewInboxCard().isVisible().catch(() => false)));
   await page.getByRole('button', { name: /Parents/ }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
-  ok('Child\'s unlocked Parents Page view never shows "Review Inbox" either', !(await page.getByText('Review Inbox').isVisible().catch(() => false)));
+  ok('Child\'s unlocked Parents Page view never shows the "Review Inbox" action card either', !(await reviewInboxCard().isVisible().catch(() => false)));
 
   // ============ 17/18/19: existing immediate post-ingestion review flow (photo/CSV path) is unaffected ============
   ok('Photo-import card is still present on the child\'s Parents Page (immediate-capture flow untouched)', await visible('Import from a Photo'));

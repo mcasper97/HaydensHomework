@@ -230,20 +230,25 @@ ok(
   );
 }
 
-// ============ AuthShell wiring — proves production code uses this helper, not a duplicate copy ============
+// ============ Production wiring — proves production code uses this helper, not a duplicate copy ============
+// UI/IA refactor note: handleCheckEmail (and everything it calls) moved out
+// of AuthShell.jsx into src/GmailCheckEmailAction.jsx — the Check Email
+// trigger is now a Parent Home action rather than inline Parent Tools JSX.
+// The logic itself is unchanged (see GmailCheckEmailAction.jsx's own doc
+// comment), so this wiring proof now points at its new home.
 {
-  const authShellSrc = fs.readFileSync(path.join(__dirname, "../src/AuthShell.jsx"), "utf8");
+  const checkEmailActionSrc = fs.readFileSync(path.join(__dirname, "../src/GmailCheckEmailAction.jsx"), "utf8");
   ok(
-    "AuthShell.jsx imports decideOneTimeReconciliation and buildOneTimeSignatureFromItem from oneTimeObligationMatch.js",
-    /import\s*\{\s*buildOneTimeSignatureFromItem,\s*decideOneTimeReconciliation\s*\}\s*from\s*"\.\/organizer\/oneTimeObligationMatch\.js"/.test(authShellSrc)
+    "GmailCheckEmailAction.jsx imports decideOneTimeReconciliation and buildOneTimeSignatureFromItem from oneTimeObligationMatch.js",
+    /import\s*\{\s*buildOneTimeSignatureFromItem,\s*decideOneTimeReconciliation\s*\}\s*from\s*"\.\/organizer\/oneTimeObligationMatch\.js"/.test(checkEmailActionSrc)
   );
   ok(
-    "AuthShell.jsx actually CALLS decideOneTimeReconciliation (not just imports it unused)",
-    /decideOneTimeReconciliation\(\{/.test(authShellSrc)
+    "GmailCheckEmailAction.jsx actually CALLS decideOneTimeReconciliation (not just imports it unused)",
+    /decideOneTimeReconciliation\(\{/.test(checkEmailActionSrc)
   );
   ok(
-    "AuthShell.jsx never redefines its own canReconcileOneTime/normalizeOneTimeAction — no duplicated matching-rule function names appear in this file",
-    !/function\s+canReconcileOneTime/.test(authShellSrc) && !/function\s+normalizeOneTimeAction/.test(authShellSrc)
+    "GmailCheckEmailAction.jsx never redefines its own canReconcileOneTime/normalizeOneTimeAction — no duplicated matching-rule function names appear in this file",
+    !/function\s+canReconcileOneTime/.test(checkEmailActionSrc) && !/function\s+normalizeOneTimeAction/.test(checkEmailActionSrc)
   );
   // Correction: recurring and one-time reconciliation must share ONE
   // listItems(ctx) read per Check Email run, not a separate read each —
@@ -252,9 +257,9 @@ ok(
   // sentence's own occurrences inside comments, which use "listItems("
   // without the exact "await listItems(ctx)" call form used at the one
   // real call site).
-  const listItemsCallSites = authShellSrc.match(/await listItems\(ctx\)/g) || [];
+  const listItemsCallSites = checkEmailActionSrc.match(/await listItems\(ctx\)/g) || [];
   ok(
-    "AuthShell.jsx's handleCheckEmail calls listItems(ctx) exactly ONCE, feeding both recurring and one-time reconciliation from the same result (no duplicate Firestore read)",
+    "GmailCheckEmailAction.jsx's handleCheckEmail calls listItems(ctx) exactly ONCE, feeding both recurring and one-time reconciliation from the same result (no duplicate Firestore read)",
     listItemsCallSites.length === 1
   );
 }

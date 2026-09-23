@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { subscribeItems, createItem, updateItem, deleteItem, setItemStatus } from "../data/itemsRepository.js";
-import { createSourceRecord } from "../data/sourceRecordsRepository.js";
+import { subscribeItems, updateItem, deleteItem, setItemStatus } from "../data/itemsRepository.js";
 import { subscribeItemCompletions, setItemCompletion } from "../data/itemCompletionsRepository.js";
 import { bucketItems, choresDueToday, todayStr, isOccurrenceCompleted } from "./itemBuckets.js";
-import { ITEM_TYPE_META, FORM_TYPES, ACADEMIC_TYPES } from "../data/itemTypes.js";
+import { ITEM_TYPE_META, ACADEMIC_TYPES } from "../data/itemTypes.js";
 import ItemForm from "./ItemForm.jsx";
+import AddItemPanel from "./AddItemPanel.jsx";
 import { getCalendarStatus, publishItemToGoogleCalendar } from "../data/googleCalendarConnection.js";
 import { isItemEligibleForCalendarPublish, getEffectiveDateTime } from "./calendarEventMapping.js";
 
@@ -36,9 +36,7 @@ const ParentOrganizer = ({
   const [items, setItems] = useState([]);
   const [completions, setCompletions] = useState([]);
   const [filterChild, setFilterChild] = useState("");
-  const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
-  const [formType, setFormType] = useState("assignment");
 
   // Google Calendar publishing (Slice C) — connection status is fetched
   // once, the same way GoogleCalendarConnectionPanel does in AuthShell.jsx,
@@ -102,38 +100,16 @@ const ParentOrganizer = ({
       .filter((g) => g.chores.length > 0);
   }, [children, filterChild, choreTemplates, choreCompletions]);
 
-  const openCreate = (type) => {
-    setEditingItem(null);
-    setFormType(type);
-    setShowForm(true);
-  };
-
   const openEdit = (item) => {
     setEditingItem(item);
-    setFormType(item.type);
-    setShowForm(true);
   };
 
-  const handleFormSubmit = async (payload, existing) => {
-    if (existing) {
-      await updateItem(ctx, existing.id, payload);
-    } else {
-      let sourceRecordId = null;
-      try {
-        const record = await createSourceRecord(ctx, {
-          sourceType: "manual",
-          title: payload.title,
-          createdByUid: ctx.uid,
-        });
-        sourceRecordId = record?.id ?? null;
-      } catch (err) {
-        // Provenance is best-effort — the item must still be created even
-        // if the SourceRecord write fails for any reason.
-        console.error("ParentOrganizer: createSourceRecord failed", err);
-      }
-      await createItem(ctx, sourceRecordId ? { ...payload, sourceRecordId } : payload);
-    }
-    setShowForm(false);
+  // Create-item logic itself (SourceRecord + createItem) lives in
+  // AddItemPanel.jsx now (SHIP BLOCKER correction — extracted so Parent
+  // Home can reuse it without navigating into Family Board). This handler
+  // is edit-only; existingItem is always set when this form is shown.
+  const handleEditSubmit = async (payload, existing) => {
+    await updateItem(ctx, existing.id, payload);
     setEditingItem(null);
   };
 
@@ -293,33 +269,18 @@ const ParentOrganizer = ({
         <p className="text-sm text-red-600 font-semibold">{publishError}</p>
       )}
 
-      {allowManage && (
-        <div className="flex flex-wrap gap-2">
-          {FORM_TYPES.map((t) => (
-            <button
-              key={t}
-              onClick={() => openCreate(t)}
-              className="text-xs font-bold px-3 py-1.5 rounded-full bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 transition"
-            >
-              + {ITEM_TYPE_META[t].label}
-            </button>
-          ))}
-        </div>
-      )}
+      {allowManage && <AddItemPanel ctx={ctx} children={children} />}
 
-      {allowManage && showForm && (
+      {allowManage && editingItem && (
         <div className="rounded-3xl p-5 border border-gray-200 bg-gray-50">
           <ItemForm
             children={children}
             candidateParentItems={candidateParentItems}
-            initialType={formType}
+            initialType={editingItem.type}
             existingItem={editingItem}
-            onSubmit={handleFormSubmit}
+            onSubmit={handleEditSubmit}
             showRecurrence
-            onCancel={() => {
-              setShowForm(false);
-              setEditingItem(null);
-            }}
+            onCancel={() => setEditingItem(null)}
           />
         </div>
       )}

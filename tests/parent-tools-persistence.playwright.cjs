@@ -1,21 +1,17 @@
 /**
- * Focused regression test for Commit 4.2 — Parent Tools open/closed state
- * survives a page refresh for a real authenticated parent, via a small
- * localStorage-backed preference (see src/data/parentToolsPreference.js),
- * scoped to that parent's uid.
- *
- * Exercises the guest/local-demo path only (no live Firebase project
- * available in this environment). Guest mode is deliberately EXCLUDED from
- * the new persistence mechanism — its Parent Tools state must remain
- * exactly as it always was: in-memory only, closed again on every reload.
- * This file proves that guest behavior is unchanged (work package item 7)
- * and that Family Board / a child page never expose Parent Tools (items 5
- * and 6). Verifying the actual persistence for a real authenticated parent
- * (items 1-4: open survives reload, close survives reload) needs a live
- * Firebase project and a real signed-in account, which this sandbox does
- * not have — see tests/parent-tools-preference.unit.mjs for the underlying
- * storage mechanism's coverage, and the completion report's disclosed
- * limitation for what still needs live/manual verification.
+ * Regression test for Parent Home's "Upload Homework/Photo" action panel
+ * (formerly Commit 4.2's "Parent Tools" toggle open/closed persistence,
+ * src/data/parentToolsPreference.js). A later UI/IA refactor replaced the
+ * single "Parent Tools" toggle + inline config panels with a touch-friendly
+ * action-card grid on Parent Home (see src/ParentHome.jsx) and a permanent
+ * Settings page (see src/settings/SettingsPage.jsx) — the persisted
+ * open/closed preference concept no longer applies (each action panel is
+ * plain toggled local component state, collapsing again on every reload,
+ * same for guest and real accounts alike). This file now proves:
+ *   - the Upload Homework/Photo panel opens/closes on demand,
+ *   - Family Board / a child page never expose parent-only Home actions,
+ * and that parentToolsOpen:<uid> is no longer written by anything (the
+ * data module itself is untouched/available for reuse, just unused here).
  *
  * Usage:
  *   npm run dev                                              # in one terminal
@@ -49,61 +45,52 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
 
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
+  await page.getByText('← Parent Home').click();
+  await page.waitForSelector('text=Parent Home');
 
-  // ============ Item 1: Parent Tools opens normally ============
-  ok('Import panel is not visible before opening Parent Tools', !(await visible('Import from Photo / CSV')));
-  await page.getByText('Parent Tools').click();
-  ok('Clicking Parent Tools reveals its panel', await visible('Import from Photo / CSV'));
+  // ============ Upload Homework/Photo panel opens/closes on demand ============
+  ok('Upload panel is not visible before tapping the action card', !(await visible('Add a learner in Settings first to import for them')) && !(await page.getByTestId('parent-organizer-panel').isVisible().catch(() => false)));
+  await page.getByTestId('action-upload-homework').click();
+  ok('Tapping "Upload Homework/Photo" reveals its panel', await page.getByTestId('parent-organizer-panel').isVisible());
+  ok('The panel lists the newly-added learner', await visible('Ava'));
 
-  // ============ Item 7 (part 1): guest mode never writes a persistence key ============
-  ok('Guest mode does not write any parentToolsOpen:<uid> key when opened', (await anyParentToolsKeys()).length === 0);
+  // ============ Nothing writes a legacy parentToolsOpen:<uid> key anymore ============
+  ok('No parentToolsOpen:<uid> key is ever written (guest mode)', (await anyParentToolsKeys()).length === 0);
 
-  // ============ Item 7 (part 2): guest mode's open state does NOT survive reload (unchanged from before this work package) ============
-  // Guest is a local-only, in-memory session (never persisted anywhere —
-  // see GUEST_USER in AuthShell.jsx), so a reload always returns to the
-  // landing screen regardless of this work package; re-entering guest mode
-  // and confirming Parent Tools starts closed again is the correct,
-  // unchanged pre-existing behavior to verify here.
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
-  ok('After reload (guest re-entered), Parent Tools panel is collapsed again (pre-existing behavior, unchanged)', !(await visible('Import from Photo / CSV')));
-  ok('The "Parent Tools" button itself is still present after reload', await visible('Parent Tools'));
-
-  // Reopen for the next checks, then verify closing still leaves no persistence key and no state survives a further reload either.
-  await page.getByText('Parent Tools').click();
-  await page.waitForSelector('text=Import from Photo / CSV');
-  await page.getByText('Parent Tools').click();
-  ok('Clicking Parent Tools again collapses its panel', !(await visible('Import from Photo / CSV')));
-  ok('Guest mode still writes no parentToolsOpen:<uid> key after closing', (await anyParentToolsKeys()).length === 0);
+  // ============ Collapses again on tap, and never survives a reload (plain local state) ============
+  await page.getByTestId('action-upload-homework').click();
+  ok('Tapping "Upload Homework/Photo" again collapses its panel', !(await page.getByTestId('parent-organizer-panel').isVisible().catch(() => false)));
 
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
-  ok('After reload following a close, guest mode remains closed (unchanged)', !(await visible('Import from Photo / CSV')));
+  await page.waitForSelector('text=Parent Home');
+  ok('After reload (guest re-entered), the Upload panel is collapsed again', !(await page.getByTestId('parent-organizer-panel').isVisible().catch(() => false)));
+  ok('The "Upload Homework/Photo" action card is still present after reload', await page.getByTestId('action-upload-homework').isVisible());
 
-  // ============ Item 5: Family Board does not expose Parent Tools ============
+  // ============ Family Board does not expose parent-only Home actions ============
   await page.getByText(/Family Board/).first().click();
   await page.waitForSelector('text=🔆 Today');
-  ok('Family Board does not show a "Parent Tools" control', !(await page.getByText('Parent Tools').isVisible().catch(() => false)));
-  ok('Family Board does not show the Import panel content either', !(await page.getByText('Import from Photo / CSV').isVisible().catch(() => false)));
+  ok('Family Board does not show the "Upload Homework/Photo" action card', !(await page.getByTestId('action-upload-homework').isVisible().catch(() => false)));
+  ok('Family Board does not show the Upload panel content either', !(await page.getByTestId('parent-organizer-panel').isVisible().catch(() => false)));
 
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Page', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
 
-  // ============ Item 6: a child page does not expose Parent Tools ============
+  // ============ A child page does not expose parent-only Home actions ============
   await page.getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
-  ok('Child\'s Home screen does not show a "Parent Tools" control', !(await page.getByText('Parent Tools').isVisible().catch(() => false)));
+  ok('Child\'s Home screen does not show a Parent Home action card', !(await page.getByTestId('action-upload-homework').isVisible().catch(() => false)));
   await page.getByRole('button', { name: /Parents/ }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
-  ok('Child\'s (unlocked, execution-only) Parents Page view does not show a "Parent Tools" control', !(await page.getByText('Parent Tools').isVisible().catch(() => false)));
+  ok('Child\'s (unlocked, execution-only) Parents Page view does not show a Parent Home action card', !(await page.getByTestId('action-upload-homework').isVisible().catch(() => false)));
 
   await browser.close();
   console.log(`\n${pass} passed, ${fail} failed`);

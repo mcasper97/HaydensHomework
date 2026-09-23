@@ -43,11 +43,15 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await guestEnter();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
+  await page.getByText('← Parent Home').click();
+  await page.waitForSelector('text=Parent Home');
 
   // ============ Backward compatibility: pre-seed an "old" item with no new fields ============
   await page.evaluate(() => {
@@ -140,7 +144,7 @@ function ok(name, cond) {
 
   // ============ Child Mode surfaces topic/unit too ============
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
   await page.getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=My Day');
   ok('Child Mode: due-today academic item shows topic in My Day', await visible('Long division'));

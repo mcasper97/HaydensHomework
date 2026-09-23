@@ -4,12 +4,17 @@
  *
  * Root cause this covers: AuthShell.jsx already passed an `onSwitchChild`
  * callback into <App> on the normal (non-locked) parent-device flow — pure
- * navigation, resets AuthShell's selectedChild back to null so ChildSelector
- * (the Parent Page) renders again, with no device-mode change, no sign-out,
- * no data write. It was simply never wired to a visible control on the
- * child's Home screen. This test covers both required scenarios:
+ * navigation, resets AuthShell's selectedChild back to null so ParentHome
+ * (formerly ChildSelector) renders again, with no device-mode change, no
+ * sign-out, no data write. It was simply never wired to a visible control on
+ * the child's Home screen. This test covers both required scenarios:
  *   1. normal parent-device flow: the control exists, works, and is safe
  *   2. locked Child Mode: no such control is exposed — PIN is still required
+ *
+ * A later UI/IA refactor renamed the Parent page's heading to "Parent Home"
+ * and moved Device Mode (lock-to-child) controls into the permanent Settings
+ * page — this file exercises the updated navigation, same underlying
+ * App.jsx behavior (untouched by that refactor).
  *
  * Exercises the guest/local-demo path (no live Firebase project needed).
  *
@@ -46,12 +51,16 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await guestEnter();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
 
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
+  await page.getByText('← Parent Home').click();
+  await page.waitForSelector('text=Parent Home');
 
   // ============ 1. Normal authenticated parent-device flow ============
   const childrenBefore = await readChildren();
@@ -64,14 +73,14 @@ function ok(name, cond) {
   ok('Normal flow: the label is exactly "Back to Parent Page", not vague ("Back"/"Home"/"Exit")', await page.getByRole('button', { name: 'Back to Parent Page' }).isVisible());
 
   await page.getByRole('button', { name: 'Back to Parent Page' }).click();
-  await page.waitForSelector('text=Parent Page', { timeout: 5000 });
-  ok('Clicking it returns to the Parent Page / learner selector', await visible('Parent Page'));
-  ok('The learner card (Ava) is visible again on the Parent Page', await visible('Ava'));
+  await page.waitForSelector('text=Parent Home', { timeout: 5000 });
+  ok('Clicking it returns to Parent Home / the learner selector', await visible('Parent Home'));
+  ok('The learner card (Ava) is visible again on Parent Home', await visible('Ava'));
 
   const childrenAfter = await readChildren();
   const deviceModeAfter = await readDeviceMode();
   ok('Device mode is unchanged by this navigation', deviceModeBefore === deviceModeAfter);
-  ok('Not logged out — still in the same guest session, not back at sign-in', !(await visible('Parent Sign In')));
+  ok('Not logged out — still in the same guest session, not back at sign-in', !(await visible('Sign In')));
   ok('Child data is unaltered by this navigation', JSON.stringify(childrenBefore) === JSON.stringify(childrenAfter));
 
   // Re-enter and confirm the round trip is repeatable (not a one-shot control).
@@ -79,10 +88,12 @@ function ok(name, cond) {
   await page.waitForSelector('text=My Day');
   ok('Control is present again on a fresh entry (repeatable)', await visible('Back to Parent Page'));
   await page.getByRole('button', { name: 'Back to Parent Page' }).click();
-  await page.waitForSelector('text=Parent Page', { timeout: 5000 });
-  ok('Second round trip also returns to the Parent Page', await visible('Parent Page'));
+  await page.waitForSelector('text=Parent Home', { timeout: 5000 });
+  ok('Second round trip also returns to Parent Home', await visible('Parent Home'));
 
   // ============ 2. Locked child-device flow: no bypass, PIN still required ============
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
   await page.getByRole('button', { name: /Lock to.*Ava/ }).click();
   await page.waitForSelector('text=Set a parent PIN');
   await page.getByPlaceholder('New PIN (4+ digits)').fill('1234');

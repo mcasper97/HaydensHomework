@@ -3,26 +3,27 @@
  * (#26, Commit 5): "review candidates appear in the review UI, but no
  * users/{uid}/sourceRecords or users/{uid}/ingestionCandidates documents
  * exist in Firestore." A full investigation (ctx/uid tracing, Firestore
- * rules review, and an empirical replay of src/AuthShell.jsx's
- * handleCheckEmail write sequence below, against a mock that rejects
- * `undefined` field values exactly as real Firestore does) found the
- * client write path itself correct for every realistic shape (child /
- * family / review targets, a failed webpage fetch, an extraction
- * failure) — no code path was found where a candidate could reach the
- * review UI (src/AuthShell.jsx's `newCandidates`) without its
+ * rules review, and an empirical replay of the (then-AuthShell.jsx, now
+ * src/GmailCheckEmailAction.jsx — moved by a later UI/IA refactor, no
+ * logic change) handleCheckEmail write sequence below, against a mock
+ * that rejects `undefined` field values exactly as real Firestore does)
+ * found the client write path itself correct for every realistic shape
+ * (child / family / review targets, a failed webpage fetch, an
+ * extraction failure) — no code path was found where a candidate could
+ * reach the review UI (`newCandidates`) without its
  * createSourceRecord()/createIngestionCandidate() call having already
  * resolved successfully via the real (non-guest) Firestore branch. The
  * one confirmed gap: a write failure was only console.error'd, never
- * shown to the parent (see AuthShell.jsx's `hadPersistenceError`/setError
- * addition) — fixed alongside this test file, so any FUTURE occurrence
- * is immediately visible in the UI instead of silently invisible.
+ * shown to the parent (see `hadPersistenceError`/setError addition) —
+ * fixed alongside this test file, so any FUTURE occurrence is
+ * immediately visible in the UI instead of silently invisible.
  *
  * This file proves, going forward, that an authenticated ctx
  * (isAdmin: false) always takes the real users/{uid}/... Firestore path
  * and never falls back to localStorage — the exact thing live validation
  * couldn't rule out just by reading source. It mirrors (deliberately, not
  * imports — see the note above `processEmailResult` below)
- * src/AuthShell.jsx's handleCheckEmail write sequence exactly, against a
+ * src/GmailCheckEmailAction.jsx's handleCheckEmail write sequence exactly, against a
  * mock firebase/firestore that mimics the real SDK's behavior closely
  * enough to catch the most common real-world persistence footgun (an
  * `undefined` field anywhere in a written document throws, exactly as
@@ -105,11 +106,11 @@ function installLocalStorageSpy() {
   return { calls: () => getCalls + setCalls, backing };
 }
 
-// Mirrors src/AuthShell.jsx's handleCheckEmail write sequence exactly,
-// including the Commit 6 google_doc branching (see that file — not
-// imported directly, since it's embedded in a JSX component with no
-// exported pure function to call). Keep in sync with AuthShell.jsx if
-// that sequence changes.
+// Mirrors src/GmailCheckEmailAction.jsx's handleCheckEmail write sequence
+// exactly, including the Commit 6 google_doc branching (see that file —
+// not imported directly, since it's embedded in a JSX component with no
+// exported pure function to call). Keep in sync with GmailCheckEmailAction.jsx
+// if that sequence changes.
 async function processEmailResult(ctx, emailResult, { createSourceRecord, createIngestionCandidate }) {
   const newCandidates = [];
   const emailSourceRecord = await createSourceRecord(ctx, {

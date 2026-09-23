@@ -94,12 +94,16 @@ function item(overrides) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
 
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
+  await page.getByText('← Parent Home').click();
+  await page.waitForSelector('text=Parent Home');
 
   // ============ Seed items directly (guest storage) ============
   const unpublishedEligible = item({ id: 'item-eligible', type: 'school_event', title: 'Spring Concert', startDate: '2026-10-01' });
@@ -109,7 +113,7 @@ function item(overrides) {
 
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
 
   // ============ Family Board (Parent Organizer surface) ============
   await page.getByText(/Family Board/).first().click();
@@ -126,7 +130,7 @@ function item(overrides) {
 
   // ============ Guest/child surfaces never expose Calendar controls ============
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Page', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
 
   await page.getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});

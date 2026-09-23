@@ -1,6 +1,9 @@
 /**
  * End-to-end regression test for Slice C.1B's Google Calendar Routing
- * Parent Tools panel — src/AuthShell.jsx's GoogleCalendarRoutingPanel.
+ * panel — src/GoogleCalendarRoutingPanel.jsx (moved verbatim out of
+ * AuthShell.jsx's former Parent Tools panel by a later UI/IA refactor into
+ * the permanent Settings page's Google Calendar section — no behavior
+ * change).
  *
  * Like GoogleCalendarConnectionPanel (see
  * tests/calendar-connection-panel.playwright.cjs's own header comment)
@@ -18,10 +21,11 @@
  * What IS provable in guest mode: the panel's gating, identical in shape
  * to GoogleCalendarConnectionPanel's own — guest/local-demo mode has no
  * real account to attach a Calendar connection (or its routing config)
- * to, so the panel must never render there, and (like every other Parent
- * Tools panel) must never be reachable from Family Board, Child Home, or
- * a locked/shared Display surface. This file also proves the removed
- * Slice C.1A temporary "Test Calendar List" control is gone for good.
+ * to, so the panel must never render there, and (like every other
+ * Settings section) must never be reachable from Family Board, Child
+ * Home, or a locked/shared Display surface. This file also proves the
+ * removed Slice C.1A temporary "Test Calendar List" control is gone for
+ * good.
  *
  * Usage:
  *   npm run dev                                        # in one terminal
@@ -51,33 +55,34 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
 
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
 
-  // ============ Guest mode: Parent Tools open, Routing panel absent (real-account-only, mirrors the Connection panel) ============
-  ok('"Google Calendar Routing" panel is not visible before opening Parent Tools', !(await page.getByText('Google Calendar Routing').isVisible().catch(() => false)));
-  await page.getByText('Parent Tools').click();
-  await page.waitForSelector('text=Review Inbox');
+  // ============ Guest mode: Settings open, Routing panel absent (real-account-only, mirrors the Connection panel) ============
   ok(
     'Guest mode never shows the "Google Calendar Routing" panel (requires a real Firebase account and a connected Calendar)',
-    !(await page.getByText('Google Calendar Routing').isVisible().catch(() => false))
+    !(await page.locator('[data-testid="google-calendar-routing-panel"]').isVisible().catch(() => false))
   );
-  ok('Other Parent Tools panels (e.g. Household Timezone) ARE still shown in guest mode', await page.getByText('Household Timezone').isVisible().catch(() => false));
+  ok('Other Settings sections (e.g. Household/Timezone) ARE still shown in guest mode', await page.locator('input[placeholder="e.g. America/New_York"]').isVisible().catch(() => false));
 
   // ============ The Slice C.1A temporary validation control is gone for good ============
   ok('The removed temporary "Test Calendar List" control never appears anywhere', !(await page.getByText('Test Calendar List').isVisible().catch(() => false)));
   ok('The removed temporary control\'s data-testid is gone from the DOM entirely', (await page.locator('[data-testid="calendar-list-validation-control"]').count()) === 0);
 
   // ============ Guest/child/shared surfaces never expose the routing panel ============
+  await page.getByText('← Parent Home').click();
+  await page.waitForSelector('text=Parent Home');
   await page.getByText(/Family Board/).first().click();
   await page.waitForSelector('text=🔆 Today');
   ok('Family Board never shows "Google Calendar Routing"', !(await page.getByText('Google Calendar Routing').isVisible().catch(() => false)));
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Page', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
 
   await page.getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
@@ -85,7 +90,7 @@ function ok(name, cond) {
   await page.getByRole('button', { name: /Parents/ }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
   ok("Child's unlocked Parents Page view never shows \"Google Calendar Routing\" either", !(await page.getByText('Google Calendar Routing').isVisible().catch(() => false)));
-  ok('Child\'s unlocked Parents Page view never shows a "Parent Tools" control either (unchanged existing gating)', !(await page.getByText('Parent Tools').isVisible().catch(() => false)));
+  ok('Child\'s unlocked Parents Page view never shows a Settings control either (unchanged existing gating)', !(await page.getByText('Settings').isVisible().catch(() => false)));
 
   await browser.close();
   console.log(`\n${pass} passed, ${fail} failed`);

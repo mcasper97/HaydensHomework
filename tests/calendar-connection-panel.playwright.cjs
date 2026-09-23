@@ -1,6 +1,9 @@
 /**
- * End-to-end regression test for Slice B's Google Calendar Parent Tools
- * panel — src/AuthShell.jsx's GoogleCalendarConnectionPanel.
+ * End-to-end regression test for Slice B's Google Calendar connection
+ * panel — src/GoogleCalendarConnectionPanel.jsx (moved verbatim out of
+ * AuthShell.jsx's former Parent Tools panel by a later UI/IA refactor into
+ * the permanent Settings page's Google Calendar section — no behavior
+ * change).
  *
  * Like Gmail's own connection panel (which has never had Playwright
  * coverage in this suite, for the identical reason — no test file exists
@@ -8,17 +11,14 @@
  * the three live connection states (Not connected / Connected / Needs
  * reconnect) require a real Firebase-authenticated parent and a real
  * Google OAuth round trip — neither is available in this sandbox. Those
- * remain a DISCLOSED LIMITATION requiring live/manual verification,
- * exactly the same accepted gap tests/parent-tools-persistence.playwright.cjs's
- * own header comment already documents for the equivalent real-account-only
- * Parent Tools persistence behavior.
+ * remain a DISCLOSED LIMITATION requiring live/manual verification.
  *
  * What IS provable in guest mode: the panel's gating. Google Calendar
  * OAuth requires a real account to attach a connection to (see
  * api/_auth.js), so — exactly like GmailConnectionPanel — it must never
- * render for a guest/local-demo profile, and (like every other Parent
- * Tools panel) must never be reachable from Family Board, Child Home, or
- * a locked/shared Display surface.
+ * render for a guest/local-demo profile, and (like every other
+ * Settings section) must never be reachable from Family Board, Child
+ * Home, or a locked/shared Display surface.
  *
  * Usage:
  *   npm run dev                                            # in one terminal
@@ -48,33 +48,34 @@ function ok(name, cond) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   await page.getByText('Continue without an account').click();
-  await page.waitForSelector('text=Parent Page');
+  await page.waitForSelector('text=Parent Home');
 
+  await page.getByTestId('action-settings').click();
+  await page.waitForSelector('text=Settings');
   await page.getByText('+ Add a learner').click();
   await page.getByPlaceholder("Child's name").fill('Ava');
   await page.getByText('Add Learner').click();
   await page.waitForSelector('text=Ava');
 
-  // ============ Guest mode: Parent Tools open, Calendar panel absent (real-account-only, mirrors Gmail) ============
-  ok('"Google Calendar" panel is not visible before opening Parent Tools', !(await page.getByText('Google Calendar').isVisible().catch(() => false)));
-  await page.getByText('Parent Tools').click();
-  await page.waitForSelector('text=Review Inbox');
+  // ============ Guest mode: Settings open, Calendar panel absent (real-account-only, mirrors Gmail) ============
   ok(
-    'Guest mode never shows the "Google Calendar" Parent Tools panel (requires a real Firebase account, exactly like Gmail)',
-    !(await page.getByText('Google Calendar').isVisible().catch(() => false))
+    'Guest mode never shows the "Google Calendar" panel on Settings (requires a real Firebase account, exactly like Gmail)',
+    !(await page.locator('[data-testid="google-calendar-connection-panel"]').isVisible().catch(() => false))
   );
   ok(
     'Guest mode also never shows the "Gmail" panel (cross-check: same real-account-only gating both panels already share)',
     !(await page.locator('[data-testid="gmail-connection-panel"]').isVisible().catch(() => false))
   );
-  ok('Other Parent Tools panels (e.g. Household Timezone) ARE still shown in guest mode', await page.getByText('Household Timezone').isVisible().catch(() => false));
+  ok('Other Settings sections (e.g. Household/Timezone) ARE still shown in guest mode', await page.locator('input[placeholder="e.g. America/New_York"]').isVisible().catch(() => false));
 
   // ============ Guest/child/shared surfaces never expose Calendar controls ============
+  await page.getByText('← Parent Home').click();
+  await page.waitForSelector('text=Parent Home');
   await page.getByText(/Family Board/).first().click();
   await page.waitForSelector('text=🔆 Today');
   ok('Family Board never shows "Google Calendar"', !(await page.getByText('Google Calendar').isVisible().catch(() => false)));
   await page.getByText('← Back').click();
-  await page.waitForSelector('text=Parent Page', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('text=Parent Home', { timeout: 5000 }).catch(() => {});
 
   await page.getByText('Ava', { exact: true }).click();
   await page.waitForSelector('text=Parents', { timeout: 5000 }).catch(() => {});
@@ -82,7 +83,7 @@ function ok(name, cond) {
   await page.getByRole('button', { name: /Parents/ }).click();
   await page.waitForSelector('text=Parents Page', { timeout: 5000 }).catch(() => {});
   ok("Child's unlocked Parents Page view never shows \"Google Calendar\" either", !(await page.getByText('Google Calendar').isVisible().catch(() => false)));
-  ok('Child\'s unlocked Parents Page view never shows a "Parent Tools" control either (unchanged existing gating)', !(await page.getByText('Parent Tools').isVisible().catch(() => false)));
+  ok('Child\'s unlocked Parents Page view never shows a Settings control either (unchanged existing gating)', !(await page.getByText('Settings').isVisible().catch(() => false)));
 
   await browser.close();
   console.log(`\n${pass} passed, ${fail} failed`);
