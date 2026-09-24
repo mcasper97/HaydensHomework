@@ -11,7 +11,13 @@
  */
 import { auth } from "../Firebase.js";
 
-async function authedFetch(path, options = {}) {
+// Exported (observability/manual-validation follow-up) so
+// src/data/emailIngestionScheduleRepository.js's runEmailIngestionNow can
+// reuse the exact same ID-token-attaching fetch wrapper rather than a
+// second copy of it — every authenticated client call in this app already
+// attaches the parent's real Firebase ID token this same way, never
+// CRON_SECRET or any other server-only secret.
+export async function authedFetch(path, options = {}) {
   const idToken = await auth.currentUser.getIdToken();
   const res = await fetch(path, {
     ...options,

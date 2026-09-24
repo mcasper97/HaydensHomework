@@ -144,29 +144,36 @@ export async function tryAcquireEmailIngestionLock(uid, { db = defaultDb(), now 
  * releaseEmailIngestionLock(uid, { status, lastRunLocalDate, lastRunAt })
  * Always called after a run attempt (success OR failure — task Section 6:
  * "a failed household run must release any durable lock") to clear the
- * runLock lease and record the basic run status the due-run guard (task
- * Section 3) reads next time. Merged onto the existing
- * emailIngestionSchedule map so enabled/localTime are never touched here.
+ * runLock lease and, when the caller passes them, record run bookkeeping
+ * the due-run guard (task Section 3) reads next time. Merged onto the
+ * existing emailIngestionSchedule map so enabled/localTime are never
+ * touched here.
  */
-export async function releaseEmailIngestionLock(uid, { status, lastRunLocalDate, lastRunAt }, { db = defaultDb() } = {}) {
+export async function releaseEmailIngestionLock(uid, { status, lastRunLocalDate, lastRunAt } = {}, { db = defaultDb() } = {}) {
   // Dot-notation field paths rather than a nested plain object — an
   // UNAMBIGUOUS targeted update of exactly these leaf fields regardless
   // of any nested-map merge nuance, so enabled/localTime (never included
   // here) can never be touched by this call.
   //
-  // lastRunLocalDate is deliberately OMITTED from the write when the
-  // caller doesn't pass it (see api/_scheduledIngestionRunner.js — it's
-  // only passed on a SUCCESSFUL run). Task Section 6 requires a failed
-  // run to "remain eligible for later retry" — writing today's local
-  // date on a failure would make isHouseholdRunDue treat the household
-  // as "already_ran_today" and block a later same-day retry, which is
+  // status/lastRunAt/lastRunLocalDate are each deliberately OMITTED from
+  // the write when the caller doesn't pass them — the lease is always
+  // released, but automatic-run bookkeeping is only written when the
+  // caller explicitly asks for it (see
+  // api/_scheduledIngestionRunner.js's recordAutomaticRunStatus option).
+  // lastRunLocalDate additionally stays omitted on a FAILED run even when
+  // bookkeeping is being recorded: Task Section 6 requires a failed run to
+  // "remain eligible for later retry" — writing today's local date on a
+  // failure would make isHouseholdRunDue treat the household as
+  // "already_ran_today" and block a later same-day retry, which is
   // exactly the behavior a failure must not have; only a genuine success
   // should consume the day's single-run slot.
-  const patch = {
-    "emailIngestionSchedule.runLock": null,
-    "emailIngestionSchedule.lastRunStatus": status,
-    "emailIngestionSchedule.lastRunAt": lastRunAt,
-  };
+  const patch = { "emailIngestionSchedule.runLock": null };
+  if (status !== undefined) {
+    patch["emailIngestionSchedule.lastRunStatus"] = status;
+  }
+  if (lastRunAt !== undefined) {
+    patch["emailIngestionSchedule.lastRunAt"] = lastRunAt;
+  }
   if (lastRunLocalDate !== undefined) {
     patch["emailIngestionSchedule.lastRunLocalDate"] = lastRunLocalDate;
   }

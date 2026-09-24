@@ -1,9 +1,15 @@
 /* ============================== Email ingestion schedule — client read/write ==============================
  * Settings UI's read/write of users/{uid}.emailIngestionSchedule — the
  * same field the server-side scheduler (api/_householdProfileStore.js /
- * api/_scheduledIngestionRunner.js) reads and updates. This module owns
- * exactly two things: reading the full (normalized) schedule for display,
- * and saving the one parent-controllable field (enabled).
+ * api/_scheduledIngestionRunner.js) reads and updates. This module owns:
+ * reading the full (normalized) schedule for display; saving the one
+ * parent-controllable field (enabled); the pure next-run display
+ * calculation (computeNextAutomaticCheckText) and double-submit guard
+ * (canStartRunNow) the Settings component uses; and runEmailIngestionNow,
+ * the client call for the "Run automatic check now" manual-validation
+ * action (see api/email-ingestion-run-now.js — a completely separate,
+ * parent-authenticated trigger from the Vercel-Cron-authenticated
+ * api/cron-email-ingestion.js).
  *
  * Vercel Hobby once-daily-cron correction: the server scheduler no longer
  * uses localTime for anything (see src/data/emailIngestionSchedule.js's
@@ -87,6 +93,50 @@
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../Firebase.js";
 import { normalizeEmailIngestionSchedule } from "./emailIngestionSchedule.js";
+import { isValidIanaTimezone, householdTodayStr } from "./householdTimezone.js";
+import { authedFetch } from "./gmailConnection.js";
+
+// The Vercel Cron schedule (see vercel.json) — a fixed UTC time-of-day,
+// once daily. Mirrored here ONLY to convert it into household-local
+// display text (computeNextAutomaticCheckText below); this never changes
+// what actually runs on the server and must be kept in sync with
+// vercel.json's own "0 0 * * *" if that ever changes.
+const CRON_UTC_HOUR = 0;
+const CRON_UTC_MINUTE = 0;
+
+/**
+ * computeNextAutomaticCheckText({ timezone, now }) -> string | null
+ * Converts the fixed UTC cron time above into the household's own local
+ * time-of-day and expresses it as "Today around H:MM AM/PM" or "Tomorrow
+ * around H:MM AM/PM", depending on whether the next UTC-midnight
+ * occurrence falls on the household's current local calendar date or the
+ * next one — a real timezone-offset conversion (Intl.DateTimeFormat),
+ * never a hardcoded assumption about which timezone the household is in.
+ * "around" rather than an exact promise — Vercel's Hobby-plan cron
+ * schedule is not guaranteed to fire at the exact minute (see Vercel's
+ * own documented Hobby cron-timing behavior). Returns null when no valid
+ * household timezone is configured — never guesses one.
+ */
+export function computeNextAutomaticCheckText({ timezone, now = new Date() }) {
+  if (!isValidIanaTimezone(timezone)) return null;
+
+  const nowUtcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), CRON_UTC_HOUR, CRON_UTC_MINUTE, 0, 0));
+  const nextRunInstant = nowUtcMidnight.getTime() >= now.getTime() ? nowUtcMidnight : new Date(nowUtcMidnight.getTime() + 24 * 60 * 60 * 1000);
+
+  const todayLocalDate = householdTodayStr(timezone, now);
+  const nextRunLocalDate = householdTodayStr(timezone, nextRunInstant);
+  if (!todayLocalDate || !nextRunLocalDate) return null;
+
+  let timeText;
+  try {
+    timeText = new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true }).format(nextRunInstant);
+  } catch {
+    return null;
+  }
+
+  const label = nextRunLocalDate === todayLocalDate ? "Today" : "Tomorrow";
+  return `${label} around ${timeText}`;
+}
 
 /**
  * canEnableAutomaticEmailChecking({ gmailConnected, timezone }) -> { ok, reason }
@@ -157,4 +207,39 @@ export async function saveEmailIngestionScheduleSetting(ctx, { enabled }) {
   await updateDoc(doc(db, "users", ctx.uid), {
     "emailIngestionSchedule.enabled": !!enabled,
   });
+}
+
+/**
+ * canStartRunNow({ runningNow }) -> boolean
+ * The UI's double-submit guard for "Run automatic check now" — pure, so
+ * it's directly testable without rendering the Settings component. The
+ * component both disables the button while runningNow is true AND checks
+ * this at the top of its click handler (mirroring the same "guarded off
+ * in the UI too" belt-and-suspenders pattern already used for the enable
+ * toggle's gate). The real, authoritative guarantee against two runs ever
+ * processing the same household concurrently is server-side (the
+ * expiring lease in api/_householdProfileStore.js's
+ * tryAcquireEmailIngestionLock) — this only prevents firing a redundant
+ * second HTTP request from an impatient double-click.
+ */
+export function canStartRunNow({ runningNow }) {
+  return !runningNow;
+}
+
+/**
+ * runEmailIngestionNow() -> { ok, ran, status?, reason?, outcome?, error? }
+ * Calls api/email-ingestion-run-now.js, the parent-authenticated endpoint
+ * that invokes the SAME server-side household ingestion path
+ * (api/_gmailIngestionRunner.js's runHouseholdEmailIngestion, via
+ * api/_scheduledIngestionRunner.js's executeHouseholdIngestionRun) the
+ * daily Cron uses — never the client/manual "Check Email" implementation.
+ * Uses the same ID-token-attaching authedFetch every other authenticated
+ * client call in this app uses (see src/data/gmailConnection.js) — no
+ * uid is ever sent in the request; the server derives it from the
+ * verified token. Throws (propagating authedFetch's own Error) on any
+ * non-ok response, exactly like every other authedFetch-based call in
+ * this app.
+ */
+export async function runEmailIngestionNow() {
+  return authedFetch("/api/email-ingestion-run-now", { method: "POST" });
 }

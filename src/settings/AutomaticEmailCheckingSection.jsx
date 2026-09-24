@@ -5,14 +5,18 @@ import {
   saveEmailIngestionScheduleSetting,
   canEnableAutomaticEmailChecking,
   formatLastRunInfo,
+  computeNextAutomaticCheckText,
+  canStartRunNow,
+  runEmailIngestionNow,
 } from "../data/emailIngestionScheduleRepository.js";
 
 /* ─────────────────────── Automatic Email Checking (Settings) ───────────────────────
  * Settings UI for the already-built server-side scheduled Gmail ingestion
  * pipeline (api/cron-email-ingestion.js / api/_scheduledIngestionRunner.js /
  * api/_gmailIngestionRunner.js) — this component only lets a parent
- * configure it; it never touches scheduler timing, the lease, Gmail
- * fetch/extraction, reconciliation, or Calendar behavior, all unchanged.
+ * configure/observe/manually-validate it; it never touches scheduler
+ * timing, the lease, Gmail fetch/extraction, reconciliation, or Calendar
+ * behavior, all unchanged.
  *
  * Vercel Hobby once-daily-cron correction: the server scheduler no longer
  * runs at a parent-configured time of day (see vercel.json's single daily
@@ -27,6 +31,29 @@ import {
  * — a dot-notation write that structurally cannot touch the server-owned
  * lastRunLocalDate/lastRunAt/lastRunStatus/runLock fields, or any
  * previously-stored localTime, which is simply left untouched and unused).
+ *
+ * Observability/manual-validation follow-up — this section now also
+ * shows:
+ *   - "Next automatic check" — computeNextAutomaticCheckText converts the
+ *     fixed 00:00 UTC cron time into the household's own local time-of-
+ *     day ("Today around H:MM AM/PM" / "Tomorrow around H:MM AM/PM"),
+ *     never editable.
+ *   - "Run automatic check now" — calls runEmailIngestionNow(), which
+ *     hits api/email-ingestion-run-now.js, a parent-authenticated
+ *     endpoint that invokes the EXACT SAME server-side path
+ *     (executeHouseholdIngestionRun -> runHouseholdEmailIngestion) the
+ *     daily Cron uses — never the client "Check Email" implementation,
+ *     and Vercel's own Cron-only bearer secret is never read or sent from
+ *     this file or that endpoint.
+ *     A successful manual run updates the SAME lastRunLocalDate/lastRunAt/
+ *     lastRunStatus fields the daily cron's own success path writes —
+ *     there is no separate "manual" vs "automatic" run record in the
+ *     current schema, so "Last automatic check"/"Last status" below
+ *     reflect the household's most recent run regardless of how it was
+ *     triggered. This is disclosed, reused run-status semantics, not a
+ *     new distinction introduced here (see api/email-ingestion-run-now.js's
+ *     own doc comment for the full explanation, including why this means
+ *     a successful manual run also consumes today's cron slot).
  *
  * Independently checks Gmail connection status (same lightweight-read
  * precedent already used throughout this app — see
@@ -43,13 +70,19 @@ import {
  * is household-local, so a household with no timezone would never
  * actually run) even though it's no longer shown for a specific time of
  * day. Disabling an already-on schedule is never gated, so a household
- * that later loses either precondition can still turn it off.
+ * that later loses either precondition can still turn it off. Run Now is
+ * gated on Gmail being connected only — a parent may validate the Gmail
+ * path before ever turning the daily schedule on, and Run Now doesn't
+ * require emailIngestionSchedule.enabled to be true at all (see
+ * api/email-ingestion-run-now.js).
  */
 const AutomaticEmailCheckingSection = ({ ctx, timezone }) => {
   const [gmailConnected, setGmailConnected] = useState(null); // null = loading
   const [schedule, setSchedule] = useState(null); // null = loading
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [runningNow, setRunningNow] = useState(false);
+  const [runNowResult, setRunNowResult] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +112,7 @@ const AutomaticEmailCheckingSection = ({ ctx, timezone }) => {
 
   const gate = canEnableAutomaticEmailChecking({ gmailConnected, timezone });
   const lastRunInfo = formatLastRunInfo(schedule);
+  const nextCheckText = computeNextAutomaticCheckText({ timezone });
 
   const handleToggle = async () => {
     const next = !schedule.enabled;
@@ -92,6 +126,28 @@ const AutomaticEmailCheckingSection = ({ ctx, timezone }) => {
       setError(e.message || "Could not save this setting. Please try again.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRunNow = async () => {
+    if (!canStartRunNow({ runningNow })) return; // guarded off in the UI too — see the disabled button below
+    if (!gmailConnected) return;
+    setError("");
+    setRunNowResult(null);
+    setRunningNow(true);
+    try {
+      const result = await runEmailIngestionNow();
+      setRunNowResult(result);
+      // Refresh the displayed Last automatic check / Last status without
+      // requiring a page reload — re-reads the same fields the server
+      // just wrote (lastRunAt/lastRunStatus/lastRunLocalDate), same
+      // source of truth Settings already trusts on initial load.
+      const refreshed = await getEmailIngestionScheduleSetting(ctx);
+      setSchedule(refreshed);
+    } catch (e) {
+      setRunNowResult({ ok: false, error: e.message || "Could not run automatic email checking." });
+    } finally {
+      setRunningNow(false);
     }
   };
 
@@ -123,13 +179,36 @@ const AutomaticEmailCheckingSection = ({ ctx, timezone }) => {
         </p>
       )}
 
-      <p className="text-gray-500 text-xs mb-3">Runs automatically once per day.</p>
+      <p className="text-gray-500 text-xs mb-1">Runs automatically once per day.</p>
+      {nextCheckText && <p className="text-gray-500 text-xs mb-3">Next automatic check: {nextCheckText}</p>}
 
       {lastRunInfo && (
-        <div className="text-xs text-gray-500 space-y-0.5">
-          {lastRunInfo.lastRunAtText && <p>Last checked: {lastRunInfo.lastRunAtText}</p>}
-          {lastRunInfo.lastRunStatusText && <p>Status: {lastRunInfo.lastRunStatusText}</p>}
+        <div className="text-xs text-gray-500 mb-3 space-y-0.5">
+          {lastRunInfo.lastRunAtText && <p>Last automatic check: {lastRunInfo.lastRunAtText}</p>}
+          {lastRunInfo.lastRunStatusText && <p>Last status: {lastRunInfo.lastRunStatusText}</p>}
         </div>
+      )}
+
+      <button
+        data-testid="run-email-ingestion-now"
+        onClick={handleRunNow}
+        disabled={runningNow || !gmailConnected}
+        className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition hover:opacity-90 disabled:opacity-50"
+        style={{ background: "#1C1C1E", border: "2px solid rgba(255,255,255,0.15)" }}
+      >
+        {runningNow ? "Running…" : "Run automatic check now"}
+      </button>
+
+      {runNowResult && (
+        <p className={`text-xs mt-2 ${runNowResult.ok ? "text-green-400" : "text-red-400"}`}>
+          {runNowResult.ok
+            ? runNowResult.status === "success"
+              ? "Check complete."
+              : runNowResult.reason === "already_running"
+              ? "Already running — try again in a few minutes."
+              : "Check finished with an issue — see Last status above."
+            : runNowResult.error || "Could not run automatic email checking."}
+        </p>
       )}
 
       {error && <p className="text-red-400 text-xs mt-2">{error}</p>}

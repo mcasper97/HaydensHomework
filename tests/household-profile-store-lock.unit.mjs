@@ -176,4 +176,35 @@ test("a lease acquired but never released (simulated process crash) stops blocki
   assert.strictEqual(await tryAcquireEmailIngestionLock(UID, { db, now: afterLeaseExpiry }), true);
 });
 
+// ============ 6. Releasing with no bookkeeping payload only clears the lease ============
+test("releaseEmailIngestionLock(uid, {}) clears runLock but writes none of status/lastRunAt/lastRunLocalDate (manual Run Now bookkeeping-free release)", async () => {
+  const { db, store } = createFakeAdminDb();
+  const now = new Date("2026-01-15T09:00:00.000Z");
+
+  await tryAcquireEmailIngestionLock(UID, { db, now });
+  // Seed a prior automatic run's bookkeeping so we can prove this release
+  // leaves it untouched (the "Last automatic check" display must survive
+  // a manual Run Now unchanged).
+  store.set(docPath(UID), {
+    emailIngestionSchedule: {
+      runLock: { acquiredAt: now.toISOString(), expiresAt: now.toISOString() },
+      lastRunStatus: "success",
+      lastRunAt: "2026-01-14T09:00:00.000Z",
+      lastRunLocalDate: "2026-01-14",
+    },
+  });
+
+  await releaseEmailIngestionLock(UID, {}, { db });
+
+  const stored = store.get(docPath(UID));
+  assert.strictEqual(stored.emailIngestionSchedule.runLock, null, "the lease is still cleared");
+  assert.strictEqual(stored.emailIngestionSchedule.lastRunStatus, "success", "yesterday's automatic lastRunStatus is untouched");
+  assert.strictEqual(stored.emailIngestionSchedule.lastRunAt, "2026-01-14T09:00:00.000Z", "yesterday's automatic lastRunAt is untouched");
+  assert.strictEqual(stored.emailIngestionSchedule.lastRunLocalDate, "2026-01-14", "yesterday's lastRunLocalDate is untouched — today's slot is not consumed");
+
+  // And the lease is genuinely gone, not just expired — the very next attempt succeeds immediately.
+  const reacquired = await tryAcquireEmailIngestionLock(UID, { db, now: new Date("2026-01-15T09:00:01.000Z") });
+  assert.strictEqual(reacquired, true);
+});
+
 console.log("household-profile-store-lock.unit.mjs: all tests defined (node:test reports results below)");

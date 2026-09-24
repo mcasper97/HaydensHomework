@@ -28,7 +28,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert";
-import { runDueHouseholds, RUN_STATUS } from "../api/_scheduledIngestionRunner.js";
+import { runDueHouseholds, executeHouseholdIngestionRun, RUN_STATUS } from "../api/_scheduledIngestionRunner.js";
 import { normalizeEmailIngestionSchedule } from "../src/data/emailIngestionSchedule.js";
 
 let importSeq = 0;
@@ -221,6 +221,81 @@ test("the DEFAULT runIngestion collaborator is the real Gmail ingestion seam (ap
 
   assert.deepStrictEqual(seamCalls, ["h1"], "the default runIngestion collaborator invoked the real Gmail ingestion seam with just the uid");
   assert.strictEqual(summary.results[0].status, RUN_STATUS.SUCCESS);
+});
+
+// ============ Manual Run Now: recordAutomaticRunStatus: false ============
+// executeHouseholdIngestionRun is the SAME function runDueHouseholds uses
+// above (default recordAutomaticRunStatus: true, proven unchanged by every
+// test above this point). These tests exercise the option a manual Run
+// Now (api/email-ingestion-run-now.js) passes instead.
+
+test("executeHouseholdIngestionRun with recordAutomaticRunStatus: false still acquires and releases the same lease on success, but releases with an empty bookkeeping payload", async () => {
+  const calls = { tryAcquireLock: [], releaseLock: [] };
+  const result = await executeHouseholdIngestionRun("h1", {
+    todayLocalDate: "2026-01-15",
+    nowIso: "2026-01-15T15:30:00.000Z",
+    now: FIXED_NOW,
+    tryAcquireLock: async (uid) => { calls.tryAcquireLock.push(uid); return true; },
+    releaseLock: async (uid, patch) => { calls.releaseLock.push({ uid, patch }); },
+    runIngestion: async () => ({ ok: true, messagesScanned: 3 }),
+    recordAutomaticRunStatus: false,
+  });
+
+  assert.deepStrictEqual(calls.tryAcquireLock, ["h1"], "the same durable lease is still acquired");
+  assert.strictEqual(calls.releaseLock.length, 1, "the same lease is still released exactly once");
+  assert.deepStrictEqual(calls.releaseLock[0].patch, {}, "no bookkeeping (status/lastRunAt/lastRunLocalDate) is persisted for a manual run");
+  // The function's own return value still fully reflects the real outcome
+  // for the caller's immediate UI feedback, independent of persistence.
+  assert.strictEqual(result.ran, true);
+  assert.strictEqual(result.status, RUN_STATUS.SUCCESS);
+  assert.deepStrictEqual(result.outcome, { ok: true, messagesScanned: 3 });
+});
+
+test("executeHouseholdIngestionRun with recordAutomaticRunStatus: false also releases with an empty payload on a failed run (and still returns the real failure)", async () => {
+  const calls = { releaseLock: [] };
+  const result = await executeHouseholdIngestionRun("h1", {
+    todayLocalDate: "2026-01-15",
+    nowIso: "2026-01-15T15:30:00.000Z",
+    now: FIXED_NOW,
+    tryAcquireLock: async () => true,
+    releaseLock: async (uid, patch) => { calls.releaseLock.push({ uid, patch }); },
+    runIngestion: async () => ({ ok: false, code: "SOME_FAILURE" }),
+    recordAutomaticRunStatus: false,
+  });
+
+  assert.strictEqual(calls.releaseLock.length, 1);
+  assert.deepStrictEqual(calls.releaseLock[0].patch, {}, "a failed manual run also writes no bookkeeping");
+  assert.strictEqual(result.status, RUN_STATUS.FAILED, "the returned result still reports the real failure");
+});
+
+test("executeHouseholdIngestionRun with recordAutomaticRunStatus: false still blocks overlap via the same lease (already_running, ingestion never invoked)", async () => {
+  const calls = { runIngestion: [] };
+  const result = await executeHouseholdIngestionRun("h1", {
+    todayLocalDate: "2026-01-15",
+    nowIso: "2026-01-15T15:30:00.000Z",
+    now: FIXED_NOW,
+    tryAcquireLock: async () => false,
+    releaseLock: async () => { throw new Error("must not be called — the lease was never acquired"); },
+    runIngestion: async (uid) => { calls.runIngestion.push(uid); return { ok: true }; },
+    recordAutomaticRunStatus: false,
+  });
+
+  assert.strictEqual(result.ran, false);
+  assert.strictEqual(result.reason, "already_running");
+  assert.strictEqual(calls.runIngestion.length, 0);
+});
+
+test("a manual run (recordAutomaticRunStatus: false) never consumes the same-day slot that runDueHouseholds later reads: the automatic path still consumes it exactly as before", async () => {
+  // This is the automatic-path assertion (recordAutomaticRunStatus
+  // defaulted true, unchanged) paired with the manual-path assertion
+  // above, side by side, proving the two paths diverge only in whether
+  // lastRunLocalDate is written — never in lease/overlap behavior.
+  const households = [household("h1", { enabled: true }, "UTC")];
+  const { deps, calls } = makeDeps(households);
+
+  await runDueHouseholds({ now: FIXED_NOW, deps });
+
+  assert.strictEqual(calls.releaseLock[0].patch.lastRunLocalDate, "2026-01-15", "automatic success still writes lastRunLocalDate (consumes today's slot)");
 });
 
 console.log("scheduled-ingestion-runner.unit.mjs: all tests defined (node:test reports results below)");

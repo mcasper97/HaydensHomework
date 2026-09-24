@@ -28,6 +28,11 @@
  * shape AND the exact SDK function used (updateDoc, not setDoc) are both
  * verified without needing a live Firebase project.
  *
+ * computeNextAutomaticCheckText (next-run display) and canStartRunNow
+ * (Run Now's double-submit guard) are pure and tested directly with fixed
+ * inputs, no mocking needed — same rationale as the other pure helpers
+ * above.
+ *
  * WHY updateDoc() specifically: verified directly against the installed
  * Web SDK's source (firebase 12.9.0 — see
  * src/data/emailIngestionScheduleRepository.js's own doc comment for the
@@ -51,6 +56,8 @@ import assert from "node:assert";
 import {
   canEnableAutomaticEmailChecking,
   formatLastRunInfo,
+  computeNextAutomaticCheckText,
+  canStartRunNow,
 } from "../src/data/emailIngestionScheduleRepository.js";
 
 let importSeq = 0;
@@ -246,6 +253,49 @@ test("formatLastRunInfo: renders even when only lastRunStatus is present (no las
   assert.ok(result);
   assert.strictEqual(result.lastRunAtText, null);
   assert.strictEqual(result.lastRunStatusText, "Failed");
+});
+
+// ============ Next-run display converts 00:00 UTC to household timezone ============
+// Empirically verified against the real Intl-backed implementation (not
+// hand-derived) — see the module's own EDT/JST reasoning in its doc
+// comment for why these specific instants land where they do.
+test("computeNextAutomaticCheckText: converts 00:00 UTC into the household's own local time-of-day (America/New_York)", () => {
+  const text = computeNextAutomaticCheckText({ timezone: "America/New_York", now: new Date("2026-01-15T10:00:00Z") });
+  assert.strictEqual(text, "Today around 7:00 PM");
+});
+
+test("computeNextAutomaticCheckText: converts 00:00 UTC into the household's own local time-of-day (Asia/Tokyo, ahead of UTC)", () => {
+  const text = computeNextAutomaticCheckText({ timezone: "Asia/Tokyo", now: new Date("2026-01-15T20:00:00Z") });
+  assert.strictEqual(text, "Today around 9:00 AM");
+});
+
+// ============ Today/tomorrow label is correct ============
+test("computeNextAutomaticCheckText: labels 'Tomorrow' when the next UTC-midnight run lands on the household's NEXT local calendar date", () => {
+  // 2026-01-16T04:30:00Z is still 2026-01-15, 11:30 PM in America/New_York
+  // (UTC-5) — the household's local "today" hasn't rolled over yet, but
+  // the next cron occurrence (2026-01-17T00:00Z) converts to 2026-01-16
+  // local — a different (later) local date than today.
+  const text = computeNextAutomaticCheckText({ timezone: "America/New_York", now: new Date("2026-01-16T04:30:00Z") });
+  assert.strictEqual(text, "Tomorrow around 7:00 PM");
+});
+
+test("computeNextAutomaticCheckText: labels 'Today' when the next UTC-midnight run lands on the household's CURRENT local calendar date", () => {
+  const text = computeNextAutomaticCheckText({ timezone: "America/New_York", now: new Date("2026-01-15T10:00:00Z") });
+  assert.ok(text.startsWith("Today"));
+});
+
+test("computeNextAutomaticCheckText: returns null (never guesses) when no valid household timezone is configured", () => {
+  assert.strictEqual(computeNextAutomaticCheckText({ timezone: null, now: new Date("2026-01-15T10:00:00Z") }), null);
+  assert.strictEqual(computeNextAutomaticCheckText({ timezone: "Not/A/Real/Zone", now: new Date("2026-01-15T10:00:00Z") }), null);
+});
+
+// ============ Double-submit is disabled in UI ============
+test("canStartRunNow: refuses to start a new run while one is already in flight", () => {
+  assert.strictEqual(canStartRunNow({ runningNow: true }), false);
+});
+
+test("canStartRunNow: allows starting when nothing is currently running", () => {
+  assert.strictEqual(canStartRunNow({ runningNow: false }), true);
 });
 
 console.log("email-ingestion-schedule-settings.unit.mjs: all tests defined (node:test reports results below)");
