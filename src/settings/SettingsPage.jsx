@@ -119,7 +119,7 @@ const SettingsPage = ({
         {!user?.isAdmin && (
           <>
             <GmailConnectionPanel ctx={ctx} childProfiles={children} />
-            <EmailImportSettingsSection ctx={ctx} childProfiles={children} />
+            <EmailImportSettingsSection ctx={ctx} childProfiles={children} timezone={timezone} />
             <GoogleCalendarConnectionPanel />
             <GoogleCalendarRoutingPanel
               uid={user.uid}
