@@ -7,7 +7,7 @@
  *
  * Usage: node tests/household-timezone.unit.mjs
  */
-import { isValidIanaTimezone, suggestBrowserTimezone } from "../src/data/householdTimezone.js";
+import { isValidIanaTimezone, suggestBrowserTimezone, householdCurrentTimeStr } from "../src/data/householdTimezone.js";
 
 let pass = 0, fail = 0;
 function ok(name, cond) {
@@ -42,6 +42,40 @@ ok("Leading/trailing whitespace around a valid zone is still accepted", isValidI
   if (typeof suggestion === "string") {
     ok("A non-null suggestion is itself a valid IANA timezone (round-trips through isValidIanaTimezone)", isValidIanaTimezone(suggestion));
   }
+}
+
+// ============ householdCurrentTimeStr ============
+// Added for the scheduled-ingestion runner's due-time comparison (see
+// api/_scheduledIngestionRunner.js) — mirrors householdTodayStr's exact
+// validation/fail-safe contract (null in, null out; never throws).
+{
+  // A fixed UTC instant: 2026-01-15T15:30:00Z
+  const fixedNow = new Date("2026-01-15T15:30:00Z");
+
+  ok(
+    "A valid timezone + fixed now produces the expected HH:MM (UTC)",
+    householdCurrentTimeStr("UTC", fixedNow) === "15:30"
+  );
+  ok(
+    "A valid timezone + fixed now produces the expected HH:MM (America/New_York, UTC-5 in January)",
+    householdCurrentTimeStr("America/New_York", fixedNow) === "10:30"
+  );
+  ok(
+    "An invalid timezone returns null without throwing",
+    householdCurrentTimeStr("Not/A/Real/Zone", fixedNow) === null
+  );
+  ok(
+    "A missing (undefined) timezone returns null without throwing",
+    householdCurrentTimeStr(undefined, fixedNow) === null
+  );
+  ok(
+    "A null timezone returns null without throwing",
+    householdCurrentTimeStr(null, fixedNow) === null
+  );
+  ok(
+    "Two different timezones given the SAME fixed now produce different HH:MM results (timezone genuinely affects the computed local time)",
+    householdCurrentTimeStr("UTC", fixedNow) !== householdCurrentTimeStr("America/New_York", fixedNow)
+  );
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

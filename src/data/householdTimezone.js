@@ -66,13 +66,49 @@ export function suggestBrowserTimezone() {
  * hasn't configured one yet, or a corrupted value) so the caller can fall
  * back to todayStr() exactly as before — never silently defaults to any
  * particular zone.
+ *
+ * `now` is injectable (defaults to `new Date()`) purely so callers/tests
+ * can pass a fixed instant instead of depending on the real clock — added
+ * for the scheduled-ingestion runner (api/_scheduledIngestionRunner.js),
+ * which must compute todayLocalDate from the SAME `now` instant it uses
+ * for householdCurrentTimeStr below, so both reflect one consistent
+ * moment rather than two clock reads microseconds apart.
  */
-export function householdTodayStr(timezone) {
+export function householdTodayStr(timezone, now = new Date()) {
   if (!isValidIanaTimezone(timezone)) return null;
   try {
     // en-CA formats as YYYY-MM-DD — the exact date-string convention this
     // app already uses everywhere else (startDate/dueDate/etc.).
-    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(new Date());
+    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(now);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * householdCurrentTimeStr(timezone, now?) -> "HH:MM" (24-hour) | null
+ * The household-local wall-clock time, same validation/fail-safe contract
+ * as householdTodayStr above (null when the timezone is missing/invalid —
+ * never silently defaults to any particular zone). Added for the
+ * scheduled email-ingestion runner (api/_scheduledIngestionRunner.js),
+ * which needs to compare a household's configured
+ * emailIngestionSchedule.localTime against the current household-local
+ * time to decide whether a run is due. `now` is injectable (defaults to
+ * `new Date()`) purely so callers/tests can pass a fixed instant instead
+ * of depending on the real clock.
+ */
+export function householdCurrentTimeStr(timezone, now = new Date()) {
+  if (!isValidIanaTimezone(timezone)) return null;
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(now);
+    const hour = parts.find((p) => p.type === "hour")?.value;
+    const minute = parts.find((p) => p.type === "minute")?.value;
+    return hour && minute ? `${hour}:${minute}` : null;
   } catch {
     return null;
   }

@@ -34,6 +34,22 @@ export async function getItem(uid, itemId, { db = defaultDb() } = {}) {
 }
 
 /**
+ * listItemsServerSide(uid) -> Item[]
+ * The Admin-SDK counterpart to src/data/itemsRepository.js's listItems
+ * (real-Firestore branch) — same users/{uid}/items collection, same
+ * { id, ...data } shape. Added for api/_gmailIngestionRunner.js, which
+ * needs the household's existing Items to run the same obligation
+ * reconciliation (src/organizer/recurringObligationMatch.js /
+ * oneTimeObligationMatch.js) the manual "Check Email" path already runs
+ * client-side via listItems(ctx) — see that file's own doc comment.
+ */
+export async function listItemsServerSide(uid, { db = defaultDb() } = {}) {
+  if (!uid) return [];
+  const snap = await db.collection("users").doc(uid).collection("items").get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/**
  * setItemGoogleCalendarFields — the ONE write this module performs for
  * Slice C, applied only after a successful Google Calendar insert (or a
  * recognized already-exists recovery) — see api/calendar-publish.js. Never

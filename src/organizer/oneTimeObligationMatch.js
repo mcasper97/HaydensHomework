@@ -135,6 +135,53 @@ export function canReconcileOneTime(signatureA, signatureB) {
 }
 
 /**
+ * classifyOneTimeMatch(signatureA, signatureB) -> "match" | "conflict" | "none"
+ * A strictly ADDITIVE, finer-grained view of the same comparison
+ * canReconcileOneTime already makes — never changes that function's own
+ * boolean contract or any of its existing call sites.
+ *
+ *   "match"    — canReconcileOneTime(signatureA, signatureB) would also be
+ *                true.
+ *   "conflict" — type, target, AND the exact normalized title all match
+ *                (per this module's own hard-gate philosophy, that alone
+ *                is already strong enough to call these two sources "the
+ *                same real-world obligation" — see the module doc comment
+ *                above), but the two sources disagree about WHEN it is:
+ *                either a stated date that differs, or (when the dates
+ *                agree) an explicit start/end time that differs. This is
+ *                exactly the case canReconcileOneTime itself treats as a
+ *                hard, unmergeable block — classifyOneTimeMatch exists
+ *                only to let a caller DISTINGUISH that specific case from
+ *                "unrelated obligation" ("none"), so it can route a
+ *                genuine conflict to human review instead of silently
+ *                treating it as a normal, independent new obligation (see
+ *                decideOneTimeReconciliation's additive `conflict` field
+ *                below, and api/_gmailIngestionRunner.js, its one caller
+ *                that acts on it).
+ *   "none"     — not recognizably the same obligation at all (including
+ *                the fail-safe case where either side has no date at
+ *                all — same as canReconcileOneTime, never claims a
+ *                relationship without a comparable date on both sides).
+ */
+export function classifyOneTimeMatch(signatureA, signatureB) {
+  if (!signatureA || !signatureB) return "none";
+  if (signatureA.type !== signatureB.type) return "none";
+  if (signatureA.targetKey !== signatureB.targetKey) return "none";
+  if (!signatureA.normalizedAction || !signatureB.normalizedAction) return "none";
+  if (signatureA.normalizedAction !== signatureB.normalizedAction) return "none";
+  if (!signatureA.date || !signatureB.date) return "none";
+
+  if (signatureA.date !== signatureB.date) return "conflict";
+
+  const timeConflict =
+    (signatureA.startTime && signatureB.startTime && signatureA.startTime !== signatureB.startTime) ||
+    (signatureA.endTime && signatureB.endTime && signatureA.endTime !== signatureB.endTime);
+  if (timeConflict) return "conflict";
+
+  return "match";
+}
+
+/**
  * decideOneTimeReconciliation({ obligation, target, existingSignatures, runRecords }) -> decision
  *
  * The one production decision function AuthShell.jsx's handleCheckEmail
@@ -178,6 +225,22 @@ export function canReconcileOneTime(signatureA, signatureB) {
  *                           runRecords before deciding the next
  *                           obligation, so a LATER same-run duplicate can
  *                           be found.
+ *
+ * `conflict` (additive field, always present, only ever non-null alongside
+ * outcome "new") — set when classifyOneTimeMatch (above) recognizes this
+ * obligation as almost certainly the SAME real-world obligation as an
+ * existing Item or an earlier same-run candidate, but disagreeing about
+ * when it is (a conflicting date, or a conflicting explicit time on a
+ * shared date) — exactly the case canReconcileOneTime itself refuses to
+ * treat as a match. Shape: { itemId, candidateId } with exactly one of the
+ * two non-null, mirroring reconciledItemId/reconciledCandidateId's own
+ * "never both non-null" convention. This NEVER changes the outcome string
+ * itself or either reconciled*Id field on THIS return value — a caller
+ * that only reads `outcome`/`reconciledItemId`/`reconciledCandidateId`
+ * (as src/GmailCheckEmailAction.jsx's handleCheckEmail already does) sees
+ * no behavior change at all; `conflict` is there only for a caller that
+ * explicitly wants to detect this case and route it to review rather than
+ * normal automatic finalization (see api/_gmailIngestionRunner.js).
  */
 export function decideOneTimeReconciliation({ obligation, target, existingSignatures = [], runRecords = [] }) {
   const signature = buildOneTimeSignature({
@@ -191,13 +254,21 @@ export function decideOneTimeReconciliation({ obligation, target, existingSignat
 
   const existingMatch = existingSignatures.find((entry) => canReconcileOneTime(signature, entry.signature));
   if (existingMatch) {
-    return { outcome: "existing_item", signature, reconciledItemId: existingMatch.itemId, reconciledCandidateId: null };
+    return { outcome: "existing_item", signature, reconciledItemId: existingMatch.itemId, reconciledCandidateId: null, conflict: null };
   }
 
   const runMatch = runRecords.find((entry) => canReconcileOneTime(signature, entry.signature));
   if (runMatch) {
-    return { outcome: "same_run_duplicate", signature, reconciledItemId: null, reconciledCandidateId: runMatch.candidateId };
+    return { outcome: "same_run_duplicate", signature, reconciledItemId: null, reconciledCandidateId: runMatch.candidateId, conflict: null };
   }
 
-  return { outcome: "new", signature, reconciledItemId: null, reconciledCandidateId: null };
+  const existingConflict = existingSignatures.find((entry) => classifyOneTimeMatch(signature, entry.signature) === "conflict");
+  const runConflict = !existingConflict ? runRecords.find((entry) => classifyOneTimeMatch(signature, entry.signature) === "conflict") : null;
+  const conflict = existingConflict
+    ? { itemId: existingConflict.itemId, candidateId: null }
+    : runConflict
+    ? { itemId: null, candidateId: runConflict.candidateId }
+    : null;
+
+  return { outcome: "new", signature, reconciledItemId: null, reconciledCandidateId: null, conflict };
 }
