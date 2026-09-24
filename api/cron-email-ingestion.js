@@ -9,11 +9,12 @@
  * only (a) verifies the request genuinely came from Vercel's own Cron
  * trigger, and (b) calls api/_scheduledIngestionRunner.js's
  * runDueHouseholds(), which owns the actual due-detection/locking/
- * per-household logic. Runs on a single coarse interval (see vercel.json)
- * — task Section 2 explicitly asks for "the smallest suitable... Avoid
- * requiring one infrastructure cron entry per household," which this
- * satisfies: ONE cron entry evaluates every enabled household on each
- * tick, not one entry per household.
+ * per-household logic. Runs once daily (see vercel.json's "0 0 * * *" —
+ * the Vercel Hobby plan's once-per-day cron limit) — task Section 2
+ * explicitly asks for "the smallest suitable... Avoid requiring one
+ * infrastructure cron entry per household," which this satisfies: ONE
+ * cron entry evaluates every enabled household on each tick, not one
+ * entry per household.
  *
  * AUTH: Vercel signs every real Cron invocation with
  * `Authorization: Bearer ${CRON_SECRET}` when the CRON_SECRET environment

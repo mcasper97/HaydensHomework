@@ -1,9 +1,14 @@
 /* ============================== Scheduled email-ingestion runner (server-only) ==============================
  * The scheduler FRAMEWORK invoked by api/cron-email-ingestion.js (a
- * Vercel Cron-triggered endpoint — see vercel.json). Its only
- * responsibilities, per the task spec, are:
+ * Vercel Cron-triggered endpoint — see vercel.json, now a single daily
+ * "0 0 * * *" tick to fit Vercel Hobby's once-per-day cron limit). Its
+ * only responsibilities, per the task spec, are:
  *   1. identify enabled households
- *   2. determine whether their configured local run time is due
+ *   2. determine whether each is already accounted for today (same-day
+ *      duplicate guard) or mid-run (lease/overlap guard) — NOT a specific
+ *      local time-of-day; with only one daily tick there is nothing to
+ *      wait for (see src/data/emailIngestionSchedule.js's own doc comment
+ *      on isHouseholdRunDue)
  *   3. invoke the existing server-side email ingestion path
  *   4. record basic run status
  *
@@ -27,7 +32,7 @@ import {
   releaseEmailIngestionLock,
 } from "./_householdProfileStore.js";
 import { isHouseholdRunDue } from "../src/data/emailIngestionSchedule.js";
-import { householdTodayStr, householdCurrentTimeStr } from "../src/data/householdTimezone.js";
+import { householdTodayStr } from "../src/data/householdTimezone.js";
 import { runHouseholdEmailIngestion } from "./_gmailIngestionRunner.js";
 
 export const RUN_STATUS = { SUCCESS: "success", FAILED: "failed" };
@@ -61,8 +66,7 @@ export async function runDueHouseholds({ now = new Date(), deps = {} } = {}) {
     try {
       const nowIso = now.toISOString();
       const todayLocalDate = householdTodayStr(timezone, now);
-      const currentLocalTime = householdCurrentTimeStr(timezone, now);
-      const decision = isHouseholdRunDue({ schedule, todayLocalDate, currentLocalTime, nowIso });
+      const decision = isHouseholdRunDue({ schedule, todayLocalDate, nowIso });
 
       if (!decision.due) {
         results.push({ uid, ran: false, reason: decision.reason });

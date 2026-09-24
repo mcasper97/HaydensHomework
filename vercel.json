@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron-email-ingestion",
-      "schedule": "*/30 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }

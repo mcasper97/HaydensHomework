@@ -3,10 +3,17 @@
  * ingestion — src/data/emailIngestionScheduleRepository.js (client read/
  * write + the pure gate/formatting helpers the Settings component uses).
  *
- * This repo has no React-rendering test harness (no testing-library/
- * jsdom — every *.unit.mjs file here tests underlying pure/data logic
- * directly, real rendering is covered by Playwright, explicitly out of
- * scope for this task). So "toggle can be enabled when Gmail+timezone
+ * Vercel Hobby once-daily-cron correction: the Settings UI no longer
+ * renders or edits a time picker (see AutomaticEmailCheckingSection.jsx —
+ * a plain on/off toggle now). This repo has no React-rendering test
+ * harness (no testing-library/jsdom — every *.unit.mjs file here tests
+ * underlying pure/data logic directly, real rendering is covered by
+ * Playwright, explicitly out of scope for this task), so "Settings no
+ * longer renders a time picker" is proven at the data layer: the
+ * component only ever calls saveEmailIngestionScheduleSetting(ctx,
+ * {enabled}) — no localTime argument exists in that call shape anymore,
+ * and the tests below confirm the function's write never includes a
+ * localTime key regardless. "toggle can be enabled when Gmail+timezone
  * configured" / "Gmail disconnected prevents enable" / "missing timezone
  * prevents enable" / "last run/status display renders when present" are
  * tested against the pure decision/formatting functions
@@ -44,8 +51,6 @@ import assert from "node:assert";
 import {
   canEnableAutomaticEmailChecking,
   formatLastRunInfo,
-  resolveInitialLocalTime,
-  DEFAULT_DISPLAY_LOCAL_TIME,
 } from "../src/data/emailIngestionScheduleRepository.js";
 
 let importSeq = 0;
@@ -131,55 +136,64 @@ test("canEnableAutomaticEmailChecking: Gmail disconnected is checked before time
   assert.strictEqual(result.ok, false);
 });
 
-// ============ localTime saves in HH:MM format ============
-test("saveEmailIngestionScheduleSetting: uses updateDoc (not setDoc) with dot-notation, localTime kept exactly as HH:MM", async (t) => {
+// ============ Settings toggle still persists enabled state ============
+test("saveEmailIngestionScheduleSetting: uses updateDoc (not setDoc) with dot-notation to persist enabled:true", async (t) => {
   const { updateCalls, setDocCalls } = mockFirestore(t, { docData: {} });
   const { saveEmailIngestionScheduleSetting } = await freshImport("../src/data/emailIngestionScheduleRepository.js");
 
-  await saveEmailIngestionScheduleSetting({ uid: "parent-1", isAdmin: false }, { enabled: true, localTime: "07:30" });
+  await saveEmailIngestionScheduleSetting({ uid: "parent-1", isAdmin: false }, { enabled: true });
 
   assert.strictEqual(updateCalls.length, 1, "must call updateDoc exactly once");
   assert.strictEqual(setDocCalls.length, 0, "must NEVER call setDoc — setDoc(...,{merge:true}) does not parse a dotted key as a nested path (verified against the installed SDK source)");
   assert.strictEqual(updateCalls[0].ref.path, "users/parent-1");
   assert.strictEqual(updateCalls[0].data["emailIngestionSchedule.enabled"], true);
-  assert.strictEqual(updateCalls[0].data["emailIngestionSchedule.localTime"], "07:30");
 });
 
-test("saveEmailIngestionScheduleSetting: rejects enabling with no resolvable time rather than silently persisting it", async (t) => {
-  mockFirestore(t, { docData: {} });
-  const { saveEmailIngestionScheduleSetting } = await freshImport("../src/data/emailIngestionScheduleRepository.js");
-
-  await assert.rejects(() => saveEmailIngestionScheduleSetting({ uid: "parent-1", isAdmin: false }, { enabled: true, localTime: "not-a-time" }));
-});
-
-// ============ Disabling preserves configured time ============
-test("saveEmailIngestionScheduleSetting: turning the schedule OFF still saves the previously-chosen time, not null", async (t) => {
+test("saveEmailIngestionScheduleSetting: persists enabled:false just as reliably (turning the toggle off)", async (t) => {
   const { updateCalls } = mockFirestore(t, { docData: {} });
   const { saveEmailIngestionScheduleSetting } = await freshImport("../src/data/emailIngestionScheduleRepository.js");
 
-  await saveEmailIngestionScheduleSetting({ uid: "parent-1", isAdmin: false }, { enabled: false, localTime: "07:30" });
+  await saveEmailIngestionScheduleSetting({ uid: "parent-1", isAdmin: false }, { enabled: false });
 
   assert.strictEqual(updateCalls[0].data["emailIngestionSchedule.enabled"], false);
-  assert.strictEqual(updateCalls[0].data["emailIngestionSchedule.localTime"], "07:30", "disabling must not erase the configured time — re-enabling later should remember it");
+});
+
+// ============ Settings no longer renders/edits a time picker (data-layer proof) ============
+test("saveEmailIngestionScheduleSetting: never accepts, reads, or writes localTime — even if a caller passes one, it never reaches the write", async (t) => {
+  const { updateCalls } = mockFirestore(t, { docData: {} });
+  const { saveEmailIngestionScheduleSetting } = await freshImport("../src/data/emailIngestionScheduleRepository.js");
+
+  // Simulates a stray/legacy caller still passing localTime — the
+  // function's own signature only destructures `enabled`, so this is
+  // silently ignored rather than persisted (task: "Simply stop using
+  // localTime for scheduling," never surfaced/edited by this UI slice).
+  await saveEmailIngestionScheduleSetting({ uid: "parent-1", isAdmin: false }, { enabled: true, localTime: "07:30" });
+
+  assert.deepStrictEqual(
+    Object.keys(updateCalls[0].data),
+    ["emailIngestionSchedule.enabled"],
+    "the write payload contains ONLY enabled — never a localTime key, whether or not one was passed in"
+  );
 });
 
 // ============ Saving preserves server-owned schedule fields ============
-test("saveEmailIngestionScheduleSetting: the write payload contains ONLY enabled/localTime — never lastRunLocalDate/lastRunAt/lastRunStatus/runLock", async (t) => {
+test("saveEmailIngestionScheduleSetting: the write payload contains ONLY enabled — never lastRunLocalDate/lastRunAt/lastRunStatus/runLock, or localTime", async (t) => {
   const { updateCalls } = mockFirestore(t, { docData: {} });
   const { saveEmailIngestionScheduleSetting } = await freshImport("../src/data/emailIngestionScheduleRepository.js");
 
-  await saveEmailIngestionScheduleSetting({ uid: "parent-1", isAdmin: false }, { enabled: true, localTime: "20:00" });
+  await saveEmailIngestionScheduleSetting({ uid: "parent-1", isAdmin: false }, { enabled: true });
 
   assert.deepStrictEqual(
     Object.keys(updateCalls[0].data).sort(),
-    ["emailIngestionSchedule.enabled", "emailIngestionSchedule.localTime"],
-    "dot-notation updateDoc write must touch exactly these two leaf fields — structurally impossible to also write lastRunLocalDate/lastRunAt/lastRunStatus/runLock"
+    ["emailIngestionSchedule.enabled"],
+    "dot-notation updateDoc write must touch exactly this one leaf field — structurally impossible to also write lastRunLocalDate/lastRunAt/lastRunStatus/runLock/localTime"
   );
-  // And explicitly, none of the server-owned field NAMES appear anywhere
-  // in the written keys, even as a substring of a different path.
+  // And explicitly, none of the server-owned field NAMES (nor localTime)
+  // appear anywhere in the written keys, even as a substring of a
+  // different path.
   const writtenKeys = Object.keys(updateCalls[0].data).join(" ");
-  for (const serverOwned of ["lastRunLocalDate", "lastRunAt", "lastRunStatus", "runLock"]) {
-    assert.ok(!writtenKeys.includes(serverOwned), `must never write ${serverOwned}`);
+  for (const untouchedField of ["lastRunLocalDate", "lastRunAt", "lastRunStatus", "runLock", "localTime"]) {
+    assert.ok(!writtenKeys.includes(untouchedField), `must never write ${untouchedField}`);
   }
 });
 
@@ -187,7 +201,7 @@ test("saveEmailIngestionScheduleSetting: guest/admin mode never attempts a Fires
   const { updateCalls, setDocCalls } = mockFirestore(t, { docData: {} });
   const { saveEmailIngestionScheduleSetting } = await freshImport("../src/data/emailIngestionScheduleRepository.js");
 
-  await saveEmailIngestionScheduleSetting({ uid: "guest-local", isAdmin: true }, { enabled: true, localTime: "20:00" });
+  await saveEmailIngestionScheduleSetting({ uid: "guest-local", isAdmin: true }, { enabled: true });
 
   assert.strictEqual(updateCalls.length, 0);
   assert.strictEqual(setDocCalls.length, 0);
@@ -209,7 +223,7 @@ test("saveEmailIngestionScheduleSetting: a Firestore write failure (e.g. documen
   const { saveEmailIngestionScheduleSetting } = await freshImport("../src/data/emailIngestionScheduleRepository.js");
 
   await assert.rejects(
-    () => saveEmailIngestionScheduleSetting({ uid: "parent-1", isAdmin: false }, { enabled: true, localTime: "20:00" }),
+    () => saveEmailIngestionScheduleSetting({ uid: "parent-1", isAdmin: false }, { enabled: true }),
     /No document to update/
   );
 });
@@ -232,16 +246,6 @@ test("formatLastRunInfo: renders even when only lastRunStatus is present (no las
   assert.ok(result);
   assert.strictEqual(result.lastRunAtText, null);
   assert.strictEqual(result.lastRunStatusText, "Failed");
-});
-
-// ============ resolveInitialLocalTime (component's picker starting value) ============
-test("resolveInitialLocalTime: falls back to the display default (20:00) when no time is configured yet", () => {
-  assert.strictEqual(resolveInitialLocalTime({ localTime: null }), DEFAULT_DISPLAY_LOCAL_TIME);
-  assert.strictEqual(DEFAULT_DISPLAY_LOCAL_TIME, "20:00");
-});
-
-test("resolveInitialLocalTime: uses the household's already-configured time when one exists", () => {
-  assert.strictEqual(resolveInitialLocalTime({ localTime: "06:45" }), "06:45");
 });
 
 console.log("email-ingestion-schedule-settings.unit.mjs: all tests defined (node:test reports results below)");

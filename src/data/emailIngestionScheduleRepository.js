@@ -3,7 +3,21 @@
  * same field the server-side scheduler (api/_householdProfileStore.js /
  * api/_scheduledIngestionRunner.js) reads and updates. This module owns
  * exactly two things: reading the full (normalized) schedule for display,
- * and saving the two parent-controllable fields (enabled, localTime).
+ * and saving the one parent-controllable field (enabled).
+ *
+ * Vercel Hobby once-daily-cron correction: the server scheduler no longer
+ * uses localTime for anything (see src/data/emailIngestionSchedule.js's
+ * isHouseholdRunDue) — automatic email checking now simply runs once a
+ * day for every enabled household. This module correspondingly no longer
+ * reads OR writes localTime at all: saveEmailIngestionScheduleSetting only
+ * ever touches emailIngestionSchedule.enabled. Any localTime value already
+ * stored on an existing household document is left completely untouched
+ * (task: "Do not migrate or delete existing localTime values. Simply stop
+ * using localTime for scheduling. Existing stored schedule objects must
+ * remain valid.") — getEmailIngestionScheduleSetting still reads it back
+ * as part of the full normalized schedule (via
+ * normalizeEmailIngestionSchedule, unchanged), it's just no longer
+ * surfaced or edited by the Settings UI (see AutomaticEmailCheckingSection.jsx).
  *
  * Validation/defaulting reuses src/data/emailIngestionSchedule.js's own
  * normalizeEmailIngestionSchedule UNCHANGED — never a second, parallel
@@ -13,9 +27,9 @@
  *
  * lastRunLocalDate/lastRunAt/lastRunStatus/runLock are SERVER-OWNED
  * operational fields — this module never writes any of them. Saving uses
- * updateDoc() with dot-notation field paths ("emailIngestionSchedule.enabled",
- * "emailIngestionSchedule.localTime") so only those two leaf fields are
- * touched, never replacing the whole nested map.
+ * updateDoc() with a dot-notation field path ("emailIngestionSchedule.enabled")
+ * so only that one leaf field is touched, never replacing the whole nested
+ * map.
  *
  * VERIFIED AGAINST THE INSTALLED WEB SDK (firebase 12.9.0,
  * @firebase/firestore's parseSetData/parseUpdateData in
@@ -74,24 +88,6 @@ import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../Firebase.js";
 import { normalizeEmailIngestionSchedule } from "./emailIngestionSchedule.js";
 
-// The Settings UI's own initial time-picker value when nothing has been
-// configured yet (task Section 2: "Default when missing: ... localTime =
-// '20:00'"). Deliberately NOT part of src/data/emailIngestionSchedule.js's
-// own DEFAULT_EMAIL_INGESTION_SCHEDULE (localTime: null there) — that
-// default means "no schedule configured, never due" for the server
-// scheduler; this one only decides what value a never-yet-saved time
-// picker starts showing, a display-only concern.
-export const DEFAULT_DISPLAY_LOCAL_TIME = "20:00";
-
-/**
- * resolveInitialLocalTime(schedule) -> "HH:MM"
- * The time-picker's starting value: the household's own already-saved
- * localTime when one exists, else the display default above.
- */
-export function resolveInitialLocalTime(schedule) {
-  return schedule?.localTime || DEFAULT_DISPLAY_LOCAL_TIME;
-}
-
 /**
  * canEnableAutomaticEmailChecking({ gmailConnected, timezone }) -> { ok, reason }
  * The one gate deciding whether a parent may turn automatic email
@@ -143,29 +139,22 @@ export async function getEmailIngestionScheduleSetting(ctx) {
 }
 
 /**
- * saveEmailIngestionScheduleSetting(ctx, { enabled, localTime }) -> void
+ * saveEmailIngestionScheduleSetting(ctx, { enabled }) -> void
  * The ONE write path for this setting (Settings' Automatic Email Checking
- * section). Validates localTime through the SAME normalizer the server
- * scheduler itself trusts — enabling with an unresolvable time is refused
- * rather than silently persisted (the UI's native <input type="time">
- * never actually produces an invalid value, so this is a defensive
- * backstop, not the primary UX gate).
+ * toggle). Writes ONLY emailIngestionSchedule.enabled — localTime is never
+ * read, validated, or written here (see the module doc comment above);
+ * whatever value already exists on the household document, if any, is
+ * left exactly as-is.
  *
- * Uses updateDoc() with dot-notation field paths — see the module doc
- * comment above for why setDoc(...,{merge:true}) with the same dotted
- * keys would NOT have worked.
+ * Uses updateDoc() with a dot-notation field path — see the module doc
+ * comment above for why setDoc(...,{merge:true}) with the same kind of
+ * dotted key would NOT have worked.
  */
-export async function saveEmailIngestionScheduleSetting(ctx, { enabled, localTime }) {
+export async function saveEmailIngestionScheduleSetting(ctx, { enabled }) {
   if (ctx?.isAdmin) return; // no server-side scheduler exists for guest/local mode — nothing to persist
   if (!db || !ctx?.uid) return;
 
-  const normalized = normalizeEmailIngestionSchedule({ enabled, localTime });
-  if (normalized.enabled && !normalized.localTime) {
-    throw new Error("Choose a valid time before turning on automatic email checking.");
-  }
-
   await updateDoc(doc(db, "users", ctx.uid), {
-    "emailIngestionSchedule.enabled": normalized.enabled,
-    "emailIngestionSchedule.localTime": normalized.localTime,
+    "emailIngestionSchedule.enabled": !!enabled,
   });
 }

@@ -2,7 +2,12 @@
  * Focused unit tests for api/_scheduledIngestionRunner.js — the server-side
  * daily scheduler FRAMEWORK (household discovery, due-detection, overlap
  * locking, per-household failure isolation, run-status recording) invoked
- * by api/cron-email-ingestion.js on each Vercel Cron tick.
+ * by api/cron-email-ingestion.js on each Vercel Cron tick (now once daily
+ * — see vercel.json's "0 0 * * *" — Vercel Hobby's once-per-day cron
+ * limit). Execution is no longer gated on schedule.localTime at all (see
+ * src/data/emailIngestionSchedule.js's isHouseholdRunDue) — every enabled
+ * household is eligible on each daily tick, subject only to the same-day
+ * and lease/overlap guards.
  *
  * runDueHouseholds({ now, deps }) takes its four collaborators
  * (listHouseholds/tryAcquireLock/releaseLock/runIngestion) as fully
@@ -37,7 +42,7 @@ const FIXED_NOW = new Date("2026-01-15T15:30:00Z"); // 15:30 UTC
 function household(uid, scheduleOverrides = {}, timezone = "UTC") {
   return {
     uid,
-    schedule: normalizeEmailIngestionSchedule({ enabled: true, localTime: "08:00", ...scheduleOverrides }),
+    schedule: normalizeEmailIngestionSchedule({ enabled: true, ...scheduleOverrides }),
     timezone,
   };
 }
@@ -68,34 +73,9 @@ test("a disabled household is skipped and never locked/run", async () => {
   assert.strictEqual(calls.runIngestion.length, 0);
 });
 
-// ============ Missing schedule is skipped ============
-test("a household with no configured localTime (missing schedule) is skipped", async () => {
-  const households = [household("h1", { enabled: true, localTime: null })];
-  const { deps, calls } = makeDeps(households);
-
-  const summary = await runDueHouseholds({ now: FIXED_NOW, deps });
-
-  assert.strictEqual(summary.results[0].ran, false);
-  assert.strictEqual(summary.results[0].reason, "no_schedule");
-  assert.strictEqual(calls.runIngestion.length, 0);
-});
-
-// ============ Not yet due is skipped ============
-test("a household whose configured local run time hasn't arrived yet is skipped", async () => {
-  // FIXED_NOW is 15:30 UTC; a household configured for 20:00 UTC hasn't hit it yet.
-  const households = [household("h1", { enabled: true, localTime: "20:00" }, "UTC")];
-  const { deps, calls } = makeDeps(households);
-
-  const summary = await runDueHouseholds({ now: FIXED_NOW, deps });
-
-  assert.strictEqual(summary.results[0].ran, false);
-  assert.strictEqual(summary.results[0].reason, "not_yet_time");
-  assert.strictEqual(calls.runIngestion.length, 0);
-});
-
-// ============ Due household runs ============
-test("a due household is locked, run via the injected ingestion seam, and the lock released with success status", async () => {
-  const households = [household("h1", { enabled: true, localTime: "08:00" }, "UTC")];
+// ============ Enabled household runs on the daily cron ============
+test("an enabled household is locked, run via the injected ingestion seam, and the lock released with success status — no localTime required", async () => {
+  const households = [household("h1", { enabled: true }, "UTC")];
   const { deps, calls } = makeDeps(households);
 
   const summary = await runDueHouseholds({ now: FIXED_NOW, deps });
@@ -113,7 +93,7 @@ test("a due household is locked, run via the injected ingestion seam, and the lo
 
 // ============ Same household-local day does not run twice ============
 test("a household that already ran today (same household-local date) is not run again", async () => {
-  const households = [household("h1", { enabled: true, localTime: "08:00", lastRunLocalDate: "2026-01-15" }, "UTC")];
+  const households = [household("h1", { enabled: true, lastRunLocalDate: "2026-01-15" }, "UTC")];
   const { deps, calls } = makeDeps(households);
 
   const summary = await runDueHouseholds({ now: FIXED_NOW, deps });
@@ -123,29 +103,33 @@ test("a household that already ran today (same household-local date) is not run 
   assert.strictEqual(calls.runIngestion.length, 0);
 });
 
-// ============ Household timezone affects due calculation ============
-test("household timezone affects whether the same real-world instant is due", async () => {
-  // FIXED_NOW = 2026-01-15T15:30:00Z.
-  // UTC local time = 15:30 -> past an 08:00 localTime -> due.
-  // America/Los_Angeles (UTC-8 in January) local time = 07:30 -> before 08:00 -> not yet time.
+// ============ Household timezone still affects the same-day duplicate guard ============
+// No longer a time-of-day gate, but timezone is still what makes "today"
+// household-local — two households with the SAME lastRunLocalDate,
+// evaluated at the SAME real-world instant, can land on opposite sides of
+// "already ran today" purely because their timezones disagree about what
+// today's date is. FIXED_NOW = 2026-01-15T15:30:00Z: in UTC that's still
+// 2026-01-15 (matches lastRunLocalDate -> already ran); in Pacific/Kiritimati
+// (UTC+14) it's already 2026-01-16 (does not match -> due, new local day).
+test("household timezone still affects whether the same real-world instant counts as a new local day", async () => {
   const households = [
-    household("utc-household", { enabled: true, localTime: "08:00" }, "UTC"),
-    household("la-household", { enabled: true, localTime: "08:00" }, "America/Los_Angeles"),
+    household("utc-household", { enabled: true, lastRunLocalDate: "2026-01-15" }, "UTC"),
+    household("kiritimati-household", { enabled: true, lastRunLocalDate: "2026-01-15" }, "Pacific/Kiritimati"),
   ];
   const { deps } = makeDeps(households);
 
   const summary = await runDueHouseholds({ now: FIXED_NOW, deps });
 
   const utcResult = summary.results.find((r) => r.uid === "utc-household");
-  const laResult = summary.results.find((r) => r.uid === "la-household");
-  assert.strictEqual(utcResult.ran, true);
-  assert.strictEqual(laResult.ran, false);
-  assert.strictEqual(laResult.reason, "not_yet_time");
+  const kiritimatiResult = summary.results.find((r) => r.uid === "kiritimati-household");
+  assert.strictEqual(utcResult.ran, false, "UTC: still 2026-01-15 local — already ran today");
+  assert.strictEqual(utcResult.reason, "already_ran_today");
+  assert.strictEqual(kiritimatiResult.ran, true, "Pacific/Kiritimati (UTC+14): already 2026-01-16 local — a new day, due again");
 });
 
 // ============ Overlapping run is prevented ============
 test("a household whose lock is already held (overlapping run) is skipped without invoking ingestion", async () => {
-  const households = [household("h1", { enabled: true, localTime: "08:00" }, "UTC")];
+  const households = [household("h1", { enabled: true }, "UTC")];
   const { deps, calls } = makeDeps(households, { tryAcquireLock: async () => false });
 
   const summary = await runDueHouseholds({ now: FIXED_NOW, deps });
@@ -159,8 +143,8 @@ test("a household whose lock is already held (overlapping run) is skipped withou
 // ============ One household failure does not prevent another ============
 test("one household's ingestion throwing does not prevent the next household from being evaluated and run", async () => {
   const households = [
-    household("failing-household", { enabled: true, localTime: "08:00" }, "UTC"),
-    household("ok-household", { enabled: true, localTime: "08:00" }, "UTC"),
+    household("failing-household", { enabled: true }, "UTC"),
+    household("ok-household", { enabled: true }, "UTC"),
   ];
   const trackedCalls = [];
   const { deps } = makeDeps(households, {
@@ -184,7 +168,7 @@ test("one household's ingestion throwing does not prevent the next household fro
 
 // ============ Failed run releases the lock and stays retry-eligible ============
 test("a failed household run releases the lock and omits lastRunLocalDate so it stays retry-eligible today", async () => {
-  const households = [household("h1", { enabled: true, localTime: "08:00" }, "UTC")];
+  const households = [household("h1", { enabled: true }, "UTC")];
   const { deps, calls } = makeDeps(households, {
     runIngestion: async () => ({ ok: false, code: "SOME_FAILURE" }),
   });
@@ -202,7 +186,7 @@ test("a failed household run releases the lock and omits lastRunLocalDate so it 
 
 // ============ Scheduler invokes the shared server ingestion entry point, not business logic ============
 test("runDueHouseholds invokes the injected ingestion seam (not any extraction/confidence/commit logic itself)", async () => {
-  const households = [household("h1", { enabled: true, localTime: "08:00" }, "UTC")];
+  const households = [household("h1", { enabled: true }, "UTC")];
   let received;
   const { deps } = makeDeps(households, {
     runIngestion: async (uid) => { received = uid; return { ok: true }; },
@@ -225,7 +209,7 @@ test("the DEFAULT runIngestion collaborator is the real Gmail ingestion seam (ap
   });
   const { runDueHouseholds: freshRunDueHouseholds } = await freshImport("../api/_scheduledIngestionRunner.js");
 
-  const households = [household("h1", { enabled: true, localTime: "08:00" }, "UTC")];
+  const households = [household("h1", { enabled: true }, "UTC")];
   // Deliberately do NOT override runIngestion — exercise the real default
   // wiring, proving runDueHouseholds now calls into
   // api/_gmailIngestionRunner.js's real seam rather than the old

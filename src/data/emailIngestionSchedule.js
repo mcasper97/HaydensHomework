@@ -5,11 +5,10 @@
  * runner). Deliberately pure and I/O-free, same rationale as every other
  * src/data/*Decision.js module in this app (itemFormValidation.js,
  * autoCommitDecision.js, candidateCommitDecision.js): no Firestore, no
- * Date.now(), no real clock — callers compute the household-local date/
- * time first (see src/data/householdTimezone.js's householdTodayStr /
- * householdCurrentTimeStr) and pass them in, so this module is directly
- * unit-testable with fixed inputs and never has an opinion on what "now"
- * or "which timezone" means.
+ * Date.now(), no real clock — callers compute the household-local date
+ * first (see src/data/householdTimezone.js's householdTodayStr) and pass
+ * it in, so this module is directly unit-testable with fixed inputs and
+ * never has an opinion on what "now" or "which timezone" means.
  *
  * emailIngestionSchedule lives on the same users/{uid} document every
  * other household-profile field already does (familyLastName, timezone,
@@ -89,18 +88,28 @@ export function normalizeEmailIngestionSchedule(raw) {
 }
 
 /**
- * isHouseholdRunDue({ schedule, todayLocalDate, currentLocalTime }) ->
+ * isHouseholdRunDue({ schedule, todayLocalDate, nowIso }) ->
  *   { due: boolean, reason: string }
+ *
+ * Vercel Hobby cron correction: the server-side cron now fires once per
+ * day (see vercel.json's "0 0 * * *"), not on a coarse interval — there is
+ * no longer a specific local time-of-day to wait for, so execution is NO
+ * LONGER gated on schedule.localTime at all. Every enabled household is
+ * eligible on each (once-daily) cron tick, subject only to the same-day
+ * and overlap guards below. localTime itself is still read/normalized
+ * (see normalizeEmailIngestionSchedule above) — existing stored values are
+ * left alone, simply unused for this decision now (task: "Simply stop
+ * using localTime for scheduling. Existing stored schedule objects must
+ * remain valid.").
  *
  * schedule — an already-normalized schedule (see above).
  * todayLocalDate — "YYYY-MM-DD", the household's own local today (see
  *   householdTodayStr(timezone)); null means the household has no valid
  *   timezone configured, which fails safe to never-due (this app never
  *   guesses/defaults a timezone — see householdTimezone.js's own
- *   established convention).
- * currentLocalTime — "HH:MM", the household's own local wall-clock time
- *   right now (see householdCurrentTimeStr(timezone)); same null
- *   fail-safe as todayLocalDate.
+ *   established convention). Timezone is still needed here — it's what
+ *   makes the same-day duplicate guard below household-local rather than
+ *   UTC-local.
  * nowIso — the current instant as an ISO 8601 UTC string (e.g.
  *   `now.toISOString()`), used only to check whether schedule.runLock
  *   (see EMAIL_INGESTION_LOCK_LEASE_MS above) has expired. A lease that
@@ -108,19 +117,16 @@ export function normalizeEmailIngestionSchedule(raw) {
  *   blocking its household forever (see api/_householdProfileStore.js's
  *   tryAcquireEmailIngestionLock, the actual lease-holder).
  *
- * `reason` is one of: "disabled" | "no_schedule" | "no_timezone" |
- * "already_running" | "already_ran_today" | "not_yet_time" | "due" —
- * useful for tests and for a run-summary log line, never used to branch
- * on elsewhere.
+ * `reason` is one of: "disabled" | "no_timezone" | "already_running" |
+ * "already_ran_today" | "due" — useful for tests and for a run-summary
+ * log line, never used to branch on elsewhere.
  */
-export function isHouseholdRunDue({ schedule, todayLocalDate, currentLocalTime, nowIso }) {
+export function isHouseholdRunDue({ schedule, todayLocalDate, nowIso }) {
   const s = schedule || DEFAULT_EMAIL_INGESTION_SCHEDULE;
 
   if (!s.enabled) return { due: false, reason: "disabled" };
-  if (!s.localTime) return { due: false, reason: "no_schedule" };
-  if (!todayLocalDate || !currentLocalTime) return { due: false, reason: "no_timezone" };
+  if (!todayLocalDate) return { due: false, reason: "no_timezone" };
   if (isRunLockActive(s.runLock, nowIso)) return { due: false, reason: "already_running" };
   if (s.lastRunLocalDate === todayLocalDate) return { due: false, reason: "already_ran_today" };
-  if (currentLocalTime < s.localTime) return { due: false, reason: "not_yet_time" };
   return { due: true, reason: "due" };
 }

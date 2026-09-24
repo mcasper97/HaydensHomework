@@ -64,13 +64,17 @@ ok(
 );
 
 // ============ isHouseholdRunDue ============
+// Vercel Hobby once-daily-cron correction: no longer gated on localTime at
+// all — an enabled household with no runLock and no same-day run is due,
+// full stop. localTime itself may still be present/absent on the
+// normalized schedule (see normalizeEmailIngestionSchedule tests above),
+// it just no longer affects this decision.
 
 ok(
   "A disabled household is skipped",
   isHouseholdRunDue({
-    schedule: normalizeEmailIngestionSchedule({ enabled: false, localTime: "08:00" }),
+    schedule: normalizeEmailIngestionSchedule({ enabled: false }),
     todayLocalDate: "2026-01-15",
-    currentLocalTime: "09:00",
   }).reason === "disabled"
 );
 
@@ -79,61 +83,46 @@ ok(
   isHouseholdRunDue({
     schedule: null,
     todayLocalDate: "2026-01-15",
-    currentLocalTime: "09:00",
   }).due === false
 );
 
 ok(
-  "An enabled schedule with no localTime configured is skipped (no_schedule)",
+  "An enabled household with NO localTime configured at all is still due — localTime is no longer required",
   isHouseholdRunDue({
     schedule: normalizeEmailIngestionSchedule({ enabled: true, localTime: null }),
     todayLocalDate: "2026-01-15",
-    currentLocalTime: "09:00",
-  }).reason === "no_schedule"
-);
-
-ok(
-  "A household not yet due (current local time before configured localTime) is skipped",
-  isHouseholdRunDue({
-    schedule: normalizeEmailIngestionSchedule({ enabled: true, localTime: "08:00" }),
-    todayLocalDate: "2026-01-15",
-    currentLocalTime: "07:59",
-  }).reason === "not_yet_time"
-);
-
-ok(
-  "A due household (current local time at/after configured localTime, not yet run today) is due",
-  isHouseholdRunDue({
-    schedule: normalizeEmailIngestionSchedule({ enabled: true, localTime: "08:00" }),
-    todayLocalDate: "2026-01-15",
-    currentLocalTime: "08:05",
   }).due === true
 );
 
 ok(
-  "A household that already ran today (same household-local day) is skipped, even though it's past localTime",
+  "An enabled household with a stored (now-unused) localTime is due, same as one with none — localTime never gates execution",
   isHouseholdRunDue({
-    schedule: normalizeEmailIngestionSchedule({ enabled: true, localTime: "08:00", lastRunLocalDate: "2026-01-15" }),
+    schedule: normalizeEmailIngestionSchedule({ enabled: true, localTime: "08:00" }),
     todayLocalDate: "2026-01-15",
-    currentLocalTime: "09:00",
+  }).due === true
+);
+
+ok(
+  "A household that already ran today (same household-local day) is skipped",
+  isHouseholdRunDue({
+    schedule: normalizeEmailIngestionSchedule({ enabled: true, lastRunLocalDate: "2026-01-15" }),
+    todayLocalDate: "2026-01-15",
   }).reason === "already_ran_today"
 );
 
 ok(
   "A household that ran on a DIFFERENT local day is due again today",
   isHouseholdRunDue({
-    schedule: normalizeEmailIngestionSchedule({ enabled: true, localTime: "08:00", lastRunLocalDate: "2026-01-14" }),
+    schedule: normalizeEmailIngestionSchedule({ enabled: true, lastRunLocalDate: "2026-01-14" }),
     todayLocalDate: "2026-01-15",
-    currentLocalTime: "09:00",
   }).due === true
 );
 
 ok(
-  "Missing household timezone info (todayLocalDate/currentLocalTime null) is skipped (no_timezone), never guesses",
+  "Missing household timezone info (todayLocalDate null) is skipped (no_timezone), never guesses",
   isHouseholdRunDue({
-    schedule: normalizeEmailIngestionSchedule({ enabled: true, localTime: "08:00" }),
+    schedule: normalizeEmailIngestionSchedule({ enabled: true }),
     todayLocalDate: null,
-    currentLocalTime: null,
   }).reason === "no_timezone"
 );
 
@@ -144,11 +133,9 @@ ok(
   isHouseholdRunDue({
     schedule: normalizeEmailIngestionSchedule({
       enabled: true,
-      localTime: "08:00",
       runLock: { acquiredAt: "2026-01-15T09:00:00.000Z", expiresAt: "2026-01-15T09:10:00.000Z" },
     }),
     todayLocalDate: "2026-01-15",
-    currentLocalTime: "09:00",
     nowIso: "2026-01-15T09:05:00.000Z", // before expiresAt
   }).reason === "already_running"
 );
@@ -158,27 +145,26 @@ ok(
   isHouseholdRunDue({
     schedule: normalizeEmailIngestionSchedule({
       enabled: true,
-      localTime: "08:00",
       runLock: { acquiredAt: "2026-01-15T08:50:00.000Z", expiresAt: "2026-01-15T09:00:00.000Z" },
     }),
     todayLocalDate: "2026-01-15",
-    currentLocalTime: "09:30",
     nowIso: "2026-01-15T09:30:00.000Z", // well after expiresAt — simulates a crashed run's stale lease
   }).due === true
 );
 
-// ============ household timezone affects the due calculation ============
-// Same schedule/localTime/today; only currentLocalTime differs (as it
-// would for two households in different timezones evaluated at the same
-// real-world instant — see householdCurrentTimeStr in
-// tests/household-timezone.unit.mjs for the timezone->HH:MM half of this).
+// ============ household timezone still affects the same-day duplicate guard ============
+// Timezone is no longer used for a time-of-day gate, but it's still what
+// makes "today" household-local rather than UTC-local — two households
+// that both last ran on 2026-01-14, evaluated at the same real-world
+// instant, can land on different sides of the "already ran today" check
+// purely because their timezones disagree about what today's date is.
 {
-  const schedule = normalizeEmailIngestionSchedule({ enabled: true, localTime: "08:00" });
-  const dueResult = isHouseholdRunDue({ schedule, todayLocalDate: "2026-01-15", currentLocalTime: "10:30" });
-  const notDueResult = isHouseholdRunDue({ schedule, todayLocalDate: "2026-01-15", currentLocalTime: "05:30" });
+  const schedule = normalizeEmailIngestionSchedule({ enabled: true, lastRunLocalDate: "2026-01-14" });
+  const stillSameDay = isHouseholdRunDue({ schedule, todayLocalDate: "2026-01-14" });
+  const rolledOverToNewDay = isHouseholdRunDue({ schedule, todayLocalDate: "2026-01-15" });
   ok(
-    "The same schedule is due in one timezone's local time and not yet due in another's, at the same instant",
-    dueResult.due === true && notDueResult.due === false && notDueResult.reason === "not_yet_time"
+    "The same schedule is already-ran-today in one household's local date and due again in another's, at the same instant",
+    stillSameDay.due === false && stillSameDay.reason === "already_ran_today" && rolledOverToNewDay.due === true
   );
 }
 
