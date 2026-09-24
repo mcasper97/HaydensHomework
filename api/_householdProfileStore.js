@@ -56,3 +56,21 @@ export async function getGoogleCalendarRouting(uid, { db = defaultDb() } = {}) {
   }
   return { defaultCalendarId, childCalendarIds };
 }
+
+/**
+ * getGoogleCalendarAutoPublishEnabled(uid) -> boolean
+ * Reads users/{uid}.googleCalendarAutoPublishEnabled (see
+ * src/data/googleCalendarAutoPublish.js's own client-side read/write of
+ * this same field) — same read-only pattern as getHouseholdTimezone/
+ * getGoogleCalendarRouting above, one more field on the same document.
+ * Added for the server-side scheduled-ingestion adapter (see
+ * api/_scheduledIngestionAdapter.js), which needs this setting server-side
+ * for the exact same reason the client path does: default false, so no
+ * household's behavior changes until a parent explicitly opts in.
+ */
+export async function getGoogleCalendarAutoPublishEnabled(uid, { db = defaultDb() } = {}) {
+  if (!uid) return false;
+  const snap = await db.collection("users").doc(uid).get();
+  if (!snap.exists) return false;
+  return !!snap.data()?.googleCalendarAutoPublishEnabled;
+}

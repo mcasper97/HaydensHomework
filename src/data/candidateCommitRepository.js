@@ -66,43 +66,13 @@ import {
   notifyGuestListeners,
 } from "./itemsRepository.js";
 import { getIngestionCandidate, updateIngestionCandidate } from "./ingestionCandidatesRepository.js";
+import { decideCandidateCommit, buildItemFields, COMMIT_ERROR_CODES as SHARED_COMMIT_ERROR_CODES, commitError } from "./candidateCommitDecision.js";
 
-export const COMMIT_ERROR_CODES = {
-  CANDIDATE_NOT_FOUND: "CANDIDATE_NOT_FOUND",
-  NOT_COMMITTABLE: "NOT_COMMITTABLE",
-  COMMITTED_ITEM_MISSING: "COMMITTED_ITEM_MISSING",
-};
-
-function commitError(code, message) {
-  const err = new Error(message);
-  err.code = code;
-  return err;
-}
-
-// Explicit allowlist — only these reviewStatus values may attempt a
-// fresh-or-recovery commit. "committed" is handled separately (idempotent
-// success or COMMITTED_ITEM_MISSING, see above); every other value —
-// including any future/unknown status — is refused rather than assumed
-// committable.
-const COMMITTABLE_STATUSES = new Set(["pending", "approved"]);
-
-// commitMode (auto-commit slice) — audit-only distinction between a
-// candidate committed with no parent involved ("automatic") and one a
-// parent explicitly reviewed/approved ("reviewed", the default — every
-// pre-existing caller of commitCandidateToItem omits the 4th argument
-// entirely and keeps producing "reviewed" items, byte-for-byte the same
-// commit behavior as before this field existed). Deliberately its own
-// field rather than overloading reviewStatus, which already has its own
-// unrelated lifecycle (pending/approved/committed/rejected/corroborated).
-function buildItemFields(candidate, reviewedItemPayload, commitMode) {
-  return {
-    ...EMPTY_DEFAULTS,
-    ...reviewedItemPayload,
-    sourceRecordId: reviewedItemPayload?.sourceRecordId ?? candidate.sourceRecordId ?? null,
-    sourceCandidateId: candidate.id,
-    commitMode: commitMode || "reviewed",
-  };
-}
+// Re-exported for backward compatibility — every existing caller/test
+// imports COMMIT_ERROR_CODES from this module. The values themselves now
+// live in candidateCommitDecision.js (shared with the server-side
+// adapter — see api/_scheduledIngestionAdapter.js), never duplicated.
+export const COMMIT_ERROR_CODES = SHARED_COMMIT_ERROR_CODES;
 
 async function commitReal(ctx, candidateId, reviewedItemPayload, commitMode) {
   const candRef = doc(db, "users", ctx.uid, "ingestionCandidates", candidateId);
@@ -110,36 +80,27 @@ async function commitReal(ctx, candidateId, reviewedItemPayload, commitMode) {
 
   return runTransaction(db, async (tx) => {
     const candSnap = await tx.get(candRef);
-    if (!candSnap.exists()) {
-      throw commitError(COMMIT_ERROR_CODES.CANDIDATE_NOT_FOUND, "This suggestion no longer exists.");
-    }
-    const candidate = { id: candSnap.id, ...candSnap.data() };
+    const candidate = candSnap.exists() ? { id: candSnap.id, ...candSnap.data() } : null;
     const itemSnap = await tx.get(itemRef);
 
-    if (candidate.reviewStatus === "committed") {
-      if (itemSnap.exists()) {
-        return { id: itemSnap.id, ...itemSnap.data() };
+    const decision = decideCandidateCommit({
+      candidateExists: candSnap.exists(),
+      candidate,
+      itemExists: itemSnap.exists(),
+    });
+
+    if (decision.action === "throw") {
+      throw commitError(decision.code, decision.message);
+    }
+    if (decision.action === "return_existing" || decision.action === "mark_committed_only") {
+      if (decision.action === "mark_committed_only") {
+        tx.update(candRef, { reviewStatus: "committed" });
       }
-      throw commitError(
-        COMMIT_ERROR_CODES.COMMITTED_ITEM_MISSING,
-        "This item was already marked added, but its record is missing. Please contact support."
-      );
-    }
-
-    if (!COMMITTABLE_STATUSES.has(candidate.reviewStatus)) {
-      throw commitError(COMMIT_ERROR_CODES.NOT_COMMITTABLE, "This suggestion can no longer be added.");
-    }
-
-    // Item already exists (e.g. a retried commit after the candidate's
-    // own status update failed on a previous attempt) — never overwrite it
-    // with the currently submitted payload, just finish moving the
-    // candidate to "committed".
-    if (itemSnap.exists()) {
-      tx.update(candRef, { reviewStatus: "committed" });
       return { id: itemSnap.id, ...itemSnap.data() };
     }
 
-    const fields = buildItemFields(candidate, reviewedItemPayload, commitMode);
+    // decision.action === "create_item"
+    const fields = buildItemFields(EMPTY_DEFAULTS, candidate, reviewedItemPayload, commitMode);
     tx.set(itemRef, {
       ...fields,
       createdAt: serverTimestamp(),
@@ -152,33 +113,32 @@ async function commitReal(ctx, candidateId, reviewedItemPayload, commitMode) {
 
 async function commitGuest(ctx, candidateId, reviewedItemPayload, commitMode) {
   const candidate = await getIngestionCandidate(ctx, candidateId);
-  if (!candidate) {
-    throw commitError(COMMIT_ERROR_CODES.CANDIDATE_NOT_FOUND, "This suggestion no longer exists.");
-  }
-
   const existingItem = await getItem(ctx, candidateId);
 
-  if (candidate.reviewStatus === "committed") {
-    if (existingItem) return existingItem;
-    throw commitError(
-      COMMIT_ERROR_CODES.COMMITTED_ITEM_MISSING,
-      "This item was already marked added, but its record is missing. Please contact support."
-    );
-  }
+  const decision = decideCandidateCommit({
+    candidateExists: !!candidate,
+    candidate,
+    itemExists: !!existingItem,
+  });
 
-  if (!COMMITTABLE_STATUSES.has(candidate.reviewStatus)) {
-    throw commitError(COMMIT_ERROR_CODES.NOT_COMMITTABLE, "This suggestion can no longer be added.");
+  if (decision.action === "throw") {
+    throw commitError(decision.code, decision.message);
+  }
+  if (decision.action === "return_existing") {
+    return existingItem;
   }
 
   let item = existingItem;
-  if (!item) {
+  if (decision.action === "create_item") {
     const now = new Date().toISOString();
-    item = { id: candidateId, ...buildItemFields(candidate, reviewedItemPayload, commitMode), createdAt: now, updatedAt: now };
+    item = { id: candidateId, ...buildItemFields(EMPTY_DEFAULTS, candidate, reviewedItemPayload, commitMode), createdAt: now, updatedAt: now };
     const items = readGuestItems();
     items.push(item);
     writeGuestItems(items);
     notifyGuestListeners();
   }
+  // decision.action === "mark_committed_only" falls through here with
+  // `item` already set to the existing item, unchanged.
 
   await updateIngestionCandidate(ctx, candidateId, { reviewStatus: "committed" });
   return item;
