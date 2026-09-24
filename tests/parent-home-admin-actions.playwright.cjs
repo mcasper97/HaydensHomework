@@ -12,13 +12,14 @@
  *                         its own reachable FROM Parent Board, no new
  *                         chore-definition controls beyond what it already had
  *
- * Add Item's create logic (SourceRecord + createItem) is extracted into
- * AddItemPanel.jsx, reused by both Parent Board and ParentOrganizer.jsx
- * (Family Board's own Add Item affordance) — not duplicated. Manage
- * Chores' template add/remove logic is extracted into
- * data/choreTemplatesRepository.js, reused by both ChoreManagementPanel.jsx
- * (Parent Board) and FamilyBoard.jsx's own (unchanged) Manage Chores block
- * — not duplicated. A later navigation refactor (see src/BoardSelector.jsx,
+ * Add Item's create logic (SourceRecord + createItem) lives in
+ * AddItemPanel.jsx, reached only from Parent Board now — the Family Board
+ * redesign made Family Board execution-only (unified agenda: Items + chore
+ * occurrences, no admin controls of any kind), so there is no longer a
+ * separate Family-Board-owned Add Item affordance or Manage Chores block to
+ * keep in sync; chore-template add/remove logic lives in
+ * data/choreTemplatesRepository.js, reached only from Parent Board's
+ * ChoreManagementPanel.jsx. A later navigation refactor (see src/BoardSelector.jsx,
  * src/ParentBoard.jsx) split the signed-in landing page (a pure launcher)
  * from Parent Board (the admin actions), and made each action open a
  * focused view that fully replaces the action grid rather than expanding
@@ -81,7 +82,7 @@ function ok(name, cond) {
   ok('Tapping "Add Item" opens a focused view with its own "Back to Parent Board" control (no navigation away)', await visible('← Back to Parent Board'));
   ok('Tapping "Add Item" hides the Parent Board action grid (focused view replaces it, not expands beneath it)', !(await page.getByTestId('parent-board').isVisible().catch(() => false)));
   ok('Tapping "Add Item" does NOT show the Family Board heading', !(await page.getByText(/🏠.*Family Board/).isVisible().catch(() => false)));
-  ok('Tapping "Add Item" does NOT show Family Board\'s "🔆 Today" section', !(await visible('🔆 Today')));
+  ok('Tapping "Add Item" does NOT show Family Board\'s unified agenda', !(await page.getByTestId('family-agenda').isVisible().catch(() => false)));
   ok('Tapping "Add Item" reveals the parent-owned Add Item panel', await page.getByTestId('add-item-panel').isVisible());
   ok('The Add Item panel shows the existing item-type quick-create buttons', await page.getByRole('button', { name: '+ Assignment' }).isVisible());
 
@@ -98,7 +99,7 @@ function ok(name, cond) {
   const createdItem = (await readItems()).find((it) => it.title === 'Book Report Draft');
   ok('The created item has a sourceRecordId (existing provenance behavior preserved)', !!createdItem?.sourceRecordId);
   ok('A confirmation is shown after adding, still on the Add Item focused view', await visible('Added!'));
-  ok('Still in the Add Item focused view after submitting (never navigated to Family Board)', await page.getByTestId('add-item-panel').isVisible() && !(await visible('🔆 Today')));
+  ok('Still in the Add Item focused view after submitting (never navigated to Family Board)', await page.getByTestId('add-item-panel').isVisible() && !(await page.getByTestId('family-agenda').isVisible().catch(() => false)));
 
   // Back to the grid.
   await page.getByText('← Back to Parent Board').click();
@@ -111,7 +112,7 @@ function ok(name, cond) {
   ok('Tapping "Manage Chores" opens a focused view with its own "Back to Parent Board" control (no navigation away)', await visible('← Back to Parent Board'));
   ok('Tapping "Manage Chores" hides the Parent Board action grid', !(await page.getByTestId('parent-board').isVisible().catch(() => false)));
   ok('Tapping "Manage Chores" does NOT show the Family Board heading', !(await page.getByText(/🏠.*Family Board/).isVisible().catch(() => false)));
-  ok('Tapping "Manage Chores" does NOT show Family Board\'s "📅 Coming Up" section', !(await visible('📅 Coming Up')));
+  ok('Tapping "Manage Chores" does NOT show Family Board\'s unified agenda', !(await page.getByTestId('family-agenda').isVisible().catch(() => false)));
   ok('Tapping "Manage Chores" reveals the parent-owned chore-management panel', await page.getByTestId('chore-management-panel').isVisible());
   ok('The panel lists the existing learner (Ava)', await visible('Ava'));
 
@@ -123,19 +124,25 @@ function ok(name, cond) {
 
   ok('Adding a chore persists a real chore template (existing persistence unchanged)', Object.values(await readChoreTemplates()).flat().some((c) => c.text === 'Feed the cat'));
   ok('The new chore is visible in the panel', await visible('Feed the cat'));
-  ok('Still in the Manage Chores focused view after adding (never navigated to Family Board)', await page.getByTestId('chore-management-panel').isVisible() && !(await visible('📅 Coming Up')));
+  ok('Still in the Manage Chores focused view after adding (never navigated to Family Board)', await page.getByTestId('chore-management-panel').isVisible() && !(await page.getByTestId('family-agenda').isVisible().catch(() => false)));
 
   // ============ Family Board still renders/works independently, with the same underlying data ============
+  // Family Board is execution-only in the current architecture (unified
+  // agenda, no parent-admin controls of any kind) — it no longer has its
+  // own inline Add Item quick-create row or a separate "Manage Chores"
+  // section (both moved to Parent Board only). The invariant this section
+  // now protects: the same canonical Item/chore data Parent Board wrote is
+  // visible on Family Board's agenda, with no admin controls alongside it.
   await page.getByText('← Back to Parent Board').click();
   await page.getByText('← All Boards').click();
   await page.waitForSelector('text=Haydens - Homework');
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
-  ok('Family Board renders independently ("🔆 Today")', await visible('🔆 Today'));
-  ok('Family Board still shows its own Add Item quick-create row ("+ Assignment") — unchanged existing behavior', await page.getByRole('button', { name: '+ Assignment' }).isVisible());
+  await page.waitForSelector('[data-testid="family-agenda"]', { timeout: 10000 });
+  ok('Family Board renders independently (unified agenda)', await page.getByTestId('family-agenda').isVisible());
+  ok('Family Board shows NO inline item-type quick-create row ("+ Assignment") — creation lives only on Parent Board now', !(await page.getByRole('button', { name: '+ Assignment' }).isVisible().catch(() => false)));
   ok('The item added from Parent Board is visible on Family Board too (same canonical Item store)', await visible('Book Report Draft'));
-  ok('Family Board still shows its own Manage Chores section — unchanged existing behavior', await visible('🧹 Manage Chores'));
-  ok('The chore added from Parent Board is visible on Family Board too (same persisted chore templates)', await visible('Feed the cat'));
+  ok('Family Board shows NO separate "Manage Chores" heading — chore-template management lives only on Parent Board now', !(await visible('🧹 Manage Chores')));
+  ok('The chore added from Parent Board is visible as an executable occurrence on Family Board too (same persisted chore templates)', await visible('Feed the cat'));
 
   // ============ No NEW parent-admin controls leaked onto Family Board ============
   ok('Family Board does not show a "Parent Board" Add Item action card', !(await page.getByTestId('action-add-item').isVisible().catch(() => false)));
@@ -149,8 +156,8 @@ function ok(name, cond) {
   await page.getByTestId('board-settings').click();
   await page.waitForSelector('text=Settings');
   await page.getByText('🖥️ Organizer display').click();
-  await page.waitForSelector('text=🔆 Today', { timeout: 5000 }).catch(() => {});
-  ok('Organizer/Shared Display renders (kiosk view)', await visible('🔆 Today'));
+  await page.waitForSelector('[data-testid="family-agenda"]', { timeout: 10000 }).catch(() => {});
+  ok('Organizer/Shared Display renders (kiosk view, unified agenda)', await page.getByTestId('family-agenda').isVisible());
   ok('Shared Display shows no "Add Item" action card', !(await page.getByTestId('action-add-item').isVisible().catch(() => false)));
   ok('Shared Display shows no "Manage Chores" action card', !(await page.getByTestId('action-manage-chores').isVisible().catch(() => false)));
   ok('Shared Display shows no parent-owned Add Item panel', !(await page.getByTestId('add-item-panel').isVisible().catch(() => false)));

@@ -218,7 +218,11 @@ function candidate(overrides) {
   await page.getByText('← Back to Parent Board').click();
   await page.getByText('← All Boards').click();
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
+  // Waits for the filter row, not the populated `family-agenda` testid —
+  // the deferred candidate is still pending (not yet committed to an
+  // Item), so the agenda is legitimately empty here; the filter row
+  // renders regardless.
+  await page.waitForSelector('[data-testid="agenda-filter-all"]', { timeout: 10000 });
   await page.getByText('← Back').click();
   await page.waitForSelector('text=Haydens - Homework');
   await page.getByTestId('board-parent').click();
@@ -367,7 +371,11 @@ function candidate(overrides) {
   ok('Board Selector never shows the "Review Inbox" action card', !(await reviewInboxCard().isVisible().catch(() => false)));
 
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
+  // Waits for the filter row, not the populated `family-agenda` testid —
+  // the pending candidate is still awaiting review (not yet committed to
+  // an Item), so the agenda is legitimately empty here; the filter row
+  // renders regardless.
+  await page.waitForSelector('[data-testid="agenda-filter-all"]', { timeout: 10000 });
   ok('Family Board never shows the "Review Inbox" action card', !(await reviewInboxCard().isVisible().catch(() => false)));
   ok('Family Board never shows a pending candidate title', !(await page.getByText('Visibility Probe').isVisible().catch(() => false)));
   await page.getByText('← Back').click();

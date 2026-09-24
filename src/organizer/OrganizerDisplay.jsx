@@ -1,19 +1,21 @@
 import React from "react";
-import ParentOrganizer from "./ParentOrganizer.jsx";
-import OrganizerCalendar from "./OrganizerCalendar.jsx";
+import FamilyAgendaBoard from "./FamilyAgendaBoard.jsx";
 
 /**
- * Organizer Mode — the display-first wall/kiosk experience (Phase 1.5).
- * Presentational only: FamilyBoard.jsx still owns loading the family
- * profile (Firestore/localStorage), the family-event migration, and the
- * chore CRUD functions — this component just renders a read-mostly view of
- * that same data via the same ParentOrganizer/OrganizerCalendar components
- * Parent Mode uses, with creation/editing/deleting turned off.
+ * Organizer Mode — the display-first wall/kiosk experience. Presentational
+ * only: FamilyBoard.jsx still owns loading the family profile (Firestore/
+ * localStorage), the family-event migration, and the chore CRUD functions
+ * — this component just renders the same unified FamilyAgendaBoard the
+ * normal (non-kiosk) Family Board now renders (Section 23 — "reusable for
+ * the shared/kiosk experience where practical"). There is no longer a
+ * separate allowManage=false variant to maintain: both surfaces are
+ * execution-only now (Section 15), so this component's own render is
+ * identical in shape to FamilyBoard.jsx's non-kiosk branch, just without
+ * its Points strip (kiosk keeps its own, below) sharing any admin state.
  *
- * allowManage is deliberately hard-set to false here — Organizer Mode must
- * never expose create/edit/delete or chore-template management (Phase 1.5).
- * allowComplete stays true so the one approved low-friction interaction —
- * marking an item or chore done — still works from the wall display.
+ * Marking an item or chore done/undone remains the one interaction this
+ * surface offers — no create/edit/delete, no chore-template management,
+ * ever (Shared Display security boundary, unchanged).
  */
 const OrganizerDisplay = ({
   children = [],
@@ -23,6 +25,7 @@ const OrganizerDisplay = ({
   childStats = {},
   ctx,
   onToggleChore,
+  householdTimezone,
 }) => {
   // No title/back-nav here — FamilyBoard.jsx's header already renders the
   // board title and back/home controls for both its kiosk and parent
@@ -57,24 +60,14 @@ const OrganizerDisplay = ({
       )}
 
       {children.length > 0 && (
-        <div className="rounded-3xl p-5 mb-8" style={{ background: "#2a2a2c" }}>
-          <ParentOrganizer
-            ctx={ctx}
-            children={children}
-            choreTemplates={choreTemplates}
-            choreCompletions={choreCompletions}
-            onToggleChore={onToggleChore}
-            allowManage={false}
-            allowComplete
-          />
-        </div>
-      )}
-
-      {children.length > 0 && (
-        <div className="w-full">
-          <h2 className="text-xl font-display text-white mb-3">📅 Calendar</h2>
-          <OrganizerCalendar ctx={ctx} children={children} choreTemplates={choreTemplates} choreCompletions={choreCompletions} />
-        </div>
+        <FamilyAgendaBoard
+          ctx={ctx}
+          children={children}
+          choreTemplates={choreTemplates}
+          choreCompletions={choreCompletions}
+          onToggleChore={onToggleChore}
+          householdTimezone={householdTimezone}
+        />
       )}
     </div>
   );

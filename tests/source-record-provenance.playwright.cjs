@@ -77,22 +77,35 @@ function ok(name, cond) {
     localStorage.removeItem('crestly_admin_source_records');
   });
 
-  await page.getByText(/Family Board/).first().click();
-  await page.waitForSelector('text=🔆 Today');
-  ok('Backward-compat: pre-existing item without sourceRecordId loads and displays', await visible('Old Science Test'));
+  await page.getByTestId('board-family').click();
+  await page.waitForSelector('[data-testid="family-agenda"]', { timeout: 10000 });
+  ok('Backward-compat: pre-existing item without sourceRecordId loads and displays without crashing', await visible('Old Science Test'));
 
   let items = await readItems();
   let legacyItem = items.find((it) => it.id === 'legacy-test-1');
   ok('Backward-compat: legacy item has no sourceRecordId key (undefined, not crashing)', legacyItem?.sourceRecordId === undefined);
 
-  // Editing/saving the legacy item must not throw despite the missing field.
-  const legacyRow = page.locator('.rounded-2xl.bg-white.border-gray-200').filter({ hasText: 'Old Science Test' });
+  // Editing/saving the legacy item must not throw despite the missing
+  // field — reached via Parent Board's "Manage Items" action (the surface
+  // item editing lives on now that Family Board is execution-only).
+  await page.getByText('← Back').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-parent').click();
+  await page.waitForSelector('text=Parent Board');
+  await page.getByTestId('action-manage-items').click();
+  await page.waitForSelector('[data-testid="manage-items-row"]', { timeout: 5000 }).catch(() => {});
+  const legacyRow = page.locator('[data-testid="manage-items-row"]').filter({ hasText: 'Old Science Test' });
   await legacyRow.getByText('Edit').click();
   let form = page.locator('form');
   ok('Backward-compat: edit form opens for a pre-existing item with no sourceRecordId', await form.isVisible());
   await form.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByText('← Back to Parent Board').click();
+  await page.waitForSelector('text=Parent Board');
 
   // ============ Manual creation: a new item gets its own 1:1 SourceRecord ============
+  // Item creation now happens via Parent Board's "Add Item" action
+  // (AddItemPanel.jsx), not Family Board directly.
+  await page.getByTestId('action-add-item').click();
   await page.getByRole('button', { name: '+ Test' }).click();
   form = page.locator('form');
   await form.getByPlaceholder('Title').fill('Manual Math Test');
@@ -101,7 +114,7 @@ function ok(name, cond) {
   await form.getByRole('button', { name: 'Add' }).click();
   await page.waitForTimeout(400);
 
-  ok('Manual creation: item created', await visible('Manual Math Test'));
+  ok('Manual creation: item created (Added! confirmation shown)', await visible('Added!'));
 
   items = await readItems();
   let manualItem = items.find((it) => it.title === 'Manual Math Test');
@@ -117,8 +130,12 @@ function ok(name, cond) {
   ok('Manual creation: item.source unchanged (still manual/null, additive only)',
     manualItem?.source?.type === 'manual' && manualItem?.source?.sourceId === null);
 
-  // Editing (not re-creating) the item must not mint a second SourceRecord.
-  const manualRow = page.locator('.rounded-2xl.bg-white.border-gray-200').filter({ hasText: 'Manual Math Test' });
+  // Editing (not re-creating) the item must not mint a second SourceRecord
+  // — via Parent Board's "Manage Items" action.
+  await page.getByText('← Back to Parent Board').click();
+  await page.getByTestId('action-manage-items').click();
+  await page.waitForSelector('[data-testid="manage-items-row"]', { timeout: 5000 }).catch(() => {});
+  const manualRow = page.locator('[data-testid="manage-items-row"]').filter({ hasText: 'Manual Math Test' });
   await manualRow.getByText('Edit').click();
   form = page.locator('form');
   await form.getByPlaceholder('Title').fill('Manual Math Test (edited)');
@@ -130,6 +147,8 @@ function ok(name, cond) {
   records = await readSourceRecords();
   ok('Edit does not create a second SourceRecord', records.length === 1);
   ok('Edit preserves the original sourceRecordId', editedItem?.sourceRecordId === manualItem.sourceRecordId);
+  await page.getByText('← Back to Parent Board').click();
+  await page.waitForSelector('text=Parent Board');
 
   // ============ Isolation: SourceRecords live in their own guest storage key ============
   const keysAreSeparate = await page.evaluate(() => {

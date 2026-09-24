@@ -56,6 +56,8 @@ const SettingsPage = ({
   renameChild,
   googleCalendarRouting,
   onRoutingSaved,
+  googleCalendarAutoPublishEnabled,
+  onAutoPublishSaved,
   deviceMode,
   onSetDeviceMode,
   onLockChild,
@@ -124,6 +126,8 @@ const SettingsPage = ({
               familyChildren={children}
               googleCalendarRouting={googleCalendarRouting}
               onRoutingSaved={onRoutingSaved}
+              googleCalendarAutoPublishEnabled={googleCalendarAutoPublishEnabled}
+              onAutoPublishSaved={onAutoPublishSaved}
             />
           </>
         )}

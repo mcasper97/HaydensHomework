@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { subscribeItems, createItem } from "../data/itemsRepository.js";
 import { createSourceRecord } from "../data/sourceRecordsRepository.js";
 import { ITEM_TYPE_META, FORM_TYPES, ACADEMIC_TYPES } from "../data/itemTypes.js";
+import { autoPublishItemIfEligible } from "../data/googleCalendarAutoPublish.js";
 import ItemForm from "./ItemForm.jsx";
 
 /**
@@ -68,7 +69,12 @@ const AddItemPanel = ({ ctx, children = [] }) => {
       // if the SourceRecord write fails for any reason.
       console.error("AddItemPanel: createSourceRecord failed", err);
     }
-    await createItem(ctx, sourceRecordId ? { ...payload, sourceRecordId } : payload);
+    const item = await createItem(ctx, sourceRecordId ? { ...payload, sourceRecordId } : payload);
+    // Fire-and-forget, same as every other commit path — a manually-created
+    // Item is explicitly parent-authored, so it needs no AI-confidence
+    // review, but still goes through the identical post-commit Calendar
+    // workflow (Section 25) once eligible/enabled; never blocks "Added!".
+    autoPublishItemIfEligible(ctx, item);
     setShowForm(false);
     setSavedMessage(true);
   };

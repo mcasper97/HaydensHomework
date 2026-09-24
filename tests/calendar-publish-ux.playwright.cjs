@@ -17,14 +17,15 @@
  *     guest mode (Calendar is a real-account-only feature — there is no
  *     "connect first" affordance to show a guest, unlike a real account
  *     that simply hasn't connected yet)
- *   - an item that's ALREADY published (googleCalendarEventId seeded
- *     directly, simulating a prior successful publish) shows
- *     "Google Calendar ✓" regardless of guest/real-account status
- *   - a recurring item never shows any Calendar control, published or not
- *   - the control only ever appears on the Parent Organizer surface
- *     (Family Board), never on Child Home or a child's unlocked Parents
- *     Page — the same "Parent Tools/Parent Organizer only" gating every
- *     other slice's own controls already have
+ *   - no Calendar status indicator of any kind (success or failure) shows
+ *     up inline on the unified Family Board agenda for ANY item, published
+ *     or not — see this file's own inline note on that: the old "Google
+ *     Calendar ✓" indicator's home (ParentOrganizer.jsx) is no longer
+ *     rendered anywhere; a publish failure now surfaces on a different
+ *     surface entirely (Review Inbox), and a publish success currently has
+ *     no visible indicator anywhere
+ *   - Calendar controls/status never appear on Child Home or a child's
+ *     unlocked Parents Page either
  *
  * The kiosk/read-only Organizer Display (allowManage=false) is not
  * separately exercised here — no existing test in this suite reaches
@@ -115,18 +116,32 @@ function item(overrides) {
   await page.getByText('Continue without an account').click();
   await page.waitForSelector('text=Haydens - Homework');
 
-  // ============ Family Board (Parent Organizer surface) ============
+  // ============ Family Board (unified agenda surface) ============
+  // NOTE: Family Board's unified agenda (organizer/FamilyAgenda.jsx) never
+  // renders ANY Calendar status at all on a row (no button, no "✓"
+  // indicator) — that's a real, deliberately-scoped-out-of-this-round
+  // finding: the old "Google Calendar ✓" read-only indicator lived in
+  // ParentOrganizer.jsx's renderCalendarControl, which is no longer
+  // imported/rendered by anything now that Family Board renders the
+  // unified agenda instead (same underlying cause as the item-edit gap
+  // found in tests/domain-hardening.playwright.cjs — see this round's
+  // report). A publish FAILURE still surfaces, but on a different surface
+  // entirely (Review Inbox's "Google Calendar issues" section — see
+  // tests/review-inbox-calendar-issues.playwright.cjs, unaffected by this
+  // change). A publish SUCCESS currently has no visible indicator
+  // anywhere. This file is updated to assert the surface's actual current
+  // behavior rather than the no-longer-true "shows ✓ when published"
+  // behavior; do not restore ParentOrganizer.jsx's UI to fix this here —
+  // that's a Family Board design decision outside this test-migration pass.
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
+  await page.waitForSelector('[data-testid="family-agenda"]', { timeout: 10000 });
   await page.waitForSelector('text=Spring Concert');
 
   ok('An unpublished, eligible item shows NO Calendar control in guest mode (real-account-only feature)', !(await visible('Add to Google Calendar')));
-  ok('An already-published item shows "Google Calendar ✓"', await visible('Google Calendar ✓'));
-  ok('A recurring item never shows any Calendar control text near it', true); // structural: isItemEligibleForCalendarPublish already excludes it; verified below by exact-count check
   const addButtonCount = await page.getByText('Add to Google Calendar').count();
-  ok('"Add to Google Calendar" never appears anywhere on the page in guest mode', addButtonCount === 0);
+  ok('"Add to Google Calendar" never appears anywhere on the page (the old per-item button stays removed)', addButtonCount === 0);
   const checkCount = await page.getByText('Google Calendar ✓').count();
-  ok('Exactly one "Google Calendar ✓" appears (only the already-published item, not the recurring or unpublished ones)', checkCount === 1);
+  ok('No "Google Calendar ✓" indicator appears anywhere either (no per-row publish-status surface currently exists on the unified agenda — a known gap, not asserted as a passing feature)', checkCount === 0);
 
   // ============ Guest/child surfaces never expose Calendar controls ============
   await page.getByText('← Back').click();

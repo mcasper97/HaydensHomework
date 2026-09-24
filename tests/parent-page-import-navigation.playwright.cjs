@@ -93,10 +93,12 @@ function ok(name, cond) {
   await page.getByText('← All Boards').click();
   await page.waitForSelector('text=Haydens - Homework');
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
-  ok('Family Board shows the Organizer ("🔆 Today")', await visible('🔆 Today'));
-  ok('Family Board shows the Calendar ("📅 Coming Up")', await visible('📅 Coming Up'));
-  ok('Family Board shows a create control (+ Assignment) — "Add" is present', await page.getByRole('button', { name: '+ Assignment' }).isVisible());
+  // Waits for the filter row, not the populated `family-agenda` testid —
+  // this test never creates any Items/chores, so the agenda is
+  // legitimately empty here; the filter row renders regardless.
+  await page.waitForSelector('[data-testid="agenda-filter-all"]', { timeout: 10000 });
+  ok('Family Board shows the unified agenda', await page.getByTestId('agenda-filter-all').isVisible());
+  ok('Family Board shows NO create control (+ Assignment) — creation lives only on Parent Board', !(await page.getByRole('button', { name: '+ Assignment' }).isVisible().catch(() => false)));
   ok('Family Board does NOT show any Import control', !(await page.getByTestId('parent-organizer-panel').isVisible().catch(() => false)));
   ok('Family Board does NOT show any Import control (alt text match)', !(await page.getByText('Import Teacher Plan').isVisible().catch(() => false)));
 
@@ -126,7 +128,18 @@ function ok(name, cond) {
   // refactor) — the same canonical onSelectChild path the removed "View
   // Child" Settings button used to call, now surfaced as the primary entry
   // point for every current learner.
-  ok('Board Selector shows a learner button for Ava', await page.getByTestId('board-learner').isVisible());
+  // A retrying visibility check, not a one-shot `.isVisible()` — this
+  // assertion runs immediately after a navigation, and a bare `.isVisible()`
+  // here can race the React re-render (same class of timing flake
+  // documented and fixed in
+  // tests/child-page-back-navigation.playwright.cjs's own `visibleEventually`
+  // helper; this plain `playwright` project has no @playwright/test
+  // `expect(locator).toBeVisible()` available, so Locator#waitFor is the
+  // equivalent auto-waiting primitive).
+  ok(
+    'Board Selector shows a learner button for Ava',
+    await page.getByTestId('board-learner').waitFor({ state: 'visible', timeout: 3000 }).then(() => true).catch(() => false)
+  );
   await page.getByTestId('board-learner').click();
   await page.waitForSelector('text=My Day', { timeout: 5000 });
   ok('Normal child selection still opens on that child\'s Home (Board Selector learner button)', await page.getByRole('button', { name: /Parents/ }).isVisible().catch(() => false));

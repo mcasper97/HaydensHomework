@@ -68,9 +68,10 @@ function ok(name, cond) {
   ok('Board Selector shows Settings', await page.getByTestId('board-settings').isVisible());
   ok('Board Selector shows Sign out clearly (not buried)', await page.getByText('Sign out').isVisible());
   ok('Board Selector shows no Parent Board admin tools (Add Item)', await notVisible('action-add-item'));
+  ok('Board Selector shows no Parent Board admin tools (Manage Items)', await notVisible('action-manage-items'));
   ok('Board Selector shows no Parent Board admin tools (Manage Chores)', await notVisible('action-manage-chores'));
   ok('Board Selector shows no inline Add Item form', !(await page.locator('form').isVisible().catch(() => false)));
-  ok('Board Selector shows no Today/Upcoming Organizer content', !(await visible('🔆 Today')));
+  ok('Board Selector shows no Family Agenda/Organizer content', !(await page.getByTestId('agenda-filter-all').isVisible().catch(() => false)));
   ok('Board Selector shows no Learners section before any learner exists (nothing to launch into yet)', !(await page.getByText('Learners').isVisible().catch(() => false)));
 
   // Add two learners via Settings so the Learners section has real content.
@@ -103,11 +104,12 @@ function ok(name, cond) {
   ok('Each learner button shows the learner\'s current display name and emoji', await visible('Tiger') && await visible('Lion') && await visible('🐯') && await visible('🦁'));
 
   // ================================================================
-  // Parent Board — just the five admin actions, no launcher navigation
+  // Parent Board — just the six admin actions, no launcher navigation
   // ================================================================
   await page.getByTestId('board-parent').click();
   await page.waitForSelector('text=Parent Board');
-  ok('Parent Board shows all five admin actions', await page.getByTestId('action-add-item').isVisible()
+  ok('Parent Board shows all six admin actions', await page.getByTestId('action-add-item').isVisible()
+    && await page.getByTestId('action-manage-items').isVisible()
     && await page.getByTestId('action-upload-homework').isVisible()
     && await page.getByTestId('action-review-inbox').isVisible()
     && await page.getByTestId('action-check-email').isVisible()
@@ -128,6 +130,7 @@ function ok(name, cond) {
   // ================================================================
   const toolCases = [
     { action: 'action-add-item', panelTestId: 'add-item-panel' },
+    { action: 'action-manage-items', panelTestId: 'manage-items-panel' },
     { action: 'action-upload-homework', panelTestId: 'parent-organizer-panel' },
     { action: 'action-manage-chores', panelTestId: 'chore-management-panel' },
   ];
@@ -207,8 +210,14 @@ function ok(name, cond) {
   // Family Board — opens from Board Selector, existing behavior intact
   // ================================================================
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
-  ok('Family Board opens from Board Selector and shows the existing Organizer', await visible('🔆 Today'));
+  // Waits for the agenda filter row rather than the populated
+  // `family-agenda` testid specifically — this test never creates any
+  // Items/chores, so the agenda is legitimately empty here (FamilyAgenda.jsx
+  // renders a different `family-agenda-empty` element in that case); the
+  // filter row itself renders unconditionally whenever at least one child
+  // exists, regardless of whether the agenda has any rows.
+  await page.waitForSelector('[data-testid="agenda-filter-all"]', { timeout: 10000 });
+  ok('Family Board opens from Board Selector and shows the unified agenda', await page.getByTestId('agenda-filter-all').isVisible());
   await page.getByText('← Back').click();
   await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 });
   ok('Family Board\'s own Back control returns to Board Selector', await page.getByTestId('board-selector').isVisible());

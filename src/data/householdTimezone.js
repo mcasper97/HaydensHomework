@@ -49,3 +49,31 @@ export function suggestBrowserTimezone() {
     return null;
   }
 }
+
+/**
+ * householdTodayStr(timezone) -> "YYYY-MM-DD" | null
+ * Family Board unified-agenda addition — "today" resolved in the
+ * household's own configured timezone rather than the UTC date
+ * itemBuckets.js's todayStr() has always used (a pre-existing,
+ * already-disclosed project limitation everywhere else — see that
+ * module's own doc comment). Deliberately narrow and additive: this does
+ * NOT change todayStr() or any of its existing callers (ChildTodayView.jsx,
+ * OrganizerCalendar.jsx, etc.) — it's a second, opt-in helper, used only
+ * by organizer/familyAgenda.js to decide which of Today/Tomorrow/Later
+ * this week/Overdue a row belongs in.
+ *
+ * Returns null when the timezone is missing or invalid (a household that
+ * hasn't configured one yet, or a corrupted value) so the caller can fall
+ * back to todayStr() exactly as before — never silently defaults to any
+ * particular zone.
+ */
+export function householdTodayStr(timezone) {
+  if (!isValidIanaTimezone(timezone)) return null;
+  try {
+    // en-CA formats as YYYY-MM-DD — the exact date-string convention this
+    // app already uses everywhere else (startDate/dueDate/etc.).
+    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(new Date());
+  } catch {
+    return null;
+  }
+}

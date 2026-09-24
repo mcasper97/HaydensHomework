@@ -86,16 +86,25 @@ function commitError(code, message) {
 // committable.
 const COMMITTABLE_STATUSES = new Set(["pending", "approved"]);
 
-function buildItemFields(candidate, reviewedItemPayload) {
+// commitMode (auto-commit slice) — audit-only distinction between a
+// candidate committed with no parent involved ("automatic") and one a
+// parent explicitly reviewed/approved ("reviewed", the default — every
+// pre-existing caller of commitCandidateToItem omits the 4th argument
+// entirely and keeps producing "reviewed" items, byte-for-byte the same
+// commit behavior as before this field existed). Deliberately its own
+// field rather than overloading reviewStatus, which already has its own
+// unrelated lifecycle (pending/approved/committed/rejected/corroborated).
+function buildItemFields(candidate, reviewedItemPayload, commitMode) {
   return {
     ...EMPTY_DEFAULTS,
     ...reviewedItemPayload,
     sourceRecordId: reviewedItemPayload?.sourceRecordId ?? candidate.sourceRecordId ?? null,
     sourceCandidateId: candidate.id,
+    commitMode: commitMode || "reviewed",
   };
 }
 
-async function commitReal(ctx, candidateId, reviewedItemPayload) {
+async function commitReal(ctx, candidateId, reviewedItemPayload, commitMode) {
   const candRef = doc(db, "users", ctx.uid, "ingestionCandidates", candidateId);
   const itemRef = doc(db, "users", ctx.uid, "items", candidateId);
 
@@ -130,7 +139,7 @@ async function commitReal(ctx, candidateId, reviewedItemPayload) {
       return { id: itemSnap.id, ...itemSnap.data() };
     }
 
-    const fields = buildItemFields(candidate, reviewedItemPayload);
+    const fields = buildItemFields(candidate, reviewedItemPayload, commitMode);
     tx.set(itemRef, {
       ...fields,
       createdAt: serverTimestamp(),
@@ -141,7 +150,7 @@ async function commitReal(ctx, candidateId, reviewedItemPayload) {
   });
 }
 
-async function commitGuest(ctx, candidateId, reviewedItemPayload) {
+async function commitGuest(ctx, candidateId, reviewedItemPayload, commitMode) {
   const candidate = await getIngestionCandidate(ctx, candidateId);
   if (!candidate) {
     throw commitError(COMMIT_ERROR_CODES.CANDIDATE_NOT_FOUND, "This suggestion no longer exists.");
@@ -164,7 +173,7 @@ async function commitGuest(ctx, candidateId, reviewedItemPayload) {
   let item = existingItem;
   if (!item) {
     const now = new Date().toISOString();
-    item = { id: candidateId, ...buildItemFields(candidate, reviewedItemPayload), createdAt: now, updatedAt: now };
+    item = { id: candidateId, ...buildItemFields(candidate, reviewedItemPayload, commitMode), createdAt: now, updatedAt: now };
     const items = readGuestItems();
     items.push(item);
     writeGuestItems(items);
@@ -176,14 +185,19 @@ async function commitGuest(ctx, candidateId, reviewedItemPayload) {
 }
 
 /**
- * commitCandidateToItem(ctx, candidateId, reviewedItemPayload) -> item
+ * commitCandidateToItem(ctx, candidateId, reviewedItemPayload, opts?) -> item
  * The only supported way to turn an IngestionCandidate into a canonical
  * Item. Safe to call more than once with the same candidateId (retries,
  * double-submits, recovery from the Review Inbox) — see the module doc
  * comment above for the exact reviewStatus/existence rules.
+ *
+ * opts.commitMode ("automatic" | "reviewed", default "reviewed") — audit
+ * metadata only, written onto the Item once at creation (see
+ * buildItemFields above); never affects which candidates are committable
+ * or how the transaction itself behaves.
  */
-export async function commitCandidateToItem(ctx, candidateId, reviewedItemPayload) {
-  if (ctx?.isAdmin) return commitGuest(ctx, candidateId, reviewedItemPayload);
+export async function commitCandidateToItem(ctx, candidateId, reviewedItemPayload, { commitMode } = {}) {
+  if (ctx?.isAdmin) return commitGuest(ctx, candidateId, reviewedItemPayload, commitMode);
   if (!db || !ctx?.uid) throw new Error("No signed-in account to save to.");
-  return commitReal(ctx, candidateId, reviewedItemPayload);
+  return commitReal(ctx, candidateId, reviewedItemPayload, commitMode);
 }

@@ -73,22 +73,21 @@ function ok(name, cond) {
   });
 
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
-  ok('Backward-compat: pre-existing item (no new fields) loads and displays', await visible('Old Science Test'));
+  await page.waitForSelector('[data-testid="family-agenda"]', { timeout: 10000 });
+  ok('Backward-compat: pre-existing item (no new fields) loads and displays without crashing', await visible('Old Science Test'));
 
-  const legacyRow = page.locator('.rounded-2xl.bg-white.border-gray-200').filter({ hasText: 'Old Science Test' });
-  ok('Backward-compat: no crash rendering detail line without topic/unit', await legacyRow.isVisible());
-
-  // Edit the legacy item — form must open without crashing on missing fields.
-  await legacyRow.getByText('Edit').click();
-  let form = page.locator('form');
-  ok('Backward-compat: edit form opens for a pre-existing item', await form.isVisible());
-  ok('Backward-compat: topic input pre-fills empty (not "undefined")', (await form.getByPlaceholder('Topic (optional)').inputValue()) === '');
-  await form.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByText('← Back').click();
+  await page.waitForSelector('text=Haydens - Homework');
 
   // ============ New fields: create a test with topic/unit/preparationRequired ============
+  // Item creation now happens via Parent Board's "Add Item" action
+  // (AddItemPanel.jsx), not Family Board directly — Family Board is
+  // execution-only in the current architecture.
+  await page.getByTestId('board-parent').click();
+  await page.waitForSelector('text=Parent Board');
+  await page.getByTestId('action-add-item').click();
   await page.getByRole('button', { name: '+ Test' }).click();
-  form = page.locator('form');
+  let form = page.locator('form');
   await form.getByPlaceholder('Title').fill('Math Test');
   const today = new Date().toISOString().slice(0, 10);
   await form.locator('input[type="date"]').first().fill(today);
@@ -98,8 +97,10 @@ function ok(name, cond) {
   await form.getByRole('button', { name: 'Add' }).click();
   await page.waitForTimeout(400);
 
-  ok('New field: item created', await visible('Math Test'));
-  ok('New field: topic appears in Organizer detail line', await visible('2-digit multiplication'));
+  // AddItemPanel stays on the Add Item panel after submitting (it never
+  // navigates to Family Board itself) and shows its own "Added!"
+  // confirmation rather than a list row — see AddItemPanel.jsx.
+  ok('New field: item created (Added! confirmation shown)', await visible('Added!'));
 
   let items = await readItems();
   let mathTest = items.find((it) => it.title === 'Math Test');
@@ -110,8 +111,24 @@ function ok(name, cond) {
   ok('New field: priority defaults to null (no UI control this pass)', mathTest?.priority === null);
   ok('New field: id is a stable non-empty string', typeof mathTest?.id === 'string' && mathTest.id.length > 0);
 
-  // ============ Edit round-trip: values pre-fill correctly, can be changed ============
-  const mathRow = page.locator('.rounded-2xl.bg-white.border-gray-200').filter({ hasText: 'Math Test' });
+  // ============ Edit round-trip: Parent Board -> Manage Items ============
+  // Item editing moved off Family Board entirely (a real gap discovered
+  // during a full-regression pass, since fixed) — it now lives on Parent
+  // Board's own "Manage Items" action (see src/organizer/ManageItemsPanel.jsx),
+  // never on Family Board.
+  await page.getByText('← Back to Parent Board').click();
+  await page.getByTestId('action-manage-items').click();
+  await page.waitForSelector('[data-testid="manage-items-row"]', { timeout: 5000 }).catch(() => {});
+
+  // Backward-compat: the legacy (no-new-fields) item opens for edit without crashing.
+  const legacyRow = page.locator('[data-testid="manage-items-row"]').filter({ hasText: 'Old Science Test' });
+  await legacyRow.getByText('Edit').click();
+  form = page.locator('form');
+  ok('Backward-compat: edit form opens for a pre-existing item with no new fields', await form.isVisible());
+  ok('Backward-compat: topic input pre-fills empty (not "undefined")', (await form.getByPlaceholder('Topic (optional)').inputValue()) === '');
+  await form.getByRole('button', { name: 'Cancel' }).click();
+
+  const mathRow = page.locator('[data-testid="manage-items-row"]').filter({ hasText: 'Math Test' });
   await mathRow.getByText('Edit').click();
   form = page.locator('form');
   ok('Edit round-trip: topic pre-fills from existing item', (await form.getByPlaceholder('Topic (optional)').inputValue()) === '2-digit multiplication');
@@ -130,7 +147,11 @@ function ok(name, cond) {
   ok('Edit round-trip: unchecked preparationRequired persisted as false', mathTest?.preparationRequired === false);
   ok('Edit round-trip: same item id (no duplicate created)', items.filter((it) => it.title === 'Math Test').length === 1);
 
+  await page.getByText('← Back to Parent Board').click();
+  await page.waitForSelector('text=Parent Board');
+
   // ============ Type gating: assignment (non-assessment) has no preparation checkbox ============
+  await page.getByTestId('action-add-item').click();
   await page.getByRole('button', { name: '+ Assignment' }).click();
   form = page.locator('form');
   ok('Type gating: Assignment shows topic/unit (academic type)', await form.getByPlaceholder('Topic (optional)').isVisible());
@@ -146,11 +167,12 @@ function ok(name, cond) {
   // Reached directly via Board Selector's own Learners section (navigation
   // refactor) — the same canonical selectedChild navigation the removed
   // "View Child" Settings button used to call.
-  await page.getByText('← Back').click();
+  await page.getByText('← Back to Parent Board').click();
+  await page.getByText('← All Boards').click();
   await page.waitForSelector('text=Haydens - Homework');
   await page.getByTestId('board-learner').click();
   await page.waitForSelector('text=My Day');
-  ok('Child Mode: due-today academic item shows topic in My Day', await visible('Long division'));
+  ok('Child Mode: due-today academic item shows the EDITED topic in My Day', await visible('Long division'));
 
   // ============ No new/duplicate source of truth: same item read from both Organizer and Child views ============
   const idsMatch = await page.evaluate(() => {

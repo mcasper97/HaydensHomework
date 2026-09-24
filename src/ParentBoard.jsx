@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { subscribePendingIngestionCandidates } from "./data/ingestionCandidatesRepository.js";
+import { subscribeItems } from "./data/itemsRepository.js";
+import { retryCalendarPublish } from "./data/googleCalendarAutoPublish.js";
 import ReviewInboxPanel from "./organizer/ReviewInboxPanel.jsx";
 import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
 import GmailCheckEmailAction from "./GmailCheckEmailAction.jsx";
 import AddItemPanel from "./organizer/AddItemPanel.jsx";
+import ManageItemsPanel from "./organizer/ManageItemsPanel.jsx";
 import ChoreManagementPanel from "./ChoreManagementPanel.jsx";
 
 /* ─────────────────────── Parent Board ───────────────────────
@@ -42,6 +45,16 @@ const ParentBoard = ({ user, children, onOpenChildImport, onBack }) => {
   // candidate is still open.
   const [reviewInboxCandidate, setReviewInboxCandidate] = useState(null);
 
+  // Calendar-issue attention state (Section 13) — Items whose most recent
+  // publish attempt failed (googleCalendarSyncError set by
+  // googleCalendarAutoPublish.js), surfaced in the Review Inbox as a
+  // durable, distinctly-styled "Needs attention" card, separate from a
+  // normal not-yet-reviewed candidate. Reuses the existing whole-collection
+  // subscribeItems (already used throughout this app) and filters
+  // client-side — no new repository function, no new collection.
+  const [calendarIssues, setCalendarIssues] = useState([]);
+  const [retryingItemId, setRetryingItemId] = useState(null);
+
   useEffect(() => {
     const ctx = { uid: user?.uid, isAdmin: !!user?.isAdmin };
     const unsub = subscribePendingIngestionCandidates(
@@ -58,6 +71,28 @@ const ParentBoard = ({ user, children, onOpenChildImport, onBack }) => {
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, user?.isAdmin]);
+
+  useEffect(() => {
+    // Not gated on user.isAdmin, matching subscribeItems' own precedent
+    // (subscribePendingIngestionCandidates above runs unconditionally
+    // too) — guest mode will simply never have a real Item with
+    // googleCalendarSyncError set through normal use (autoPublishItemIfEligible
+    // never attempts a real publish for guest mode), but the subscription
+    // itself is unconditional so the UI stays correct/testable regardless.
+    const ctx = { uid: user?.uid, isAdmin: !!user?.isAdmin };
+    const unsub = subscribeItems(ctx, {}, (items) => {
+      setCalendarIssues(items.filter((it) => it.googleCalendarSyncError));
+    });
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, user?.isAdmin]);
+
+  const handleRetryCalendarPublish = async (item) => {
+    setRetryingItemId(item.id);
+    const ctx = { uid: user?.uid, isAdmin: !!user?.isAdmin };
+    await retryCalendarPublish(ctx, item);
+    setRetryingItemId(null);
+  };
 
   useEffect(() => {
     if (!reviewInboxCandidate) return;
@@ -116,6 +151,13 @@ const ParentBoard = ({ user, children, onOpenChildImport, onBack }) => {
             </div>
           )}
 
+          {parentTool === "manage-items" && (
+            <div data-testid="manage-items-panel" className="rounded-3xl p-5 border border-gray-700" style={{ background: "#2a2a2c" }}>
+              <h3 className="text-white font-display text-lg mb-4">Manage Items</h3>
+              <ManageItemsPanel ctx={ctx} children={children} />
+            </div>
+          )}
+
           {parentTool === "upload" && (
             <div data-testid="parent-organizer-panel" className="rounded-3xl p-5 border border-gray-700" style={{ background: "#2a2a2c" }}>
               <h3 className="text-white font-display text-lg mb-1">Upload Homework/Photo</h3>
@@ -148,6 +190,9 @@ const ParentBoard = ({ user, children, onOpenChildImport, onBack }) => {
               error={pendingError}
               familyChildren={children}
               onReview={setReviewInboxCandidate}
+              calendarIssues={calendarIssues}
+              retryingItemId={retryingItemId}
+              onRetryCalendarPublish={handleRetryCalendarPublish}
             />
           )}
 
@@ -190,8 +235,9 @@ const ParentBoard = ({ user, children, onOpenChildImport, onBack }) => {
             renders underneath the grid. */}
         <div className="grid grid-cols-2 gap-3">
           <ActionCard testId="action-add-item" icon="➕" label="Add Item" onClick={() => setParentTool("add-item")} />
+          <ActionCard testId="action-manage-items" icon="📋" label="Manage Items" onClick={() => setParentTool("manage-items")} />
           <ActionCard testId="action-upload-homework" icon="📸" label="Upload Homework/Photo" onClick={() => setParentTool("upload")} />
-          <ActionCard testId="action-review-inbox" icon="📥" label="Review Inbox" badge={pendingCandidates.length} onClick={() => setParentTool("review")} />
+          <ActionCard testId="action-review-inbox" icon="📥" label="Review Inbox" badge={pendingCandidates.length + calendarIssues.length} onClick={() => setParentTool("review")} />
           <ActionCard testId="action-check-email" icon="✉️" label="Check Email" onClick={() => setParentTool("check-email")} />
           <ActionCard testId="action-manage-chores" icon="🧹" label="Manage Chores" onClick={() => setParentTool("chores")} />
         </div>

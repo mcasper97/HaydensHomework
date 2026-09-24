@@ -4,19 +4,33 @@ import { subscribeApprovedSenders } from "./data/gmailApprovedSendersRepository.
 import { createSourceRecord } from "./data/sourceRecordsRepository.js";
 import { createIngestionCandidate } from "./data/ingestionCandidatesRepository.js";
 import { listItems } from "./data/itemsRepository.js";
+import { finalizeExtractedCandidate } from "./data/ingestionFinalization.js";
 import { buildObligationSignature, canReconcile } from "./organizer/recurringObligationMatch.js";
 import { buildOneTimeSignatureFromItem, decideOneTimeReconciliation } from "./organizer/oneTimeObligationMatch.js";
 import { summarizeGoogleDocOutcomes } from "./organizer/googleDocCheckSummary.js";
 import { summarizeCheckEmailResult } from "./organizer/checkEmailSummary.js";
 import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
 
-/* ─────────────────────── Check Email / Import (Parent Home action) ───────────────────────
+/* ─────────────────────── Check Email / Import (Parent Board action) ───────────────────────
  * Extracted out of AuthShell.jsx's former GmailApprovedSendersPanel as
  * part of the UI/IA refactor — the manual "Check Email" trigger is now a
- * primary Parent Home action (per the task spec) while approved-sender
- * management moved to Settings (see GmailApprovedSendersPanel.jsx). The
- * handleCheckEmail logic itself, and everything it does, is byte-for-byte
- * unchanged from the original — only its home moved.
+ * primary Parent Board action while approved-sender management moved to
+ * Settings (see GmailApprovedSendersPanel.jsx). Every SourceRecord/
+ * candidate-creation and reconciliation step here is unchanged.
+ *
+ * Auto-commit slice (architecture correction): each newly-created,
+ * non-corroborated candidate is now handed to
+ * finalizeExtractedCandidate (src/data/ingestionFinalization.js) —
+ * this component TRIGGERS ingestion but does not OWN the business
+ * decision of whether a candidate is high-confidence enough to commit
+ * without review. That decision, the commit transaction itself, and the
+ * post-commit Calendar workflow all live in that reusable, non-UI module
+ * (which itself defers the actual confidence/field-completeness/identity
+ * checks to src/data/autoCommitDecision.js) so a future scheduled email
+ * job — or any other future ingestion source — can call the exact same
+ * sequence without rendering React. Anything the finalizer leaves
+ * "pending" falls back to the exact same review-queue path this
+ * component always used.
  *
  * Independently subscribes to the approved-senders list (same cheap-read
  * precedent already used elsewhere in this app for a status/count check)
@@ -30,6 +44,13 @@ const GmailCheckEmailAction = ({ ctx, childProfiles }) => {
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
   const [ingestionCandidates, setIngestionCandidates] = useState([]);
+  // Auto-commit slice — how many of this run's obligations were committed
+  // automatically (no review needed), shown as a small additional summary
+  // line alongside summarizeCheckEmailResult's existing "review below"
+  // banner (that function's own text is left completely unchanged — see
+  // its own doc comment — since it already correctly describes whatever
+  // ends up in ingestionCandidates below).
+  const [autoCommittedCount, setAutoCommittedCount] = useState(0);
 
   // Independently checks Gmail connection status — same lightweight-read
   // precedent already used elsewhere (e.g. GoogleCalendarRoutingPanel
@@ -54,6 +75,7 @@ const GmailCheckEmailAction = ({ ctx, childProfiles }) => {
   const handleCheckEmail = async () => {
     setError("");
     setCheckResult(null);
+    setAutoCommittedCount(0);
     setChecking(true);
     try {
       const result = await checkGmailEmail();
@@ -76,6 +98,7 @@ const GmailCheckEmailAction = ({ ctx, childProfiles }) => {
       // api/_emailExtraction.js) — the email's own SourceRecord when
       // null/unmatched, or the matching linked page's.
       const newCandidates = [];
+      let autoCommittedThisRun = 0;
       // Reconciliation (recurring + one-time obligations) — ONE
       // listItems(ctx) call per Check Email run feeds BOTH reconciliation
       // paths below, since recurring and one-time Items are just the two
@@ -282,8 +305,22 @@ const GmailCheckEmailAction = ({ ctx, childProfiles }) => {
               runOneTimeRecords.push({ candidateId: candidate.id, signature: oneTimeDecision.signature });
             }
             // Corroborated candidates are deliberately never added to the
-            // review queue.
-            if (!reconciledItemId && !reconciledCandidateId) newCandidates.push(candidate);
+            // review queue OR handed to the finalizer — they already
+            // point at an existing Item/candidate and must never enter any
+            // commit path a second time.
+            if (!reconciledItemId && !reconciledCandidateId) {
+              const result = await finalizeExtractedCandidate(ctx, candidate);
+              if (result.outcome === "auto_committed") {
+                autoCommittedThisRun += 1;
+              } else {
+                // "pending" (not eligible) or "auto_commit_failed" (the
+                // commit attempt itself threw) both fall back to the exact
+                // same review queue — a failed auto-commit attempt never
+                // loses the candidate, since commitCandidateToItem's
+                // transaction semantics leave it untouched at "pending".
+                newCandidates.push(candidate);
+              }
+            }
           } catch (err) {
             console.error("Check Email: createIngestionCandidate failed", err);
             hadPersistenceError = true;
@@ -294,6 +331,7 @@ const GmailCheckEmailAction = ({ ctx, childProfiles }) => {
       if (newCandidates.length > 0) {
         setIngestionCandidates(newCandidates);
       }
+      setAutoCommittedCount(autoCommittedThisRun);
       if (hadPersistenceError) {
         setError(
           newCandidates.length > 0
@@ -340,6 +378,15 @@ const GmailCheckEmailAction = ({ ctx, childProfiles }) => {
       {/* Only ever says "review below" when a real obligation was actually
           found somewhere in this run — see checkEmailSummary.js. */}
       {checkResult && <p className="text-gray-400 text-xs mt-2">{summarizeCheckEmailResult(checkResult)}</p>}
+      {/* Auto-commit summary (Section 3) — additive, alongside (never
+          replacing) summarizeCheckEmailResult's own "review below" text
+          above, which already accurately describes whatever ended up in
+          ingestionCandidates. */}
+      {autoCommittedCount > 0 && (
+        <p className="text-green-400 text-xs mt-1" data-testid="auto-commit-summary">
+          {autoCommittedCount} item{autoCommittedCount === 1 ? "" : "s"} added automatically — no review needed.
+        </p>
+      )}
       {/* Google Doc access/fetch-failure summary — a concise sentence, not
           an error dashboard; a doc that fetched successfully (with or
           without obligations) needs no mention here. */}

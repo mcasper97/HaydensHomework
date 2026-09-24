@@ -44,7 +44,8 @@ Return ONLY valid JSON with this exact shape — no markdown, no explanation:
       "academicTopic": "string or null",
       "academicUnit": "string or null",
       "preparationRequired": true/false/null,
-      "description": "string or null"
+      "description": "string or null",
+      "extractionConfidence": "number between 0 and 1"
     }
   ]
 }
@@ -52,6 +53,16 @@ Return ONLY valid JSON with this exact shape — no markdown, no explanation:
 Rules:
 - type must be one of: ${TYPE_ENUM_LIST}. If unsure, pick the closest match.
 - title is required and should be short and specific (e.g. "Friday Spelling Quiz", not "Quiz").
+- extractionConfidence is REQUIRED for every obligation — a number from 0 to 1 representing your confidence that this
+  obligation accurately represents a real, actionable obligation AND that the material fields you extracted for it
+  (what it is, when it occurs or is due, and who it is for, when a specific child is named) are correct. This is NOT
+  about whether you were able to fill in every field — a short, sparse but clearly correct obligation can still score
+  high. Score it low (well under 0.5) whenever you are genuinely uncertain about what the document is actually
+  saying — illegible or ambiguous handwriting, a date you had to infer or guess at, unclear whether something is
+  upcoming versus already completed, or any other real doubt about whether this obligation and its fields are right.
+  Score it high (0.8 or above) only when the obligation and every material field you filled in are clearly and
+  unambiguously stated in the document. Never inflate this score merely because you managed to fill in every field —
+  a fully-filled-in obligation you are still unsure about must still score low.
 - Handwritten annotations (margin notes, circled text, or handwriting added by a teacher, parent, or child) are
   potentially authoritative scheduling information — read them as carefully as printed text, and extract actionable
   obligations (dates, due dates, test/quiz notes, reminders) even when they appear only in handwriting and nowhere
@@ -59,7 +70,7 @@ Rules:
   handwriting precedence over printed information, or printed information precedence over handwriting. If
   handwritten and printed scheduling information conflict (e.g. a handwritten date differs from a printed date for
   what looks like the same obligation), do not silently pick one — note the conflict in the description field so the
-  parent can resolve it, and set extractionConfidence lower to reflect that uncertainty.
+  parent can resolve it, and set extractionConfidence low to reflect that uncertainty.
 - Distinguish the underlying document from an obligation an annotation communicates about it. A worksheet, practice
   quiz, or completed/scored assignment (already filled in, graded, or marked "practice") is reference material, not
   something to schedule — do not create a test/quiz/assignment obligation merely because the page looks like a

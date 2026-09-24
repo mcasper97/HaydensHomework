@@ -38,8 +38,26 @@ import { candidateCreatedAtMillis } from "../data/ingestionCandidatesRepository.
  * row for a list that may never be opened.
  *
  * onReview(candidate) — the only interactive action besides nothing.
+ *
+ * calendarIssues (Section 13, auto-commit/Calendar slice) — Items whose
+ * most recent Google Calendar publish attempt failed (see
+ * src/data/googleCalendarAutoPublish.js), rendered in their own visually
+ * distinct section below the normal candidate list. Deliberately NOT
+ * folded into the candidates list/count above: these are already
+ * COMMITTED, real Items — "Needs attention" here means "the Calendar side
+ * effect needs a retry," never "please review this before it can be
+ * committed." retryingItemId/onRetryCalendarPublish drive the one action
+ * this section offers.
  */
-const ReviewInboxPanel = ({ candidates = [], error = false, familyChildren = [], onReview }) => {
+const ReviewInboxPanel = ({
+  candidates = [],
+  error = false,
+  familyChildren = [],
+  onReview,
+  calendarIssues = [],
+  retryingItemId = null,
+  onRetryCalendarPublish,
+}) => {
   const formatCreatedAt = (candidate) => {
     const millis = candidateCreatedAtMillis(candidate);
     if (!Number.isFinite(millis)) return null;
@@ -51,6 +69,7 @@ const ReviewInboxPanel = ({ candidates = [], error = false, familyChildren = [],
   };
 
   return (
+    <>
     <div className="rounded-3xl p-5 mb-6 border border-gray-700" style={{ background: "#2a2a2c" }}>
       <h3 className="text-white font-display text-lg mb-1">Review Inbox</h3>
       {error ? (
@@ -105,6 +124,35 @@ const ReviewInboxPanel = ({ candidates = [], error = false, familyChildren = [],
         </>
       )}
     </div>
+
+    {calendarIssues.length > 0 && (
+      <div data-testid="calendar-issues-panel" className="rounded-3xl p-5 mb-6 border border-yellow-700" style={{ background: "#2a2a2c" }}>
+        <h3 className="text-white font-display text-lg mb-1">Google Calendar issues</h3>
+        <p className="text-gray-400 text-sm mb-3">
+          These items were already added to Hayden's Homework, but couldn't be added to Google Calendar.
+        </p>
+        <div className="space-y-2">
+          {calendarIssues.map((item) => (
+            <div key={item.id} data-testid="calendar-issue-row" className="w-full flex items-center gap-3 p-3 rounded-2xl" style={{ background: "#1C1C1E" }}>
+              <div className="flex-1 min-w-0">
+                <div className="text-white font-bold text-sm truncate">{item.title || "(untitled)"}</div>
+                <div className="text-yellow-400 text-xs truncate">{item.googleCalendarSyncError}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onRetryCalendarPublish(item)}
+                disabled={retryingItemId === item.id}
+                className="flex-shrink-0 px-4 py-2 rounded-2xl font-extrabold text-sm disabled:opacity-50"
+                style={{ background: "#A8FF3E", color: "#1C1C1E" }}
+              >
+                {retryingItemId === item.id ? "Retrying…" : "Retry"}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+    </>
   );
 };
 

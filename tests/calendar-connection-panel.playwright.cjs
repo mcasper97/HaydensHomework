@@ -72,7 +72,11 @@ function ok(name, cond) {
   await page.getByText('← All Boards').click();
   await page.waitForSelector('text=Haydens - Homework');
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
+  // Waits for the filter row, not the populated `family-agenda` testid —
+  // this test never creates any Items/chores, so the agenda is
+  // legitimately empty here (see board-selector-navigation.playwright.cjs's
+  // own note on this); the filter row renders regardless.
+  await page.waitForSelector('[data-testid="agenda-filter-all"]', { timeout: 10000 });
   ok('Family Board never shows "Google Calendar"', !(await page.getByText('Google Calendar').isVisible().catch(() => false)));
   await page.getByText('← Back').click();
   await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 }).catch(() => {});

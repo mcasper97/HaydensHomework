@@ -125,7 +125,10 @@ function ok(name, cond) {
 
   // ============ Guest/child/shared surfaces never expose the timezone control ============
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
+  // Waits for the filter row, not the populated `family-agenda` testid —
+  // this test never creates any Items/chores, so the agenda is
+  // legitimately empty here; the filter row renders regardless.
+  await page.waitForSelector('[data-testid="agenda-filter-all"]', { timeout: 10000 });
   ok('Family Board never shows the timezone input', !(await tzInputLocator().isVisible().catch(() => false)));
   await page.getByText('← Back').click();
   await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 }).catch(() => {});

@@ -68,7 +68,9 @@ export class ExtractionError extends Error {
   }
 }
 
-const EXTRACT_OBLIGATIONS_TOOL = {
+// Exported (auto-commit confidence correction) so tests/extraction-confidence.unit.mjs
+// can assert on the schema directly rather than regex-matching source text.
+export const EXTRACT_OBLIGATIONS_TOOL = {
   name: "extract_obligations",
   description:
     "Records every distinct actionable obligation (something a parent/student needs to know, do, or prepare for) found in the provided email and any linked page text.",
@@ -97,8 +99,9 @@ const EXTRACT_OBLIGATIONS_TOOL = {
             timeMode: { type: ["string", "null"], enum: ["daypart", "exact", null] },
             daypart: { type: ["string", "null"], enum: ["morning", "evening", null] },
             time: { type: ["string", "null"] },
+            extractionConfidence: { type: "number", minimum: 0, maximum: 1 },
           },
-          required: ["type", "title"],
+          required: ["type", "title", "extractionConfidence"],
         },
       },
     },
@@ -118,6 +121,15 @@ Rules:
 - academicTopic / academicUnit: capture only when a specific unit, lesson, or skill is explicitly named.
 - preparationRequired: true only for test/quiz-like obligations that need studying; otherwise null.
 - description: a short plain-language summary of any instructions/details not captured by the other fields; otherwise null.
+- extractionConfidence is REQUIRED for every obligation — a number from 0 to 1 representing your confidence that this
+  obligation accurately represents a real, actionable obligation AND that the material fields you extracted for it
+  (what it is, when it occurs or is due, and who it is for, when a specific child is named) are correct. This is NOT
+  about whether every field happens to be filled in — a short, sparse but clearly correct obligation can still score
+  high. Score it low (well under 0.5) whenever you are genuinely uncertain about what the source is actually saying —
+  vague or ambiguous wording, a date or time you had to infer rather than read directly, uncertainty about whether
+  something is a one-time or recurring instruction, or any other real doubt. Score it high (0.8 or above) only when
+  the obligation and every material field you filled in are clearly and unambiguously stated in the source. Never
+  inflate this score merely because you managed to fill in every field.
 - sourceUrl: if this specific obligation's information came from a linked page's text (not the email body itself), set this to that exact page's URL, copied character-for-character from its "--- LINKED PAGE: <url> ---" label. If the obligation came from the email body itself (or you are not sure which source it came from), set this to null. Never invent a URL that wasn't given to you.
 - startTime / endTime: only output a specific clock time, in 24-hour "HH:MM" format (e.g. "18:00" for 6:00 PM), if a specific time is explicitly stated in the source text; otherwise null. Never infer, estimate, or guess a time from vague context (e.g. do not assume "evening" or "after school" means any particular time). endTime must only be set when the source explicitly gives an end time or a time range (e.g. "6:00 PM to 7:30 PM" or "6:00-7:30 PM"); a single start time alone means endTime stays null. A date-only obligation with no time mentioned at all must leave both startTime and endTime null.
 - recurring / weekdays: set recurring: true only when the source describes something that happens repeatedly on a regular schedule, not a single occurrence. Phrases like "nightly", "each night", "every night", "daily" describe a recurring obligation on every weekday (weekdays: [1,2,3,4,5] — school-context "daily"/"nightly" instructions are about school nights, not weekends, unless the text explicitly says otherwise). "every Monday" or "each Friday" (or any single specific weekday named as a repeating pattern, not a one-time date) describes a recurring obligation on just that weekday (e.g. weekdays: [1] for Monday, weekdays: [5] for Friday). A single dated, one-time occurrence ("bring tomorrow", "picture day October 2", a specific date/event) is NOT recurring — leave recurring false/null and weekdays empty, and use the date field instead, exactly as before. When genuinely uncertain whether something is recurring or one-time, prefer NOT recurring.

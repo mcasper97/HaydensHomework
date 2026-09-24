@@ -77,6 +77,15 @@ const BoardSelector = ({
   // never read from localStorage — it simply stays at its default there.
   const [googleCalendarRouting, setGoogleCalendarRouting] = useState(normalizeGoogleCalendarRouting(null));
 
+  // Google Calendar auto-publish (auto-commit/Calendar slice) — off by
+  // default for every household (existing behavior required a manual
+  // "Add to Google Calendar" click; this must never silently turn on an
+  // external side effect for an existing user). Loaded alongside the rest
+  // of the household profile below, saved by GoogleCalendarRoutingPanel.jsx
+  // via src/data/googleCalendarAutoPublish.js (same setDoc(...,{merge:true})
+  // pattern as every other field on this document).
+  const [googleCalendarAutoPublishEnabled, setGoogleCalendarAutoPublishEnabled] = useState(false);
+
   useEffect(() => {
     // Shared tail: resolve the loaded child list, then either auto-forward into
     // a locked Child Mode device's child (Phase 1.5 — "returns to the locked
@@ -84,7 +93,7 @@ const BoardSelector = ({
     // Staying in `loading` (not calling setLoading(false)) while forwarding
     // avoids a one-frame flash of the launcher before AuthShell stops
     // rendering this component at all.
-    const finish = (list, famName, tz, routing) => {
+    const finish = (list, famName, tz, routing, autoPublishEnabled) => {
       setChildren(list);
       setFamilyLastName(famName);
       setLastNameInput(famName);
@@ -95,6 +104,7 @@ const BoardSelector = ({
       // clicks Save/"Use this timezone" (see saveTimezone).
       setTimezoneInput(tz || suggestBrowserTimezone() || "");
       setGoogleCalendarRouting(normalizeGoogleCalendarRouting(routing));
+      setGoogleCalendarAutoPublishEnabled(!!autoPublishEnabled);
       if (!suppressAutoLock && deviceMode === "child" && lockedChildId) {
         const match = list.find((c) => c.id === lockedChildId);
         if (match) {
@@ -118,7 +128,7 @@ const BoardSelector = ({
     getDoc(profileRef).then(snap => {
       if (snap.exists()) {
         const data = snap.data();
-        finish(data.children || [], data.familyLastName || "", data.timezone || null, data.googleCalendarRouting || null);
+        finish(data.children || [], data.familyLastName || "", data.timezone || null, data.googleCalendarRouting || null, data.googleCalendarAutoPublishEnabled);
       } else {
         setLoading(false);
       }
@@ -284,6 +294,8 @@ const BoardSelector = ({
         renameChild={renameChild}
         googleCalendarRouting={googleCalendarRouting}
         onRoutingSaved={setGoogleCalendarRouting}
+        googleCalendarAutoPublishEnabled={googleCalendarAutoPublishEnabled}
+        onAutoPublishSaved={setGoogleCalendarAutoPublishEnabled}
         deviceMode={deviceMode}
         onSetDeviceMode={onSetDeviceMode}
         onLockChild={onLockChild}

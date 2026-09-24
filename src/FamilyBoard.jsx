@@ -2,9 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db } from "./Firebase.js";
 import { migrateLegacyFamilyEvents } from "./data/itemsRepository.js";
-import { addChoreTemplate as addChoreTemplateToRepo, removeChoreTemplate as removeChoreTemplateFromRepo } from "./data/choreTemplatesRepository.js";
-import ParentOrganizer from "./organizer/ParentOrganizer.jsx";
-import OrganizerCalendar from "./organizer/OrganizerCalendar.jsx";
+import { householdTodayStr } from "./data/householdTimezone.js";
+import FamilyAgendaBoard from "./organizer/FamilyAgendaBoard.jsx";
 import OrganizerDisplay from "./organizer/OrganizerDisplay.jsx";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -19,8 +18,9 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
  * fields on the users/{uid} document itself, always written with
  * { merge: true }. Family events, school events, assignments, tests, etc.
  * are canonical items under users/{uid}/items — see data/itemsRepository.js
- * — read/written through ParentOrganizer and OrganizerCalendar below, never
- * as a Firestore path/doc directly in this file.
+ * — read/projected through organizer/FamilyAgendaBoard.jsx below (Section
+ * 14-16 unified agenda), never as a Firestore path/doc directly in this
+ * file.
  *
  * IMPORTANT: this deliberately avoids writing to users/{uid}/children/{childId}.
  * That subdocument is owned by App.jsx, which periodically overwrites it
@@ -32,11 +32,6 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   const [childStats, setChildStats] = useState({}); // { [childId]: { homeworkPoints } } — homeworkPoints only; upcomingTests now live as canonical test/quiz items (see ParentOrganizer/OrganizerCalendar)
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null); // surfaced on-screen — this runs unattended, no devtools to check
-
-  // Add-chore form state
-  const [addChoreFor, setAddChoreFor] = useState(null); // childId or null
-  const [choreText, setChoreText] = useState("");
-  const [chorePointsInput, setChorePointsInput] = useState("5");
 
   const ctx = useMemo(() => ({ uid, isAdmin }), [uid, isAdmin]);
 
@@ -54,6 +49,7 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
       choreCompletions: choresParsed.completions || {},
       chorePoints: choresParsed.points || {},
       familyLastName: localStorage.getItem("crestly_admin_family_name") || "",
+      timezone: localStorage.getItem("crestly_admin_timezone") || null,
       migrated_familyEvents_v1: localStorage.getItem("crestly_admin_migrated_family_events") === "true",
     });
     setLoading(false);
@@ -75,6 +71,7 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
           choreCompletions: data.choreCompletions || {},
           chorePoints: data.chorePoints || {},
           familyLastName: data.familyLastName || "",
+          timezone: data.timezone || null,
           migrated_familyEvents_v1: !!data.migrated_familyEvents_v1,
         });
         setLoadError(null);
@@ -161,43 +158,21 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.migrated_familyEvents_v1, ctx.uid, ctx.isAdmin]);
 
-  /* ----------------------------- Chores (legacy model — unchanged in Phase 1) -----------------------------
-   * Template add/remove itself is delegated to data/choreTemplatesRepository.js
-   * (extracted so Parent Home's "Manage Chores" action can reuse the exact
-   * same persistence logic — see src/ChoreManagementPanel.jsx — without a
-   * duplicate copy). For a real account the write lands via that module's
-   * own setDoc, and this board's existing live onSnapshot subscription
-   * above picks up the change automatically, same as before extraction.
-   * For guest/admin mode (no live listener), local `profile` state is
-   * updated directly here with the templates the repository call returns,
-   * matching the immediate-update UX guest mode has always had.
+  /* ----------------------------- Chores (legacy model — unchanged) -----------------------------
+   * Chore-template CRUD (add/remove a chore definition) no longer lives on
+   * Family Board at all (Section 15 — admin boundary) — it stays exactly
+   * where Parent Board's "Manage Chores" action already reuses it, via
+   * data/choreTemplatesRepository.js and src/ChoreManagementPanel.jsx.
+   * toggleChoreDone below is execution only (marking today's occurrence
+   * done/undone) and is unaffected by that boundary. Uses the SAME
+   * household-local "today" organizer/familyAgenda.js groups rows by (see
+   * that module's own doc comment) — using a different "today" here than
+   * what's on screen would let a completion write land on a different
+   * calendar date than the row the parent actually tapped, near a
+   * midnight boundary.
    */
-  const addChoreTemplate = async (childId) => {
-    const text = choreText.trim();
-    const points = Math.max(0, parseInt(chorePointsInput, 10) || 0);
-    if (!text) return;
-    try {
-      const templates = await addChoreTemplateToRepo(ctx, profile.choreTemplates, childId, text, points);
-      if (isAdmin) setProfile((prev) => ({ ...prev, choreTemplates: templates }));
-      setChoreText("");
-      setChorePointsInput("5");
-      setAddChoreFor(null);
-    } catch (e) {
-      console.error("Add chore failed:", e);
-    }
-  };
-
-  const removeChoreTemplate = async (childId, choreId) => {
-    try {
-      const templates = await removeChoreTemplateFromRepo(ctx, profile.choreTemplates, childId, choreId);
-      if (isAdmin) setProfile((prev) => ({ ...prev, choreTemplates: templates }));
-    } catch (e) {
-      console.error("Remove chore failed:", e);
-    }
-  };
-
   const toggleChoreDone = async (childId, chore) => {
-    const today = todayStr();
+    const today = householdTodayStr(profile?.timezone) || todayStr();
     const completions = { ...(profile.choreCompletions || {}) };
     const forChild = { ...(completions[childId] || {}) };
     const forToday = new Set(forChild[today] || []);
@@ -287,9 +262,12 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
           <p className="text-gray-400 text-center py-8">No learners set up on this account yet.</p>
         )}
 
-        {/* Parent Mode content: full Points strip + full-CRUD ParentOrganizer + chore-template
-            management. Kiosk/Organizer Mode renders the trimmed OrganizerDisplay instead — see
-            below — which never exposes create/edit/delete or chore-template controls (Phase 1.5). */}
+        {/* Family Board is now a single unified, execution-only agenda
+            (Section 14-16) — both the normal (kiosk=false) and shared/
+            kiosk (kiosk=true, below) surfaces render the exact same
+            FamilyAgendaBoard. No Add Item, no Manage Chores, no Item
+            edit/delete, no separate calendar pane — those all belong to
+            Parent Board / Settings now (Section 15). */}
         {!kiosk && (
           <>
             {/* ----------------------------- Points strip ----------------------------- */}
@@ -320,110 +298,20 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
               </div>
             )}
 
-            {/* ----------------------------- Parent Organizer (Today / Needs Attention / Upcoming) ----------------------------- */}
+            {/* ----------------------------- Unified agenda ----------------------------- */}
             {children.length > 0 && (
-              <div className="rounded-3xl p-5 mb-8" style={{ background: "#2a2a2c" }}>
-                <ParentOrganizer
-                  ctx={ctx}
-                  children={children}
-                  choreTemplates={choreTemplates}
-                  choreCompletions={choreCompletions}
-                  onToggleChore={toggleChoreDone}
-                />
-              </div>
-            )}
-
-            {/* ----------------------------- Manage chores (per child — unchanged legacy template model) ----------------------------- */}
-            {children.length > 0 && (
-              <div className="mb-8">
-                <h2 className="text-xl font-display text-white mb-3">🧹 Manage Chores</h2>
-                <div className="flex gap-3 flex-wrap items-start">
-                  {children.map((child) => {
-                    const list = choreTemplates[child.id] || [];
-                    return (
-                      <div key={child.id} className="flex-1 rounded-3xl p-5" style={{ minWidth: 260, background: "#2a2a2c" }}>
-                        <div className="flex items-center gap-3 mb-3">
-                          <span className="text-2xl">{child.emoji}</span>
-                          <div className="text-lg font-display text-white">{child.name}</div>
-                        </div>
-
-                        {list.length > 0 && (
-                          <div className="space-y-2 mb-3">
-                            {list.map((chore) => (
-                              <div key={chore.id} className="w-full flex items-center gap-3 p-2.5 rounded-2xl" style={{ background: "rgba(255,255,255,0.05)" }}>
-                                <div className="flex-1 text-white text-sm">{chore.text}</div>
-                                <span className="text-purple-300 text-xs font-bold">+{chore.points ?? 0}</span>
-                                <button
-                                  onClick={() => removeChoreTemplate(child.id, chore.id)}
-                                  className="text-gray-400 hover:text-red-300 text-lg px-2"
-                                  aria-label="Remove chore"
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {addChoreFor === child.id ? (
-                          <div className="flex gap-2 flex-wrap">
-                            <input
-                              type="text"
-                              value={choreText}
-                              onChange={(e) => setChoreText(e.target.value)}
-                              onKeyDown={(e) => e.key === "Enter" && addChoreTemplate(child.id)}
-                              placeholder="e.g. Empty upstairs trash"
-                              autoFocus
-                              className="flex-1 rounded-2xl px-4 py-2 font-semibold focus:outline-none"
-                              style={{ minWidth: 160, background: "#1C1C1E", color: "white", border: "2px solid rgba(255,255,255,0.15)" }}
-                            />
-                            <input
-                              type="number"
-                              min="0"
-                              value={chorePointsInput}
-                              onChange={(e) => setChorePointsInput(e.target.value)}
-                              className="w-20 rounded-2xl px-3 py-2 font-semibold focus:outline-none"
-                              style={{ background: "#1C1C1E", color: "white", border: "2px solid rgba(255,255,255,0.15)" }}
-                            />
-                            <button
-                              onClick={() => addChoreTemplate(child.id)}
-                              className="px-4 py-2 rounded-2xl font-extrabold"
-                              style={{ background: "#A8FF3E", color: "#1C1C1E" }}
-                            >
-                              Add
-                            </button>
-                            <button
-                              onClick={() => { setAddChoreFor(null); setChoreText(""); }}
-                              className="px-4 py-2 rounded-2xl font-extrabold text-gray-300 border border-gray-600"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setAddChoreFor(child.id)}
-                            className="w-full py-2 rounded-2xl font-bold text-gray-400 hover:text-white border-2 border-dashed border-gray-600 transition text-sm"
-                          >
-                            + Add a chore
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+              <FamilyAgendaBoard
+                ctx={ctx}
+                children={children}
+                choreTemplates={choreTemplates}
+                choreCompletions={choreCompletions}
+                onToggleChore={toggleChoreDone}
+                householdTimezone={profile?.timezone}
+              />
             )}
           </>
         )}
       </div>
-
-      {!kiosk && children.length > 0 && (
-        /* Deliberately full-width, outside the max-w-6xl column above, so the whole week is visible without cramming. */
-        <div className="w-full mt-4">
-          <h2 className="text-xl font-display text-white mb-3">📅 Coming Up</h2>
-          <OrganizerCalendar ctx={ctx} children={children} choreTemplates={choreTemplates} choreCompletions={choreCompletions} />
-        </div>
-      )}
 
       {kiosk && (
         <OrganizerDisplay
@@ -434,6 +322,7 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
           childStats={childStats}
           ctx={ctx}
           onToggleChore={toggleChoreDone}
+          householdTimezone={profile?.timezone}
         />
       )}
     </div>

@@ -53,6 +53,17 @@ function ok(name, cond) {
   page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message));
 
   const visible = async (text) => page.getByText(text).first().isVisible().catch(() => false);
+  // A retrying visibility check (this suite has no @playwright/test's
+  // `expect(locator).toBeVisible()` available — only plain `playwright` is
+  // a project dependency — so this uses the equivalent auto-waiting
+  // primitive plain Playwright already offers: Locator#waitFor). Used only
+  // where a one-shot `visible()` check races a React re-render right after
+  // a navigation (see the "Learners section" check below) — this is a
+  // known, reproducible timing flake (confirmed to reproduce the same way
+  // on a clean baseline with none of this session's changes applied), not
+  // a product defect, so the fix is test-only.
+  const visibleEventually = async (text, timeout = 3000) =>
+    page.getByText(text).first().waitFor({ state: 'visible', timeout }).then(() => true).catch(() => false);
   const guestEnter = () => page.getByText('Continue without an account').click();
   const readChildren = () => page.evaluate(() => JSON.parse(localStorage.getItem('crestly_admin_children') || '[]'));
   const readDeviceMode = () => page.evaluate(() => localStorage.getItem('crestly_device_mode'));
@@ -87,7 +98,7 @@ function ok(name, cond) {
   await page.getByRole('button', { name: 'Back to Parent Page' }).click();
   await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 });
   ok('Clicking it returns to Board Selector', await visible('Haydens - Homework'));
-  ok('Board Selector still shows the Learners section after returning', await visible('Learners'));
+  ok('Board Selector still shows the Learners section after returning', await visibleEventually('Learners'));
 
   const childrenAfter = await readChildren();
   const deviceModeAfter = await readDeviceMode();

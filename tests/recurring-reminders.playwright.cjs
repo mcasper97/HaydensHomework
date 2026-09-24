@@ -56,8 +56,12 @@ function ok(name, cond) {
   await page.getByText('← All Boards').click();
   await page.waitForSelector('text=Haydens - Homework');
 
-  await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
+  // Item creation now happens via Parent Board's "Add Item" action
+  // (AddItemPanel.jsx) — Family Board is execution-only in the current
+  // architecture and no longer has its own inline create form.
+  await page.getByTestId('board-parent').click();
+  await page.waitForSelector('text=Parent Board');
+  await page.getByTestId('action-add-item').click();
 
   // ============ Create a recurring Reminder via ItemForm's Repeats section ============
   await page.getByRole('button', { name: '+ Reminder' }).click();
@@ -77,9 +81,7 @@ function ok(name, cond) {
 
   await form.getByRole('button', { name: 'Add' }).click();
   await page.waitForTimeout(400);
-
-  ok('Recurring reminder appears in Today (immediately, no separate approval step for manual create)', await visible('Send a healthy snack daily'));
-  ok('Recurring reminder shows the 🔁 marker in the Organizer list', await visible('🔁'));
+  ok('A confirmation is shown after adding, still on the Add Item focused view', await visible('Added!'));
 
   let items = await readItems();
   let snackItem = items.find((it) => it.title === 'Send a healthy snack daily');
@@ -90,9 +92,24 @@ function ok(name, cond) {
   ok('startDate persists as the recurrence\'s effective start boundary', snackItem?.startDate === today);
   ok('status stays "open" (a recurring Item is never itself marked completed)', snackItem?.status === 'open');
 
+  // ============ Family Board: the recurring item appears in Today, and completion works there ============
+  // Item creation moved to Parent Board, but viewing/completing it is still
+  // Family Board's job (the unified agenda) — a recurring item's own
+  // detail line here is deliberately minimal (no 🔁 marker; that display
+  // nicety only remains in Child Mode's My Day view, ChildTodayView.jsx,
+  // unaffected by this migration) — the functional invariant this section
+  // protects (per-occurrence completion identity, never touching the
+  // Item's own status) is unchanged and still fully provable here.
+  await page.getByText('← Back to Parent Board').click();
+  await page.getByText('← All Boards').click();
+  await page.waitForSelector('text=Haydens - Homework');
+  await page.getByTestId('board-family').click();
+  await page.waitForSelector('[data-testid="family-agenda"]', { timeout: 10000 });
+  ok('Recurring reminder appears in Today (immediately, no separate approval step for manual create)', await visible('Send a healthy snack daily'));
+
   // ============ Completing today's occurrence does NOT complete the underlying Item ============
-  const snackRow = page.locator('.rounded-2xl.bg-white.border-gray-200').filter({ hasText: 'Send a healthy snack daily' });
-  await snackRow.locator('button[aria-label="Mark complete"]').click();
+  const snackRow = page.locator('[data-testid="agenda-row"]').filter({ hasText: 'Send a healthy snack daily' });
+  await snackRow.getByRole('button', { name: 'Mark complete' }).click();
   await page.waitForTimeout(300);
 
   items = await readItems();
@@ -105,18 +122,33 @@ function ok(name, cond) {
   ok('The completion record is marked completed:true', todaysCompletion?.completed === true);
   ok('occurrenceDate matches today', todaysCompletion?.occurrenceDate === new Date().toISOString().slice(0, 10));
 
-  ok('The row visually shows as checked/done after completing today\'s occurrence', await snackRow.locator('button[aria-label="Mark not complete"]').isVisible());
+  ok('The row visually shows as checked/done after completing today\'s occurrence', await snackRow.getByRole('button', { name: 'Mark not complete' }).isVisible());
 
   // Uncheck — must flip back to completed:false, never delete the record or touch the Item.
-  await snackRow.locator('button[aria-label="Mark not complete"]').click();
+  await snackRow.getByRole('button', { name: 'Mark not complete' }).click();
   await page.waitForTimeout(300);
   completions = await readCompletions();
   todaysCompletion = completions.find((c) => c.itemId === snackItem.id);
   ok('Unchecking sets completed back to false (same record, not deleted)', todaysCompletion?.completed === false);
   ok('Exactly one completion document exists for this (item, date) — no duplicate created by the toggle', completions.filter((c) => c.itemId === snackItem.id).length === 1);
 
-  // ============ Edit round-trip: the Repeats section pre-fills from the existing schedule ============
-  await snackRow.getByText('Edit').click();
+  // NOTE: the old "Calendar projection… 📅 Coming Up" check is dropped —
+  // that separate OrganizerCalendar pane no longer exists on Family Board
+  // at all (superseded by the unified agenda itself, already proven above
+  // — the item appearing in Today IS the projection proof now).
+
+  // ============ Edit round-trip: Parent Board -> Manage Items ============
+  // Item editing moved off Family Board entirely (a real gap discovered
+  // during a full-regression pass, since fixed) — it now lives on Parent
+  // Board's own "Manage Items" action.
+  await page.getByText('← Back').click();
+  await page.waitForSelector('text=Haydens - Homework', { timeout: 5000 }).catch(() => {});
+  await page.getByTestId('board-parent').click();
+  await page.getByTestId('action-manage-items').click();
+  await page.waitForSelector('[data-testid="manage-items-row"]', { timeout: 5000 }).catch(() => {});
+
+  const manageSnackRow = page.locator('[data-testid="manage-items-row"]').filter({ hasText: 'Send a healthy snack daily' });
+  await manageSnackRow.getByText('Edit').click();
   form = page.locator('form');
   ok('Edit: Recurring is pre-selected (not One-time)', await form.getByRole('button', { name: '🔁 Recurring' }).evaluate((el) => el.className.includes('bg-purple-700')));
   ok('Edit: today\'s weekday pill is pre-selected', await form.getByRole('button', { name: WEEKDAY_LABELS[todayWeekdayIndex()], exact: true }).evaluate((el) => el.className.includes('bg-indigo-600')));
@@ -134,12 +166,8 @@ function ok(name, cond) {
   ok('Edit round-trip: daypart persisted as evening', snackItem?.schedule?.daypart === 'evening');
   ok('Edit round-trip: still exactly one item (no duplicate created by editing)', items.filter((it) => it.title === 'Send a healthy snack daily').length === 1);
 
-  // ============ Calendar projection: a recurring item due today appears on the Calendar's Today column ============
-  await page.waitForSelector('text=📅 Coming Up');
-  ok('Recurring reminder appears somewhere on the Calendar strip (its Today column) while still recurring', (await page.getByText('Send a healthy snack daily').count()) >= 2);
-
   // ============ Switching back to One-time clears the schedule entirely ============
-  await snackRow.getByText('Edit').click();
+  await manageSnackRow.getByText('Edit').click();
   form = page.locator('form');
   await form.getByRole('button', { name: 'One-time' }).click();
   ok('Switching back to One-time relabels the date field back to "Start" (reminder type\'s normal label)', await form.getByText('Start', { exact: true }).isVisible());
@@ -149,7 +177,11 @@ function ok(name, cond) {
   snackItem = items.find((it) => it.title === 'Send a healthy snack daily');
   ok('Switching to One-time and saving clears the schedule entirely (schedule: null)', snackItem?.schedule === null);
 
+  await page.getByText('← Back to Parent Board').click();
+  await page.waitForSelector('text=Parent Board');
+
   // ============ Repeats is offered for every type that already shows a start date ============
+  await page.getByTestId('action-add-item').click();
   await page.getByRole('button', { name: '+ Family Event' }).click();
   form = page.locator('form');
   ok('Family Event also offers Repeats (a recurring family obligation is a valid use case)', await form.getByText('Repeats').isVisible());

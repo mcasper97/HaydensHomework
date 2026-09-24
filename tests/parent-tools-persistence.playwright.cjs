@@ -88,7 +88,10 @@ function ok(name, cond) {
   await page.getByText('← All Boards').click();
   await page.waitForSelector('text=Haydens - Homework');
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
+  // Waits for the filter row, not the populated `family-agenda` testid —
+  // this test never creates any Items/chores, so the agenda is
+  // legitimately empty here; the filter row renders regardless.
+  await page.waitForSelector('[data-testid="agenda-filter-all"]', { timeout: 10000 });
   ok('Family Board does not show the "Upload Homework/Photo" action card', !(await page.getByTestId('action-upload-homework').isVisible().catch(() => false)));
   ok('Family Board does not show the Upload panel content either', !(await page.getByTestId('parent-organizer-panel').isVisible().catch(() => false)));
 

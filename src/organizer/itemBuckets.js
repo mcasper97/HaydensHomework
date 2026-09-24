@@ -126,9 +126,18 @@ export function filterByChild(items, childId) {
 }
 
 /**
- * bucketItems(items, { childId? }) -> { today, overdue, upcoming }
+ * bucketItems(items, { childId?, today? }) -> { today, overdue, upcoming }
  * Chore items are excluded — chores stay in the legacy recurring-template
  * model (Phase 1 decision) and are projected in separately via choresDueToday.
+ *
+ * `today` (optional, Family Board unified-agenda addition) — overrides the
+ * default todayStr() "what day is it" anchor. Every pre-existing caller
+ * omits this and gets EXACTLY the previous behavior (todayStr(), UTC-date
+ * based) — this is purely additive, so a caller that needs a
+ * household-timezone-aware "today" (see householdTimezone.js's
+ * householdTodayStr and organizer/familyAgenda.js, its one current
+ * caller) can pass it in without this function or any of its existing
+ * callers (ChildTodayView.jsx, OrganizerCalendar.jsx) changing behavior.
  *
  * Recurring Items (item.schedule?.recurring === true) are handled
  * separately from one-time items' date-field bucketing: each occurrence is
@@ -142,8 +151,8 @@ export function filterByChild(items, childId) {
  * completed-today recurring reminder still appears here, same as a
  * completed chore still appears in choresDueToday (checked, not hidden).
  */
-export function bucketItems(items, { childId } = {}) {
-  const today = todayStr();
+export function bucketItems(items, { childId, today: todayOverride } = {}) {
+  const today = todayOverride || todayStr();
   const scoped = filterByChild(items, childId).filter((it) => it.type !== "chore");
   const oneTime = scoped.filter((it) => !it.schedule?.recurring);
   const recurring = scoped.filter((it) => it.schedule?.recurring);
@@ -164,15 +173,34 @@ export function bucketItems(items, { childId } = {}) {
 }
 
 /**
+ * choresDueOn(choreTemplates, choreCompletions, childId, dateStr) -> [{...chore, done}]
+ * The general form of choresDueToday (below), parameterized by date
+ * (Family Board unified-agenda addition — organizer/familyAgenda.js's
+ * only current caller, for projecting a chore's Tomorrow/Later-this-week
+ * occurrences). The existing legacy chore-template model has no per-chore
+ * recurrence pattern at all (see data/choreTemplatesRepository.js's
+ * template shape: {id, text, points}, nothing else) — every listed chore
+ * is implicitly "every day," so projecting a future date's occurrence list
+ * is simply reading the SAME template list against that date's own
+ * completion record (choreCompletions is already keyed per exact date,
+ * unaffected by this addition) — not a new recurrence engine, since there
+ * is no recurrence PATTERN to evaluate, only a calendar-date lookup.
+ */
+export function choresDueOn(choreTemplates, choreCompletions, childId, dateStr) {
+  if (!childId || !dateStr) return [];
+  const list = choreTemplates?.[childId] || [];
+  const doneOnDate = new Set((choreCompletions?.[childId] || {})[dateStr] || []);
+  return list.map((c) => ({ ...c, done: doneOnDate.has(c.id) }));
+}
+
+/**
  * Projects the existing legacy chore template/completion structures (stored
  * on users/{uid}.choreTemplates / .choreCompletions — see FamilyBoard.jsx)
  * into a flat "due today" list for one child, without migrating them into
- * canonical items.
+ * canonical items. A thin wrapper over choresDueOn — every pre-existing
+ * caller (ParentOrganizer.jsx, OrganizerDisplay.jsx before their own
+ * unification, FamilyBoard.jsx) keeps exactly its previous behavior.
  */
 export function choresDueToday(choreTemplates, choreCompletions, childId) {
-  if (!childId) return [];
-  const today = todayStr();
-  const list = choreTemplates?.[childId] || [];
-  const doneToday = new Set((choreCompletions?.[childId] || {})[today] || []);
-  return list.map((c) => ({ ...c, done: doneToday.has(c.id) }));
+  return choresDueOn(choreTemplates, choreCompletions, childId, todayStr());
 }

@@ -195,7 +195,11 @@ function ok(name, cond) {
 
   // ============ 8. Child/shared/kiosk surfaces remain unaffected by the rename UI ============
   await page.getByTestId('board-family').click();
-  await page.waitForSelector('text=🔆 Today');
+  // Waits for the filter row, not the populated `family-agenda` testid —
+  // this test never creates any Items/chores, so the agenda is
+  // legitimately empty here; the filter row renders regardless. "Henry" is
+  // shown via the points strip above the agenda either way.
+  await page.waitForSelector('[data-testid="agenda-filter-all"]', { timeout: 10000 });
   ok('Family Board shows the renamed child by their current name', await visible('Henry'));
   ok('Family Board never shows a rename/Edit control for children', !(await page.getByRole('button', { name: 'Edit' }).isVisible().catch(() => false)));
   await page.getByText('← Back').click();

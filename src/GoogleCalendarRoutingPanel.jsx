@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { getCalendarStatus, startCalendarOAuth, getCalendarList } from "./data/googleCalendarConnection.js";
 import { buildGoogleCalendarRoutingSave, saveGoogleCalendarRouting } from "./data/googleCalendarRouting.js";
+import { saveGoogleCalendarAutoPublishEnabled } from "./data/googleCalendarAutoPublish.js";
 
 /* ─────────────────────── Google Calendar Routing Panel (Slice C.1B) ───────────────────────
  * Moved verbatim out of AuthShell.jsx (UI/IA refactor) — now lives in
@@ -33,9 +34,26 @@ import { buildGoogleCalendarRoutingSave, saveGoogleCalendarRouting } from "./dat
  * instead of relying on the fallback if they prefer. The literal string
  * "primary" is never itself a selectable value or a stored one — see
  * googleCalendarRouting.js's own doc comment.
+ *
+ * Auto-publish toggle (auto-commit/Calendar slice) — a second, independent
+ * household setting also lives here (Section 9 of the task spec):
+ * "Automatically add eligible items to Google Calendar", persisted via
+ * src/data/googleCalendarAutoPublish.js. Off by default for every
+ * household. Unlike the routing selectors above, it saves immediately on
+ * toggle (an on/off switch needs no separate confirm) and doesn't depend
+ * on the Calendar List having loaded successfully — only on Calendar being
+ * connected at all, same gate this whole panel already uses.
  */
-const GoogleCalendarRoutingPanel = ({ uid, familyChildren, googleCalendarRouting, onRoutingSaved }) => {
+const GoogleCalendarRoutingPanel = ({
+  uid,
+  familyChildren,
+  googleCalendarRouting,
+  onRoutingSaved,
+  googleCalendarAutoPublishEnabled,
+  onAutoPublishSaved,
+}) => {
   const [calendarStatus, setCalendarStatus] = useState(null); // null = loading
+  const [savingAutoPublish, setSavingAutoPublish] = useState(false);
   const [listState, setListState] = useState("idle"); // idle | loading | done | error
   const [calendars, setCalendars] = useState([]);
   const [listError, setListError] = useState("");
@@ -97,6 +115,23 @@ const GoogleCalendarRoutingPanel = ({ uid, familyChildren, googleCalendarRouting
     }
   };
 
+  // Auto-publish toggle (Section 9) — its own independent, immediate save,
+  // deliberately separate from the routing selectors' draft-then-Save flow
+  // below: a boolean on/off switch is unambiguous the moment it's clicked,
+  // unlike a calendar selection that benefits from an explicit confirm.
+  const handleToggleAutoPublish = async () => {
+    const next = !googleCalendarAutoPublishEnabled;
+    setSavingAutoPublish(true);
+    try {
+      await saveGoogleCalendarAutoPublishEnabled({ uid, isAdmin: false }, next);
+      onAutoPublishSaved(next);
+    } catch (e) {
+      console.error("Save Calendar auto-publish setting failed:", e);
+    } finally {
+      setSavingAutoPublish(false);
+    }
+  };
+
   const handleSave = async () => {
     setSaveError("");
     setSaved(false);
@@ -144,6 +179,27 @@ const GoogleCalendarRoutingPanel = ({ uid, familyChildren, googleCalendarRouting
     <div data-testid="google-calendar-routing-panel" className="rounded-3xl p-5 mb-6 border border-gray-700" style={{ background: "#2a2a2c" }}>
       <h3 className="text-white font-display text-lg mb-1">Google Calendar Routing</h3>
       <p className="text-gray-400 text-xs mb-3">Choose which Google calendar each learner (and family items) publish to.</p>
+
+      {/* Auto-publish (Section 9) — off by default for every household;
+          independent of the routing selectors below, which only decide
+          WHERE an eligible item goes once it's eligible for publishing at
+          all. */}
+      <label
+        data-testid="calendar-auto-publish-toggle"
+        className="flex items-center justify-between gap-3 p-3 rounded-2xl mb-4 cursor-pointer"
+        style={{ background: "#1C1C1E" }}
+      >
+        <span className="text-sm font-semibold text-gray-200">
+          Automatically add eligible items to Google Calendar
+        </span>
+        <input
+          type="checkbox"
+          checked={!!googleCalendarAutoPublishEnabled}
+          onChange={handleToggleAutoPublish}
+          disabled={savingAutoPublish}
+          className="w-5 h-5 flex-shrink-0"
+        />
+      </label>
 
       {listState === "loading" && <p className="text-gray-400 text-sm">Loading your Google calendars…</p>}
 

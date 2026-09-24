@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import ItemForm from "./ItemForm.jsx";
 import { updateIngestionCandidate } from "../data/ingestionCandidatesRepository.js";
 import { commitCandidateToItem } from "../data/candidateCommitRepository.js";
+import { autoPublishItemIfEligible } from "../data/googleCalendarAutoPublish.js";
 import { getSourceRecord } from "../data/sourceRecordsRepository.js";
 import { candidateToDraftItem } from "./candidateToDraftItem.js";
 import { getSenderTargetLabel } from "../data/gmailApprovedSenders.js";
@@ -138,7 +139,13 @@ const CandidateReviewModal = ({ ctx, candidates, child, familyChildren, onClose 
   // commitCandidateToItem's own idempotent logic leaves any already-created
   // Item untouched and only finalizes the candidate's status.
   const handleApprove = async (payload) => {
-    await commitCandidateToItem(ctx, current.id, { ...payload, sourceRecordId: current.sourceRecordId });
+    const item = await commitCandidateToItem(ctx, current.id, { ...payload, sourceRecordId: current.sourceRecordId });
+    // Fire-and-forget — Calendar publishing (Section 8) is a downstream
+    // side effect of a successful commit, never a condition of it; a
+    // Calendar failure must never surface as an approval error (see
+    // googleCalendarAutoPublish.js's own doc comment for the durable
+    // recovery path this failure is instead recorded through).
+    autoPublishItemIfEligible(ctx, item);
     advance();
   };
 
