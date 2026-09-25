@@ -246,45 +246,56 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
         {/* MOCKUP-FIDELITY PASS — integrated header zone (Section 4): this
             row's bottom corners are square and it carries no bottom border,
             so it visually FUSES with FamilyAgendaBoard.jsx's own focus-pill
-            row directly beneath it (which mirrors this same white
-            background/border/shadow and rounds only its own bottom
-            corners) — together they read as one continuous composed header
-            card, not two disconnected floating rows, without moving the
-            focus-pill state itself out of the component that owns it.
-            Brand + compact learner chips + current time + Full Screen
-            control all live in this top tier. The learner chips render
-            here (not duplicated inside OrganizerDisplay.jsx any more) so
+            row directly beneath it (same white background/border/shadow,
+            rounded only on ITS bottom corners) — together they read as one
+            continuous composed header card, not two disconnected floating
+            rows. Brand + compact learner chips + current time + Full
+            Screen control all live in this top tier; the learner chips
+            render here (not duplicated inside OrganizerDisplay.jsx) so
             both the normal and kiosk surfaces share exactly one points
-            display. */}
+            display.
+            LITERAL-MATCH ROUND: a real 3-column grid (1fr auto 1fr)
+            replaces the earlier flex/justify-content:space-between row —
+            with 3 flex children of very different widths, space-between
+            only spaces the GAPS between them evenly, it does NOT center
+            the middle item over the header as a whole, which is what the
+            mockup actually shows. A grid with equal flanking columns does:
+            the learner-chip strip in the middle column is now genuinely
+            centered regardless of how wide the brand block or right-side
+            controls are. */}
         <div
           style={{
-            display: "flex",
+            display: "grid",
+            gridTemplateColumns: "1fr auto 1fr",
             alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
+            columnGap: 12,
             flexShrink: 0,
             background: SURFACE.headerBackground,
             border: `1px solid ${SURFACE.border}`,
             borderBottom: "none",
             borderRadius: "20px 20px 0 0",
             boxShadow: SURFACE.panelShadow,
-            padding: "12px 20px",
+            padding: "12px 24px",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span aria-hidden="true" style={{ fontSize: 26 }}>🏡</span>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, justifySelf: "start" }}>
+            <span aria-hidden="true" style={{ fontSize: 30 }}>🏡</span>
+            {/* Title stacked over the "Family Board" subtitle (two lines),
+                matching the mockup — previously these sat side by side on
+                one baseline. */}
+            <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
               <h1 className="text-xl font-display font-extrabold" style={{ color: SURFACE.textPrimary, margin: 0 }}>
                 Haydens - Homework
               </h1>
-              <span className="text-sm font-semibold" style={{ color: SURFACE.textSecondary }}>/ Family Board</span>
+              <span className="text-sm font-semibold" style={{ color: SURFACE.textSecondary }}>Family Board</span>
             </div>
           </div>
 
-          {children.length > 0 && <LearnerPointsStrip children={children} chorePoints={chorePoints} childStats={childStats} />}
+          <div style={{ justifySelf: "center" }}>
+            {children.length > 0 && <LearnerPointsStrip children={children} chorePoints={chorePoints} childStats={childStats} />}
+          </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, justifySelf: "end" }}>
             <FullScreenButton />
             <FamilyBoardClock />
             {!kiosk && onBack ? (

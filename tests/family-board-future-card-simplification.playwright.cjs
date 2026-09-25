@@ -67,9 +67,13 @@ function isoDate(offsetDays) {
   await page.getByText('← All Boards').click();
   await page.waitForSelector('text=Haydens - Homework');
 
-  // Today: an assignment (Today should keep its 📘 icon). Tomorrow: a
-  // quiz needing prep (❓ must NOT appear), an assignment (📘 must NOT
-  // appear), and a reminder (🔔 must NOT appear) — all completion-eligible
+  // Today: an assignment titled generically enough ("Homework Packet") to
+  // hit no content-aware keyword rule (see contentIcon.js), so it still
+  // falls back to its plain 📘 ITEM_TYPE_META icon — the content-aware
+  // resolver itself gets its own dedicated coverage in
+  // family-board-content-icons.playwright.cjs. Tomorrow: a quiz needing
+  // prep (❓ must NOT appear), an assignment (📘 must NOT appear), and a
+  // reminder (🔔 must NOT appear) — all completion-eligible
   // one-time items, so their checkboxes should still render. The chore
   // template above already projects a non-eligible occurrence onto
   // tomorrow (day.isToday === false) automatically.
@@ -85,7 +89,7 @@ function isoDate(offsetDays) {
     const children = JSON.parse(localStorage.getItem('crestly_admin_children') || '[]');
     const hayden = children.find((c) => c.name === 'Hayden');
     items.push(
-      { id: 'today-assignment', type: 'assignment', title: 'Reading Log', childIds: [hayden.id], dueDate: today, status: 'open', notes: '', source: { type: 'manual', sourceId: null }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      { id: 'today-assignment', type: 'assignment', title: 'Homework Packet', childIds: [hayden.id], dueDate: today, status: 'open', notes: '', source: { type: 'manual', sourceId: null }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       { id: 'future-quiz', type: 'quiz', title: 'Geography Quiz', childIds: [hayden.id], dueDate: tomorrow, status: 'open', notes: '', source: { type: 'manual', sourceId: null }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       { id: 'future-assignment', type: 'assignment', title: 'Math Worksheet', childIds: [hayden.id], dueDate: tomorrow, status: 'open', notes: '', source: { type: 'manual', sourceId: null }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       { id: 'future-reminder', type: 'reminder', title: 'Bring Permission Slip', childIds: [hayden.id], dueDate: tomorrow, status: 'open', notes: '', source: { type: 'manual', sourceId: null }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
@@ -116,7 +120,7 @@ function isoDate(offsetDays) {
   const tomorrowColumn = page.locator('[data-testid="week-day-column"][data-today="false"]').first();
 
   // ============ Section 2: Today keeps its approved icon treatment ============
-  const todayAssignmentRow = todayColumn.locator('[data-testid="agenda-row"]').filter({ hasText: 'Reading Log' }).first();
+  const todayAssignmentRow = todayColumn.locator('[data-testid="agenda-row"]').filter({ hasText: 'Homework Packet' }).first();
   ok('Today\'s assignment card still shows its 📘 type icon', (await todayAssignmentRow.textContent()).includes('📘'));
 
   // ============ Section 1/4: future cards drop the decorative type icon ============

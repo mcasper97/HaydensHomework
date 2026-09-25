@@ -54,22 +54,27 @@ export const SURFACE = {
 // Execution-window accents — each window gets its own kid-friendly hue: a
 // light tint for the section background/badge, a saturated border/icon
 // color, and a readable-on-cream text color. Still a thin border/icon/badge
-// cue, never a large background fill across the whole column.
+// cue at the row level, never a large background fill across the whole
+// column — but the header BAND itself (Section 7 of the literal-match
+// pass) is a full-width fill of `bg`, so `bg` was deliberately strengthened
+// from a pale wash to a genuinely visible, saturated tint that reads as
+// "sunny yellow" / "sky blue" / "playful purple" / "twilight blue" at a
+// glance, not a barely-there pastel.
 export const WINDOW_ACCENTS = {
-  beforeSchool: { bg: "#FFF3D3", border: "#F0AD1E", text: "#8A5B00", icon: "☀️" }, // sunny yellow/gold
-  today: { bg: "#DFF0FD", border: "#3D9BE0", text: "#155A8A", icon: "📋" }, // bright sky blue
-  studyHall: { bg: "#EFE4FB", border: "#9B5FE0", text: "#63328F", icon: "📚" }, // playful purple
-  evening: { bg: "#E2E7FB", border: "#5B6FD6", text: "#333F91", icon: "🌙" }, // deeper soft twilight blue
+  beforeSchool: { bg: "#FFE49A", border: "#E8A400", text: "#7A4D00", icon: "☀️" }, // sunny yellow/gold
+  today: { bg: "#B9E0FB", border: "#1E88D6", text: "#0D4E76", icon: "📋" }, // bright sky blue
+  studyHall: { bg: "#DEC4F7", border: "#8A3FE0", text: "#54267F", icon: "📚" }, // playful purple
+  evening: { bg: "#C3CCF7", border: "#4457CC", text: "#2A3676", icon: "🌙" }, // deeper soft twilight blue
 };
 
 // A test/quiz's "Prep needed" badge — bright, friendly orange, distinct
 // from beforeSchool's yellow-gold so the two are never confused.
-export const PREP_ACCENT = { bg: "#FFE6CC", border: "#F28C28", text: "#9A4E0A" };
+export const PREP_ACCENT = { bg: "#FFD9AD", border: "#E87A0E", text: "#8A430A" };
 
 // A completed item's checkmark control — cheerful green, per Section 7.
-export const COMPLETION_ACCENT = { done: "#3FBE7C", idleBorder: "#C7D0DC" };
+export const COMPLETION_ACCENT = { done: "#2FAE6C", idleBorder: "#C7D0DC" };
 
 // The "All" focus button's own accent — a friendly green distinct from any
 // single learner's own color, so "everyone in focus" doesn't read as
 // belonging to one child.
-export const ALL_FOCUS_ACCENT = { bg: "#E1F5E6", border: "#3FBE7C", text: "#1E7A44" };
+export const ALL_FOCUS_ACCENT = { bg: "#BFEDCB", border: "#2FAE6C", text: "#186B3E" };

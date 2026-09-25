@@ -3,6 +3,7 @@ import { ITEM_TYPE_META } from "../data/itemTypes.js";
 import { WINDOW_ORDER, WINDOW_LABELS } from "./rollingWeekBoard.js";
 import { ownerMarker } from "./learnerAccent.js";
 import { SURFACE, WINDOW_ACCENTS, PREP_ACCENT, COMPLETION_ACCENT, ALL_FOCUS_ACCENT } from "./boardTheme.js";
+import { resolveContentIcon } from "./contentIcon.js";
 
 /* ─────────────────────── Family Week Board (presentational) ───────────────────────
  * Renders the rolling-5-day, execution-window-bucketed structure produced by
@@ -183,6 +184,11 @@ const CompletionControl = ({ row, onToggle, size }) => {
 const FullCardRow = ({ row, children, prominent, onToggleItem, onToggleChore, dataColumn }) => {
   const owner = ownerMarker(row.childIds, children);
   const meta = ITEM_TYPE_META[row.type] || {};
+  // Content-aware icon (contentIcon.js): a title-specific keyword match
+  // when one exists ("Pajama/Stuffy Day" -> 🧸), falling back to this same
+  // row's generic ITEM_TYPE_META icon otherwise — meta.label (the
+  // "Assignment"/"Quiz"/etc secondary text) is unaffected either way.
+  const contentIcon = resolveContentIcon(row);
   const onToggle = () =>
     row.sourceType === "chore" ? onToggleChore(row.originalRecord.childId, row.originalRecord.chore) : onToggleItem(row.originalRecord);
 
@@ -216,7 +222,7 @@ const FullCardRow = ({ row, children, prominent, onToggleItem, onToggleChore, da
           className={`text-base font-bold truncate ${row.completed ? "line-through opacity-50" : ""}`}
           style={{ color: SURFACE.textPrimary }}
         >
-          {meta.icon ? `${meta.icon} ` : ""}
+          {contentIcon ? `${contentIcon} ` : ""}
           {row.title}
         </div>
         <div className="text-xs truncate" style={{ display: "flex", alignItems: "center", gap: 8, color: SURFACE.textSecondary }}>

@@ -23,19 +23,24 @@
 // from boardTheme.js's own WINDOW_ACCENTS hues (yellow/sky-blue/purple/
 // twilight-blue reserved there for execution-window headers) so "whose
 // card is this" and "which window is this" never look like the same cue.
+//
+// LITERAL-MATCH PASS: `bg` (the chip/focus-pill fill) was strengthened
+// from a pale wash to a genuinely saturated tint — the earlier values read
+// as washed-out next to the approved mockup's own punchier pink/aqua
+// chips. `border`/`text` were already vivid enough and are unchanged.
 export const LEARNER_PALETTE = [
-  { name: "coral", bg: "#FFE1E9", border: "#FF6F91", text: "#B0224A" },
-  { name: "aqua", bg: "#DCF4FA", border: "#2FB6D9", text: "#0E6E86" },
-  { name: "sunshine", bg: "#FFF2C6", border: "#EAB308", text: "#8A6300" },
-  { name: "grape", bg: "#EFE1FB", border: "#9B5FE0", text: "#5B3494" },
-  { name: "mint", bg: "#DBF6E7", border: "#22B57A", text: "#146B3F" },
-  { name: "tangerine", bg: "#FFE3CC", border: "#F2822E", text: "#9A4E0E" },
+  { name: "coral", bg: "#FFB8CB", border: "#FF6F91", text: "#8A1236" },
+  { name: "aqua", bg: "#9FE3F2", border: "#2FB6D9", text: "#0A5566" },
+  { name: "sunshine", bg: "#FFE38A", border: "#EAB308", text: "#6B4A00" },
+  { name: "grape", bg: "#D6B3F5", border: "#9B5FE0", text: "#431F72" },
+  { name: "mint", bg: "#A6EDC7", border: "#22B57A", text: "#0F5730" },
+  { name: "tangerine", bg: "#FFC299", border: "#F2822E", text: "#7A3A0A" },
 ];
 
 // Friendly blue/slate — deliberately neutral-but-still-bright so a
 // family-wide item never reads as "belonging" to any one learner's accent
 // color while still fitting the K-5 palette's overall energy.
-export const FAMILY_ACCENT = { name: "family", bg: "#E3E9FB", border: "#6E85D6", text: "#33448F" };
+export const FAMILY_ACCENT = { name: "family", bg: "#C3CCF7", border: "#6E85D6", text: "#28336E" };
 
 export function accentForChild(children, childId) {
   const idx = (children || []).findIndex((c) => c.id === childId);
