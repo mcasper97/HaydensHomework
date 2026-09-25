@@ -13,16 +13,26 @@
  * with that existing precedent, and requires no new per-child color field.
  */
 
+// VISUAL-HIERARCHY CORRECTION (UX review): reordered so the first two
+// learners in a household — the common case — land on the two accents the
+// task calls out by name: a restrained sage/green first, a restrained
+// terracotta/coral second. The remaining slots stay distinct from BOTH
+// those two and from boardTheme.js's own WINDOW_ACCENTS hues (indigo/
+// amber/blue-gray are reserved there for execution-window headers, so
+// learner accents 3+ deliberately avoid them here to keep "whose card is
+// this" and "which window is this" from ever looking like the same cue).
 export const LEARNER_PALETTE = [
-  { name: "slate", bg: "#3A4756", border: "#6B7C90", text: "#E4E9EE" },
-  { name: "sage", bg: "#47543F", border: "#7A8F6C", text: "#E7EDE2" },
-  { name: "terracotta", bg: "#6E402D", border: "#B0714F", text: "#F3E4DB" },
-  { name: "amber", bg: "#6B4E1D", border: "#B08A34", text: "#F5E9CF" },
-  { name: "lavenderGray", bg: "#4B4560", border: "#7C749A", text: "#EAE7F0" },
-  { name: "warmNeutral", bg: "#5A5049", border: "#8C8074", text: "#EFEAE4" },
+  { name: "sage", bg: "#3C4A38", border: "#7FA06B", text: "#E6EFE0" },
+  { name: "terracotta", bg: "#5A3226", border: "#C97B54", text: "#F5E3D6" },
+  { name: "plum", bg: "#4A2F44", border: "#9B6B8F", text: "#EFE0EA" },
+  { name: "goldenOlive", bg: "#4A431F", border: "#A69245", text: "#EFE9CE" },
+  { name: "dustyBlue", bg: "#2E3F4A", border: "#6E93A8", text: "#DCE9EF" },
+  { name: "warmNeutral", bg: "#4A423A", border: "#8C7E6B", text: "#EDE6DC" },
 ];
 
-export const FAMILY_ACCENT = { name: "family", bg: "#45454A", border: "#6B6B70", text: "#F0F0F0" };
+// Cool slate/gray — deliberately neutral so a family-wide item never reads
+// as "belonging" to any one learner's accent color.
+export const FAMILY_ACCENT = { name: "family", bg: "#333A42", border: "#7A8798", text: "#E8ECF0" };
 
 export function accentForChild(children, childId) {
   const idx = (children || []).findIndex((c) => c.id === childId);

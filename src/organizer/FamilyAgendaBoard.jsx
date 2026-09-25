@@ -73,9 +73,15 @@ const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompl
   // Section 3: large, obviously-touchable controls, ~56-64px tall.
   const focusButtonStyle = { height: 60, minWidth: 60 };
 
+  // VIEWPORT-FIT CORRECTION: this root participates in FamilyBoard.jsx's
+  // bounded-height chain (flex:1/minHeight:0) so FamilyWeekBoard's own
+  // grid — the one thing that should actually grow/shrink with available
+  // space — gets exactly the remaining height once the focus-button row's
+  // own fixed height is subtracted, rather than the whole page growing to
+  // fit whatever the board naturally wants.
   return (
-    <div data-testid="family-agenda" className="w-full">
-      <div className="flex items-center gap-2 flex-wrap mb-3">
+    <div data-testid="family-agenda" className="w-full" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <div className="flex items-center gap-2 flex-wrap mb-2" style={{ flexShrink: 0 }}>
         {/* testid intentionally kept as "agenda-filter-all" (not renamed to
             "board-focus-all") — several unrelated test files across the
             suite (board-selector-navigation, household-timezone,

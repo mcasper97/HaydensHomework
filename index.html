@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hayden's Homework</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Family Board no-scroll fix: html/body/#root need a real, unbroken
+         100%-height chain for any child's `height: 100vh` + `overflow:
+         hidden` to actually bound content (see FamilyBoard.jsx). Also
+         zeroes the browser's default 8px body margin. Tailwind's own
+         Preflight reset would normally cover this, but it's CDN-loaded
+         (see the script tag above) and this exact environment's own
+         network policy blocks that CDN outright — inline here so the
+         reset is guaranteed regardless of the CDN's availability. -->
+    <style>
+      html, body, #root { height: 100%; margin: 0; padding: 0; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

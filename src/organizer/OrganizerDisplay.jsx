@@ -31,8 +31,13 @@ const OrganizerDisplay = ({
   // No title/back-nav here — FamilyBoard.jsx's header already renders the
   // board title and back/home controls for both its kiosk and parent
   // branches; this component owns only the display content below it.
+  // VIEWPORT-FIT CORRECTION: mirrors FamilyBoard.jsx's own non-kiosk
+  // wrapper — flex:1/minHeight:0 so this surface participates in the same
+  // bounded-height chain (FamilyBoard.jsx's outer shell is the actual
+  // `height: 100vh` + `overflow: hidden` root; this is the kiosk branch's
+  // direct child of that shell).
   return (
-    <div className="w-full max-w-6xl mx-auto">
+    <div className="w-full max-w-6xl mx-auto" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <LearnerPointsStrip children={children} chorePoints={chorePoints} childStats={childStats} />
 
       {children.length > 0 && (

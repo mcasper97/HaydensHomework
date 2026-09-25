@@ -6,6 +6,7 @@ import { householdTodayStr } from "./data/householdTimezone.js";
 import FamilyAgendaBoard from "./organizer/FamilyAgendaBoard.jsx";
 import OrganizerDisplay from "./organizer/OrganizerDisplay.jsx";
 import LearnerPointsStrip from "./organizer/LearnerPointsStrip.jsx";
+import { SURFACE } from "./organizer/boardTheme.js";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -211,7 +212,7 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#1C1C1E" }}>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: SURFACE.appBackground }}>
         <div className="text-center">
           <div className="text-5xl mb-4 animate-pulse">🏔️</div>
           <p className="text-gray-400 font-display text-xl">Loading family board…</p>
@@ -225,14 +226,32 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   const choreCompletions = profile?.choreCompletions || {};
   const chorePoints = profile?.chorePoints || {};
 
+  // VIEWPORT-FIT CORRECTION (no-scroll fix): the outer shell is a real,
+  // bounded `height: 100vh` + `overflow: hidden` flex column (not the old
+  // `min-h-screen`, a MINIMUM that let content grow the page taller than
+  // the viewport with nothing to stop it) — the actual root cause of the
+  // page-level scroll this corrects. Every property in that chain
+  // (display/flexDirection/flex/minHeight/height/overflow, all the way
+  // down through FamilyAgendaBoard.jsx's and FamilyWeekBoard.jsx's own
+  // containers) is inline rather than a Tailwind utility class — same
+  // CDN-independence reasoning as this app's other inline-style precedents
+  // (see FamilyWeekBoard.jsx's own `display: grid` comment): a load-bearing
+  // height constraint that only sometimes applies is exactly how the
+  // original overflow went unnoticed. index.html's own small inline
+  // <style> reset (html/body/#root height:100%, margin:0) is the other
+  // half of this fix — without it, the browser's default 8px body margin
+  // alone breaks the 100vh chain at its very first link.
   return (
-    <div className="min-h-screen flex flex-col items-center p-6" style={{ background: "#1C1C1E" }}>
-      <div className="w-full max-w-6xl">
+    <div
+      className="p-4"
+      style={{ background: SURFACE.appBackground, height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", alignItems: "center" }}
+    >
+      <div className="w-full max-w-6xl" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
         {/* Minimal header (Section 3 of the rolling-week redesign): title +
             current time only — no separate calendar date, no weather. Large
             per-learner focus controls live just below, in
             organizer/FamilyAgendaBoard.jsx, which owns that state. */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-3" style={{ flexShrink: 0 }}>
           <div className="flex items-baseline gap-3">
             <h1 className="text-2xl font-display text-white">Haydens - Homework <span className="text-gray-500 font-normal">/ Family Board</span></h1>
             <FamilyBoardClock />
