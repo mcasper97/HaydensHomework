@@ -121,6 +121,37 @@ export async function requireFirebaseUser(req) {
 }
 
 /**
+ * getHouseholdOwnerEmail(uid) -> string | null
+ * The trusted, already-available-server-side source of a household
+ * owner's email address for server-initiated notifications (e.g.
+ * api/_notificationOrchestrator.js) — situations where there is no
+ * inbound request/bearer token to read an email claim from (the
+ * notification is being sent ABOUT the household, not necessarily
+ * triggered BY the household's own signed-in request).
+ *
+ * Reads the account's own Firebase Auth email (set at sign-up/sign-in —
+ * Google Sign-In or email/password, see src/AuthShell.jsx) via the same
+ * Admin SDK Auth instance requireFirebaseUser above already verifies
+ * tokens against. This is NOT a new preference field: no Firestore write,
+ * no new schema, just a read of account data Firebase Auth already holds
+ * for every real account — deliberately never a client-supplied value.
+ *
+ * Fails safe to null (never throws, never guesses) for: a
+ * misconfigured/uninitialized Admin SDK, a uid with no such account
+ * (guest/admin mode's uid is never a real Firebase Auth user), or a real
+ * account that unexpectedly has no email on file.
+ */
+export async function getHouseholdOwnerEmail(uid, { authInstance = auth } = {}) {
+  if (initError || !authInstance || !uid) return null;
+  try {
+    const user = await authInstance.getUser(uid);
+    return typeof user.email === "string" && user.email ? user.email : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Best-effort, single-instance in-memory rate limiter. This resets on cold
  * start and is NOT shared across concurrent serverless instances, so it is
  * a soft deterrent appropriate for the current project's scale — not a

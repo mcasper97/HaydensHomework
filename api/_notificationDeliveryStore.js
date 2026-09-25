@@ -7,8 +7,12 @@
  * notificationDecision.js's own module doc for the full scope note).
  *
  * Record shape:
- *   { type, attentionKey, createdAt, sentAt, status }
- *   status: "pending" (recorded, not yet resolved) | "sent" | "failed"
+ *   { type, attentionKey, createdAt, sentAt, status, attemptedAt, claimExpiresAt }
+ *   status: "pending" (claimed, not yet resolved) | "sent" | "failed"
+ *   attemptedAt/claimExpiresAt: only meaningful while status is "pending"
+ *   — see claimNotificationDelivery below. createdAt/sentAt keep their
+ *   original meaning unchanged (first-ever-recorded time; time of the
+ *   last successful send).
  *
  * Lives in its OWN top-level collection (notificationDeliveries), not
  * beneath users/{uid}/..., for the same reason api/_gmailConnectionsStore.js
@@ -27,6 +31,14 @@
  */
 import "./_auth.js"; // triggers Firebase Admin app initialization (side effect, shared singleton)
 import { getFirestore } from "firebase-admin/firestore";
+import { buildAttentionKey, shouldNotify } from "../src/data/notificationDecision.js";
+
+// Same expiring-lease shape/duration convention as
+// src/data/emailIngestionSchedule.js's EMAIL_INGESTION_LOCK_LEASE_MS —
+// long enough to cover one real send attempt (network + provider round
+// trip), short enough that a crashed/abandoned attempt doesn't block
+// retries for long.
+export const NOTIFICATION_CLAIM_LEASE_MS = 10 * 60 * 1000;
 
 function defaultDb() {
   return getFirestore();
@@ -34,6 +46,78 @@ function defaultDb() {
 
 function deliveryDocId(uid, attentionKey) {
   return `${uid}:${attentionKey}`;
+}
+
+/**
+ * claimNotificationDelivery(uid, attention) -> { claimed, reason, attentionKey }
+ *
+ * The atomic reliability correction: everywhere that used to do a
+ * separate read (getNotificationDelivery) then a separate write
+ * (recordNotificationAttempt) left a window where two concurrent
+ * invocations could both observe "no delivery yet" and both send the
+ * same notification. This performs the read-decide-write as ONE Admin
+ * SDK transaction, same pattern as
+ * api/_householdProfileStore.js's tryAcquireEmailIngestionLock.
+ *
+ * Rules, evaluated inside the transaction against the current document:
+ *   - an ACTIVE (unexpired) "pending" claim already owned by another
+ *     attempt -> not claimed ("in_progress") — this is the new rule that
+ *     closes the race; nothing in notificationDecision.js's shouldNotify
+ *     has any concept of an in-flight attempt, since that only exists at
+ *     the persistence layer.
+ *   - otherwise (missing, "sent", "failed", or an EXPIRED "pending" claim
+ *     — task: "allow recovery from an abandoned pending attempt after a
+ *     small fixed lease timeout") -> shouldNotify's EXISTING sent/failed/
+ *     unseen rules decide eligibility, reused rather than reimplemented
+ *     (an expired pending claim is treated exactly like a failed one, the
+ *     same "retry eligible" outcome). If eligible, this transaction
+ *     atomically writes status:"pending" with a fresh claimExpiresAt
+ *     lease and returns claimed:true — no other concurrent call can also
+ *     see and claim the same document, because both run inside
+ *     Firestore's own serializable transactions, which abort and retry
+ *     on a conflicting concurrent write rather than allowing both to
+ *     "win".
+ *
+ * Never calls recordNotificationAttempt — this REPLACES that call site
+ * for processAttentionNotification's flow; recordNotificationAttempt
+ * itself is untouched and still available for any other caller.
+ */
+export async function claimNotificationDelivery(uid, attention, { now = new Date(), db = defaultDb() } = {}) {
+  const attentionKey = buildAttentionKey(attention);
+  const ref = db.collection("notificationDeliveries").doc(deliveryDocId(uid, attentionKey));
+  const nowIso = now.toISOString();
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const existing = snap.exists ? snap.data() : null;
+
+    const activePendingClaim = existing?.status === "pending" && existing.claimExpiresAt && existing.claimExpiresAt > nowIso;
+    if (activePendingClaim) {
+      return { claimed: false, reason: "in_progress", attentionKey };
+    }
+
+    // An expired pending claim is an abandoned attempt — treat it as a
+    // failure for eligibility purposes only (recovery), never mutating
+    // the actual stored status until the transaction commits below.
+    const effectiveExisting = existing?.status === "pending" ? { ...existing, status: "failed" } : existing;
+    const decision = shouldNotify({ attention, existingDelivery: effectiveExisting });
+    if (!decision.eligible) {
+      return { claimed: false, reason: decision.reason, attentionKey };
+    }
+
+    const claimExpiresAt = new Date(now.getTime() + NOTIFICATION_CLAIM_LEASE_MS).toISOString();
+    const data = {
+      type: attention.type,
+      attentionKey,
+      createdAt: existing?.createdAt ?? nowIso,
+      sentAt: existing?.sentAt ?? null,
+      status: "pending",
+      attemptedAt: nowIso,
+      claimExpiresAt,
+    };
+    tx.set(ref, data);
+    return { claimed: true, reason: decision.reason, attentionKey };
+  });
 }
 
 /**

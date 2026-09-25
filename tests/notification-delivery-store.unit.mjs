@@ -14,6 +14,8 @@ import {
   recordNotificationAttempt,
   markNotificationSent,
   markNotificationFailed,
+  claimNotificationDelivery,
+  NOTIFICATION_CLAIM_LEASE_MS,
 } from "../api/_notificationDeliveryStore.js";
 
 let pass = 0, fail = 0;
@@ -22,7 +24,13 @@ function ok(name, cond) {
   else { fail++; console.log(`FAIL: ${name}`); }
 }
 
-/** Minimal in-memory Firestore-Admin-SDK-shaped fake, keyed by full path string. */
+/**
+ * Minimal in-memory Firestore-Admin-SDK-shaped fake, keyed by full path
+ * string. runTransaction mirrors tests/household-profile-store-lock.unit.mjs's
+ * own fake — no dot-notation merge logic is needed here since every write
+ * in this store (including claimNotificationDelivery's tx.set) is always
+ * a full-document replace, never a partial merge.
+ */
 function createFakeAdminDb() {
   const store = new Map();
   function docRef(path) {
@@ -38,7 +46,19 @@ function createFakeAdminDb() {
   function collRef(name) {
     return { doc: (id) => docRef(`${name}/${id}`) };
   }
-  return { db: { collection: (name) => collRef(name) }, store };
+  return {
+    db: {
+      collection: (name) => collRef(name),
+      runTransaction: async (fn) => {
+        const tx = {
+          get: async (ref) => ref.get(),
+          set: (ref, data) => { store.set(ref.path, data); },
+        };
+        return fn(tx);
+      },
+    },
+    store,
+  };
 }
 
 const UID = "household-1";
@@ -137,6 +157,88 @@ const UID = "household-1";
   await markNotificationSent("uid-a", "review:cand-1", { db });
   const uidBRecord = await getNotificationDelivery("uid-b", "review:cand-1", { db });
   ok("Marking uid-a's delivery sent never affects uid-b's delivery for the SAME attentionKey", uidBRecord.status === "pending");
+}
+
+// ============ claimNotificationDelivery: atomic claim (reliability correction) ============
+
+// 1. First unseen notification acquires claim
+{
+  const { db } = createFakeAdminDb();
+  const now = new Date("2026-01-15T09:00:00.000Z");
+  const result = await claimNotificationDelivery(UID, { type: "review", id: "cand-1" }, { now, db });
+
+  ok("First unseen notification acquires the claim", result.claimed === true);
+  ok("... reason is 'unseen'", result.reason === "unseen");
+  ok("... attentionKey is review:cand-1", result.attentionKey === "review:cand-1");
+
+  const stored = await getNotificationDelivery(UID, "review:cand-1", { db });
+  ok("Claiming writes a pending record", stored.status === "pending");
+  ok("... with attemptedAt set to the injected now", stored.attemptedAt === now.toISOString());
+  ok("... and claimExpiresAt set NOTIFICATION_CLAIM_LEASE_MS in the future", stored.claimExpiresAt === new Date(now.getTime() + NOTIFICATION_CLAIM_LEASE_MS).toISOString());
+}
+
+// 2. Second concurrent attempt does not acquire same claim
+{
+  const { db } = createFakeAdminDb();
+  const now = new Date("2026-01-15T09:00:00.000Z");
+  const first = await claimNotificationDelivery(UID, { type: "review", id: "cand-2" }, { now, db });
+  ok("Setup: first claim succeeds", first.claimed === true);
+
+  const second = await claimNotificationDelivery(UID, { type: "review", id: "cand-2" }, { now: new Date(now.getTime() + 1000), db });
+  ok("A second concurrent attempt (1s later, still inside the lease) does not acquire the same claim", second.claimed === false);
+  ok("... reason is 'in_progress'", second.reason === "in_progress");
+}
+
+// 3. Sent delivery remains suppressed
+{
+  const { db } = createFakeAdminDb();
+  const now = new Date("2026-01-15T09:00:00.000Z");
+  const first = await claimNotificationDelivery(UID, { type: "review", id: "cand-3" }, { now, db });
+  await markNotificationSent(UID, first.attentionKey, { db });
+
+  const again = await claimNotificationDelivery(UID, { type: "review", id: "cand-3" }, { now: new Date(now.getTime() + 1000), db });
+  ok("A sent delivery remains suppressed — never re-claimed", again.claimed === false);
+  ok("... reason is 'already_sent'", again.reason === "already_sent");
+}
+
+// 4. Failed delivery can be claimed again
+{
+  const { db } = createFakeAdminDb();
+  const now = new Date("2026-01-15T09:00:00.000Z");
+  const first = await claimNotificationDelivery(UID, { type: "calendar", id: "item-4" }, { now, db });
+  await markNotificationFailed(UID, first.attentionKey, { db });
+
+  const retry = await claimNotificationDelivery(UID, { type: "calendar", id: "item-4" }, { now: new Date(now.getTime() + 1000), db });
+  ok("A failed delivery can be claimed again", retry.claimed === true);
+  ok("... reason is 'retry_after_failure'", retry.reason === "retry_after_failure");
+}
+
+// 5. Expired pending claim can be reclaimed (recovery from an abandoned attempt)
+{
+  const { db } = createFakeAdminDb();
+  const now = new Date("2026-01-15T09:00:00.000Z");
+  const first = await claimNotificationDelivery(UID, { type: "gmail", connectedAt: "2026-01-01T00:00:00.000Z" }, { now, db });
+  ok("Setup: first claim succeeds (simulated crash — never resolved to sent/failed)", first.claimed === true);
+
+  const afterLeaseExpiry = new Date(now.getTime() + NOTIFICATION_CLAIM_LEASE_MS + 1000);
+  const reclaimed = await claimNotificationDelivery(UID, { type: "gmail", connectedAt: "2026-01-01T00:00:00.000Z" }, { now: afterLeaseExpiry, db });
+  ok("An expired pending claim (abandoned attempt) CAN be reclaimed once its lease elapses", reclaimed.claimed === true);
+  ok("... treated the same as a failed delivery (retry-eligible)", reclaimed.reason === "retry_after_failure");
+}
+
+// 6. Active pending claim cannot be reclaimed (right up to the boundary)
+{
+  const { db } = createFakeAdminDb();
+  const now = new Date("2026-01-15T09:00:00.000Z");
+  const first = await claimNotificationDelivery(UID, { type: "review", id: "cand-6" }, { now, db });
+  ok("Setup: first claim succeeds", first.claimed === true);
+
+  const justBeforeExpiry = new Date(now.getTime() + NOTIFICATION_CLAIM_LEASE_MS - 1000);
+  const blocked = await claimNotificationDelivery(UID, { type: "review", id: "cand-6" }, { now: justBeforeExpiry, db });
+  ok("An active (not-yet-expired) pending claim cannot be reclaimed, even 1s before its lease expires", blocked.claimed === false && blocked.reason === "in_progress");
+
+  const stillOwned = await getNotificationDelivery(UID, "review:cand-6", { db });
+  ok("The blocked attempt never overwrote the original claim's attemptedAt", stillOwned.attemptedAt === now.toISOString());
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
