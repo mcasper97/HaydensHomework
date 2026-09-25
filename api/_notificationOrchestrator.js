@@ -9,12 +9,15 @@
  * and no provider logic (sendParentNotificationEmail is called, never
  * reimplemented).
  *
- * Supports exactly the three attention types notificationDecision.js
- * already supports: "gmail" | "review" | "calendar". Content is a fixed,
- * static plain-text template per type — never interpolates any external/
+ * Supports the attention types notificationDecision.js supports: "gmail"
+ * | "review" | "review_batch" | "calendar". Content is a fixed, static
+ * plain-text template per type — never interpolates any external/
  * candidate/email content (task: "Do not include sensitive full email
  * contents"), so there is nothing here that could unsafely carry
- * untrusted text into the message body.
+ * untrusted text into the message body. "review_batch" is the one
+ * exception to "static": its body includes the batch's own
+ * review-required COUNT (a plain integer, never candidate content) —
+ * see buildNotificationEmailContent below.
  */
 import {
   claimNotificationDelivery,
@@ -39,12 +42,30 @@ const EMAIL_CONTENT = {
   },
 };
 
+const REVIEW_BATCH_SUBJECT = "Hayden's Homework needs your review";
+
 /**
  * buildNotificationEmailContent(attention) -> { subject, text }
- * Pure — a fixed template keyed only by attention.type. Throws for an
- * unsupported type (same fail-closed convention as buildAttentionKey).
+ * Pure. Every type except "review_batch" is a fixed template keyed only
+ * by attention.type (unchanged). "review_batch" reuses that SAME subject
+ * but composes its body from attention.count (a plain integer — the
+ * review-required count this batch's trigger already computed; never any
+ * candidate title, sender, or extracted content) so the email reads "1
+ * new school item needs review." or "4 new school items need review."
+ * A missing/invalid count fails safe to the singular phrasing (1) rather
+ * than a broken/undefined sentence. Throws for an unsupported type (same
+ * fail-closed convention as buildAttentionKey).
  */
 export function buildNotificationEmailContent(attention) {
+  if (attention?.type === "review_batch") {
+    const count = Number.isInteger(attention.count) && attention.count > 0 ? attention.count : 1;
+    const itemWord = count === 1 ? "item" : "items";
+    const needWord = count === 1 ? "needs" : "need";
+    return {
+      subject: REVIEW_BATCH_SUBJECT,
+      text: `${count} new school ${itemWord} ${needWord} review.\n\nOpen Hayden's Homework and go to Parent Board -> Review Inbox to review ${count === 1 ? "it" : "them"}.`,
+    };
+  }
   const content = EMAIL_CONTENT[attention?.type];
   if (!content) throw new Error(`buildNotificationEmailContent: unsupported attention type "${attention?.type}"`);
   return content;

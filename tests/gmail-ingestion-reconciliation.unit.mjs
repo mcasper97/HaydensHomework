@@ -78,6 +78,14 @@ function baseDeps(overrides = {}) {
     createSourceRecord: async (uid, data) => ({ id: `src-${Math.random().toString(36).slice(2)}`, ...data }),
     finalizeCandidate: async () => ({ outcome: "auto_committed", item: { id: "irrelevant" } }),
     listItems: async () => [],
+    // A safe no-op by default — this file's own focus is reconciliation,
+    // not the Review Inbox batch notification (see
+    // tests/gmail-ingestion-runner.unit.mjs and
+    // tests/review-batch-notification-trigger.unit.mjs for that), so
+    // tests here never need to reach the real default (Firestore + the
+    // notification pipeline) just because a scenario happens to leave a
+    // candidate review-required.
+    notifyReviewBatch: async () => {},
     ...overrides,
   };
 }

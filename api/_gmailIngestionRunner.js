@@ -72,6 +72,7 @@ import { listItemsServerSide } from "./_itemsStore.js";
 import { buildObligationSignature, canReconcile } from "../src/organizer/recurringObligationMatch.js";
 import { buildOneTimeSignatureFromItem, decideOneTimeReconciliation } from "../src/organizer/oneTimeObligationMatch.js";
 import { notifyGmailReconnectRequired } from "./_gmailReconnectNotificationTrigger.js";
+import { notifyReviewBatchRequired } from "./_reviewBatchNotificationTrigger.js";
 
 // Re-exported for callers that want to distinguish WHY a run didn't
 // process any messages (e.g. a future status UI) — same codes
@@ -114,6 +115,18 @@ export const INGESTION_RUN_ERROR_CODES = SCAN_ERROR_CODES;
  * too for defense in depth even though that function is itself designed
  * to never throw. The returned ok:false result is built and returned
  * completely unchanged by this — the notification is a pure side effect.
+ *
+ * REVIEW INBOX BATCH NOTIFICATION (task: ONE email per source, never one
+ * per candidate): a per-email `reviewRequiredThisEmail` counter tracks
+ * exactly the same two cases that already increment the run-wide
+ * `summary.reviewRequired` below (a genuine conflict, and a
+ * non-auto-committed finalization outcome) — never a second counting
+ * rule. Once that email's obligations loop finishes, if the count is > 0,
+ * deps.notifyReviewBatch (api/_reviewBatchNotificationTrigger.js's
+ * notifyReviewBatchRequired by default) is called ONCE for that email,
+ * keyed by its own emailSourceRecord.id (never a candidate id, never a
+ * timestamp) — best-effort, wrapped here too for the same
+ * defense-in-depth reason as the Gmail reconnect notification above.
  */
 export async function runHouseholdEmailIngestion(uid, deps = {}) {
   const {
@@ -123,6 +136,7 @@ export async function runHouseholdEmailIngestion(uid, deps = {}) {
     finalizeCandidate = finalizeCandidateServerSide,
     listItems = listItemsServerSide,
     notifyGmailReconnect = notifyGmailReconnectRequired,
+    notifyReviewBatch = notifyReviewBatchRequired,
     scanDeps,
   } = deps;
 
@@ -261,6 +275,14 @@ export async function runHouseholdEmailIngestion(uid, deps = {}) {
       }
     }
 
+    // Review Inbox batch notification (task) — counts ONLY candidates
+    // this email's own processing leaves review-required: incremented
+    // alongside (never instead of) the two summary.reviewRequired += 1
+    // sites below, so this is never a second counting rule, just a
+    // per-email scope on the same one. Auto-committed and
+    // corroborated/skipped-as-duplicate candidates never increment it.
+    let reviewRequiredThisEmail = 0;
+
     for (const o of emailResult.obligations) {
       const sourceRecordId =
         o.sourceUrl && linkedSourceRecordIdByUrl.has(o.sourceUrl) ? linkedSourceRecordIdByUrl.get(o.sourceUrl) : emailSourceRecord.id;
@@ -384,6 +406,7 @@ export async function runHouseholdEmailIngestion(uid, deps = {}) {
         // review queue or new reviewStatus value was needed.
         if (conflict) {
           summary.reviewRequired += 1;
+          reviewRequiredThisEmail += 1;
           continue;
         }
 
@@ -400,6 +423,7 @@ export async function runHouseholdEmailIngestion(uid, deps = {}) {
           // Inbox already surfaces it — no separate review queue needed
           // here.
           summary.reviewRequired += 1;
+          reviewRequiredThisEmail += 1;
         }
       } catch (err) {
         // Error isolation (task Section 4) — one obligation's failure
@@ -407,6 +431,18 @@ export async function runHouseholdEmailIngestion(uid, deps = {}) {
         // other message in this run.
         console.error("gmailIngestionRunner: candidate creation/finalization failed", err);
         summary.errors.push({ gmailMessageId: emailResult.gmailMessageId, error: err?.message || String(err) });
+      }
+    }
+
+    if (reviewRequiredThisEmail > 0) {
+      try {
+        await notifyReviewBatch(uid, emailSourceRecord.id, reviewRequiredThisEmail);
+      } catch (err) {
+        // Belt-and-suspenders — notifyReviewBatchRequired's own
+        // implementation already catches everything internally; this
+        // guarantees a notification failure can never turn into an
+        // ingestion-run failure regardless of how it's invoked.
+        console.error(`gmailIngestionRunner: Review Inbox batch notification trigger threw for ${uid}/${emailSourceRecord.id}`, err);
       }
     }
   }

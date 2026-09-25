@@ -7,22 +7,41 @@
  * attention -> dedupe decision. Persistence lives separately in
  * api/_notificationDeliveryStore.js; this file is pure, no I/O.
  *
- * Supports exactly the three attention types the MVP attention layer
- * (src/data/attentionSummary.js) surfaces on Parent Board — this module
- * is a sibling to that one, never a replacement or modification of it:
- *   "gmail"    — Gmail connection needs reconnect/auth
- *   "review"   — a Review Inbox item (IngestionCandidate) needs review
- *   "calendar" — a committed Item's Google Calendar publish failed
+ * Supports the attention types the MVP attention layer
+ * (src/data/attentionSummary.js) surfaces on Parent Board, plus one
+ * batched variant — this module is a sibling to that one, never a
+ * replacement or modification of it:
+ *   "gmail"        — Gmail connection needs reconnect/auth
+ *   "review"       — a single Review Inbox item (IngestionCandidate)
+ *                    needs review (per-candidate identity — reserved for
+ *                    a future non-batched caller; no current trigger
+ *                    uses this type)
+ *   "review_batch" — one or more NEW Review Inbox candidates created by
+ *                    processing a single source (e.g. one email) need
+ *                    review — see api/_reviewBatchNotificationTrigger.js.
+ *                    A deliberately SEPARATE key namespace from "review"
+ *                    (never `review:<id>`) so a batch notification can
+ *                    never collide with, or be confused with, a
+ *                    per-candidate one in the delivery store.
+ *   "calendar"     — a committed Item's Google Calendar publish failed
  *
  * NOTIFICATION IDENTITY — buildAttentionKey(attention)
  * A stable, non-timestamp-as-identity dedupe key per notification-worthy
  * condition:
- *   gmail:    "gmail:reconnect:<connectedAt>" (episode-scoped — see below)
- *   review:   "review:<candidateId>"          (one per IngestionCandidate)
- *   calendar: "calendar:<itemId>"             (one per committed Item)
- * review/calendar keys never include a timestamp — a key must identify
- * the SAME underlying condition across repeated evaluations (e.g. every
- * scheduled check), not a single moment in time.
+ *   gmail:        "gmail:reconnect:<connectedAt>" (episode-scoped — see below)
+ *   review:       "review:<candidateId>"          (one per IngestionCandidate)
+ *   review_batch: "review-batch:<sourceId>"       (one per source/run —
+ *                                                   e.g. per email's own
+ *                                                   SourceRecord id; an
+ *                                                   optional `count` on
+ *                                                   the attention is NEVER
+ *                                                   part of the key, only
+ *                                                   used later for the
+ *                                                   email's own text)
+ *   calendar:     "calendar:<itemId>"             (one per committed Item)
+ * review/review_batch/calendar keys never include a timestamp — a key
+ * must identify the SAME underlying condition across repeated
+ * evaluations (e.g. every scheduled check), not a single moment in time.
  *
  * GMAIL RECONNECT — EPISODE-SCOPED KEY
  * A bare "gmail:reconnect" key would be a single, constant, household-wide
@@ -51,8 +70,8 @@
 /**
  * buildAttentionKey({ type, id, connectedAt }) -> string
  * Throws for an unsupported type, a missing id where one is required
- * (review/calendar), or a missing connectedAt for a "gmail" attention —
- * never silently falls back to a colliding or unstable key.
+ * (review/review_batch/calendar), or a missing connectedAt for a "gmail"
+ * attention — never silently falls back to a colliding or unstable key.
  */
 export function buildAttentionKey({ type, id, connectedAt } = {}) {
   if (type === "gmail") {
@@ -62,6 +81,10 @@ export function buildAttentionKey({ type, id, connectedAt } = {}) {
   if (type === "review") {
     if (!id) throw new Error('buildAttentionKey: "review" attention requires an id (the IngestionCandidate id)');
     return `review:${id}`;
+  }
+  if (type === "review_batch") {
+    if (!id) throw new Error('buildAttentionKey: "review_batch" attention requires an id (a stable source/run identity, e.g. the email\'s own SourceRecord id)');
+    return `review-batch:${id}`;
   }
   if (type === "calendar") {
     if (!id) throw new Error('buildAttentionKey: "calendar" attention requires an id (the Item id)');
@@ -73,9 +96,12 @@ export function buildAttentionKey({ type, id, connectedAt } = {}) {
 /**
  * shouldNotify({ attention, existingDelivery }) -> { eligible, reason, attentionKey }
  *
- * attention: { type: "gmail"|"review"|"calendar", id?, connectedAt? } —
- *   the notification-worthy condition instance being evaluated right now
- *   (id for review/calendar, connectedAt for gmail — see buildAttentionKey).
+ * attention: { type: "gmail"|"review"|"review_batch"|"calendar", id?,
+ *   connectedAt?, count? } — the notification-worthy condition instance
+ *   being evaluated right now (id for review/review_batch/calendar,
+ *   connectedAt for gmail — see buildAttentionKey; count is
+ *   review_batch-only, presentation data never read by this function or
+ *   folded into the key).
  * existingDelivery: the previously stored delivery record for this
  *   condition's attentionKey (see api/_notificationDeliveryStore.js's
  *   shape), or null/undefined if none exists yet.

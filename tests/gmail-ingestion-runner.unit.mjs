@@ -62,6 +62,13 @@ function baseDeps(overrides = {}) {
     // covered by tests/gmail-ingestion-reconciliation.unit.mjs; these
     // tests only need reconciliation to never MATCH anything.
     listItems: async () => [],
+    // A safe no-op by default so tests unrelated to the Review Inbox
+    // batch notification never reach the real default (Firestore + the
+    // notification pipeline) just because their scenario happens to
+    // leave a candidate review-required. The batch notification's OWN
+    // wiring (count, id, dedupe, isolation) is proven by the dedicated
+    // tests below, which override this explicitly.
+    notifyReviewBatch: async () => {},
     ...overrides,
   };
 }
@@ -179,6 +186,160 @@ async function run() {
     }));
     ok("a normal successful run still reports ok:true", summary.ok === true);
     ok("no reconnect notification is ever triggered on a successful run", calls.notifyGmailReconnect === 0);
+  }
+
+  // ============ Review Inbox batch notification: one source, 4 review candidates -> ONE email ============
+  {
+    const calls = { notifyReviewBatch: [] };
+    const summary = await runHouseholdEmailIngestion(UID, baseDeps({
+      scan: async () => ({
+        ok: true, connectedEmail: "p@x.com", senderCount: 1, lookbackDays: 14, sinceIso: "2026-01-01T00:00:00.000Z",
+        matchedCount: 1,
+        results: [emailResult({
+          obligations: [
+            { type: "event", title: "Field Trip A", date: "2026-02-01", extractionConfidence: 0.4, sourceUrl: null },
+            { type: "event", title: "Field Trip B", date: "2026-02-02", extractionConfidence: 0.4, sourceUrl: null },
+            { type: "event", title: "Field Trip C", date: "2026-02-03", extractionConfidence: 0.4, sourceUrl: null },
+            { type: "event", title: "Field Trip D", date: "2026-02-04", extractionConfidence: 0.4, sourceUrl: null },
+          ],
+        })],
+      }),
+      createCandidate: async (uid, data) => ({ id: `cand-${Math.random().toString(36).slice(2)}`, ...data }),
+      finalizeCandidate: async () => ({ outcome: "pending", decision: { eligible: false, reasons: ["low_confidence"] } }),
+      notifyReviewBatch: async (uid, sourceId, count) => { calls.notifyReviewBatch.push({ uid, sourceId, count }); },
+    }));
+
+    ok("one teacher email producing 4 ambiguous obligations creates 4 candidates", summary.candidatesCreated === 4);
+    ok("all 4 are review-required", summary.reviewRequired === 4);
+    ok("the batch notification trigger is called exactly ONCE for this one email (never once per candidate)", calls.notifyReviewBatch.length === 1);
+    ok("...with a count of 4", calls.notifyReviewBatch[0].count === 4);
+    ok("...with this household's uid", calls.notifyReviewBatch[0].uid === UID);
+    ok("...keyed by a real, stable id (the email's own SourceRecord id, never a candidate id or a timestamp)", typeof calls.notifyReviewBatch[0].sourceId === "string" && calls.notifyReviewBatch[0].sourceId.length > 0);
+  }
+
+  // ============ Another source in the same run creates its own separate batch notification ============
+  {
+    const calls = { notifyReviewBatch: [] };
+    const srcCalls = [];
+    const summary = await runHouseholdEmailIngestion(UID, baseDeps({
+      scan: async () => ({
+        ok: true, connectedEmail: "p@x.com", senderCount: 1, lookbackDays: 14, sinceIso: "2026-01-01T00:00:00.000Z",
+        matchedCount: 2,
+        results: [
+          emailResult({
+            gmailMessageId: "msg-a",
+            obligations: [
+              { type: "event", title: "Email A Item 1", date: "2026-03-01", extractionConfidence: 0.4, sourceUrl: null },
+              { type: "event", title: "Email A Item 2", date: "2026-03-02", extractionConfidence: 0.4, sourceUrl: null },
+            ],
+          }),
+          emailResult({
+            gmailMessageId: "msg-b",
+            obligations: [
+              { type: "event", title: "Email B Item 1", date: "2026-03-03", extractionConfidence: 0.4, sourceUrl: null },
+            ],
+          }),
+        ],
+      }),
+      createSourceRecord: async (uid, data) => { srcCalls.push(data); return { id: `src-${srcCalls.length}`, ...data }; },
+      createCandidate: async (uid, data) => ({ id: `cand-${Math.random().toString(36).slice(2)}`, ...data }),
+      finalizeCandidate: async () => ({ outcome: "pending", decision: { eligible: false, reasons: ["low_confidence"] } }),
+      notifyReviewBatch: async (uid, sourceId, count) => { calls.notifyReviewBatch.push({ uid, sourceId, count }); },
+    }));
+
+    ok("two separate sources each get their own batch notification call", calls.notifyReviewBatch.length === 2);
+    ok("the two calls use two DIFFERENT source ids (never sharing one batch key)", calls.notifyReviewBatch[0].sourceId !== calls.notifyReviewBatch[1].sourceId);
+    ok("the first email's batch count is exactly its own 2 candidates", calls.notifyReviewBatch[0].count === 2);
+    ok("the second email's batch count is exactly its own 1 candidate", calls.notifyReviewBatch[1].count === 1);
+    ok("total reviewRequired across the whole run is the sum (3)", summary.reviewRequired === 3);
+  }
+
+  // ============ A source with zero review-required candidates never notifies ============
+  {
+    const calls = { notifyReviewBatch: [] };
+    const summary = await runHouseholdEmailIngestion(UID, baseDeps({
+      finalizeCandidate: async () => ({ outcome: "auto_committed", item: { id: "x" } }),
+      notifyReviewBatch: async (uid, sourceId, count) => { calls.notifyReviewBatch.push({ uid, sourceId, count }); },
+    }));
+    ok("no candidate is review-required", summary.reviewRequired === 0);
+    ok("the batch notification trigger is never called", calls.notifyReviewBatch.length === 0);
+  }
+
+  // ============ Auto-committed candidates are never counted toward the batch ============
+  {
+    const calls = { notifyReviewBatch: [] };
+    const summary = await runHouseholdEmailIngestion(UID, baseDeps({
+      scan: async () => ({
+        ok: true, connectedEmail: "p@x.com", senderCount: 1, lookbackDays: 14, sinceIso: "2026-01-01T00:00:00.000Z",
+        matchedCount: 1,
+        results: [emailResult({
+          obligations: [
+            { type: "event", title: "Auto Committed Item", date: "2026-04-01", extractionConfidence: 0.95, sourceUrl: null },
+            { type: "event", title: "Needs Review 1", date: "2026-04-02", extractionConfidence: 0.4, sourceUrl: null },
+            { type: "event", title: "Needs Review 2", date: "2026-04-03", extractionConfidence: 0.4, sourceUrl: null },
+            { type: "event", title: "Needs Review 3", date: "2026-04-04", extractionConfidence: 0.4, sourceUrl: null },
+          ],
+        })],
+      }),
+      createCandidate: async (uid, data) => ({ id: `cand-${Math.random().toString(36).slice(2)}`, ...data }),
+      finalizeCandidate: async (uid, candidate) =>
+        candidate.title === "Auto Committed Item"
+          ? { outcome: "auto_committed", item: { id: candidate.id } }
+          : { outcome: "pending", decision: { eligible: false, reasons: ["low_confidence"] } },
+      notifyReviewBatch: async (uid, sourceId, count) => { calls.notifyReviewBatch.push({ uid, sourceId, count }); },
+    }));
+
+    ok("4 candidates created total", summary.candidatesCreated === 4);
+    ok("only 1 auto-committed", summary.itemsCommitted === 1);
+    ok("3 review-required (the auto-committed one excluded)", summary.reviewRequired === 3);
+    ok("the batch notification count reflects ONLY the review-required candidates, never the auto-committed one", calls.notifyReviewBatch.length === 1 && calls.notifyReviewBatch[0].count === 3);
+  }
+
+  // ============ Corroborated candidates are never counted toward the batch ============
+  {
+    const calls = { notifyReviewBatch: [] };
+    const summary = await runHouseholdEmailIngestion(UID, baseDeps({
+      listItems: async () => [{
+        id: "existing-item-1",
+        type: "event",
+        title: "Field Trip Permission Slip",
+        startDate: "2026-02-10",
+        startTime: null,
+        endTime: null,
+        childIds: ["hayden"],
+        schedule: null,
+      }],
+      scan: async () => ({
+        ok: true, connectedEmail: "p@x.com", senderCount: 1, lookbackDays: 14, sinceIso: "2026-01-01T00:00:00.000Z",
+        matchedCount: 1,
+        results: [emailResult({
+          obligations: [
+            // Restates the existing Item -> reconciled/corroborated, never review-required.
+            { type: "event", title: "Field Trip Permission Slip", date: "2026-02-10", extractionConfidence: 0.9, sourceUrl: null },
+            // Genuinely new -> review-required.
+            { type: "event", title: "New Unrelated Item", date: "2026-02-11", extractionConfidence: 0.4, sourceUrl: null },
+          ],
+        })],
+      }),
+      createCandidate: async (uid, data) => ({ id: `cand-${Math.random().toString(36).slice(2)}`, ...data }),
+      finalizeCandidate: async () => ({ outcome: "pending", decision: { eligible: false, reasons: ["low_confidence"] } }),
+      notifyReviewBatch: async (uid, sourceId, count) => { calls.notifyReviewBatch.push({ uid, sourceId, count }); },
+    }));
+
+    ok("2 candidates created (provenance preserved for the corroborated one too)", summary.candidatesCreated === 2);
+    ok("only 1 counts as review-required (the corroborated one is excluded)", summary.reviewRequired === 1);
+    ok("the batch notification count reflects only the non-corroborated candidate", calls.notifyReviewBatch.length === 1 && calls.notifyReviewBatch[0].count === 1);
+  }
+
+  // ============ Notification failure never affects candidate persistence or the ingestion result ============
+  {
+    const summary = await runHouseholdEmailIngestion(UID, baseDeps({
+      finalizeCandidate: async () => ({ outcome: "pending", decision: { eligible: false, reasons: ["low_confidence"] } }),
+      notifyReviewBatch: async () => { throw new Error("Resend is down"); },
+    }));
+    ok("candidatesCreated is unaffected by a notification failure", summary.candidatesCreated === 1);
+    ok("reviewRequired is unaffected by a notification failure", summary.reviewRequired === 1);
+    ok("the run overall still reports ok:true, never failed by a notification error", summary.ok === true);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
