@@ -126,12 +126,18 @@ async function run() {
 
   // ============ Gmail auth failure returns reconnect-required and stops household processing ============
   {
-    const calls = { createSourceRecord: 0, createCandidate: 0, finalizeCandidate: 0 };
+    const calls = { createSourceRecord: 0, createCandidate: 0, finalizeCandidate: 0, notifyGmailReconnect: 0 };
     const summary = await runHouseholdEmailIngestion(UID, {
       scan: async () => ({ ok: false, code: SCAN_ERROR_CODES.RECONNECT_REQUIRED, error: "Gmail needs to be reconnected.", needsReconnect: true }),
       createSourceRecord: async () => { calls.createSourceRecord += 1; return { id: "should-not-be-called" }; },
       createCandidate: async () => { calls.createCandidate += 1; return { id: "should-not-be-called" }; },
       finalizeCandidate: async () => { calls.finalizeCandidate += 1; return { outcome: "auto_committed" }; },
+      // Stubbed so this test never reaches the real default (Firestore +
+      // the notification pipeline) — the trigger's OWN behavior (attention
+      // shape, connectedAt source, failure isolation, dedupe reliance) is
+      // covered in tests/gmail-reconnect-notification-trigger.unit.mjs.
+      // This test only proves the RUNNER calls it at the right moment.
+      notifyGmailReconnect: async (uid) => { calls.notifyGmailReconnect += 1; return { uid }; },
     });
     ok("an auth failure is reported as ok:false", summary.ok === false);
     ok("the auth failure carries the reconnect-required code", summary.code === SCAN_ERROR_CODES.RECONNECT_REQUIRED);
@@ -139,16 +145,40 @@ async function run() {
     ok("no SourceRecord was ever created (no Review Inbox noise)", calls.createSourceRecord === 0);
     ok("no candidate was ever created (no Review Inbox noise)", calls.createCandidate === 0);
     ok("finalizeCandidate was never reached", calls.finalizeCandidate === 0);
+    ok("the Gmail reconnect notification trigger was invoked exactly once", calls.notifyGmailReconnect === 1);
+    ok("the run summary shape is unaffected by the notification trigger (still exactly ok/code/message/needsReconnect)", Object.keys(summary).sort().join(",") === "code,message,needsReconnect,ok");
   }
 
-  // ============ Not-connected / no-senders also stop cleanly (same ok:false shape) ============
+  // ============ A notification trigger failure never breaks the ingestion result ============
   {
+    const summary = await runHouseholdEmailIngestion(UID, {
+      scan: async () => ({ ok: false, code: SCAN_ERROR_CODES.RECONNECT_REQUIRED, error: "Gmail needs to be reconnected.", needsReconnect: true }),
+      notifyGmailReconnect: async () => { throw new Error("Resend is down"); },
+    });
+    ok("even if the notification trigger itself throws, the normal reconnect-required result is still returned", summary.ok === false && summary.code === SCAN_ERROR_CODES.RECONNECT_REQUIRED && summary.needsReconnect === true);
+  }
+
+  // ============ Not-connected / no-senders also stop cleanly (same ok:false shape), and never notify ============
+  {
+    const calls = { notifyGmailReconnect: 0 };
     const summary = await runHouseholdEmailIngestion(UID, {
       ...baseDeps(),
       scan: async () => ({ ok: false, code: SCAN_ERROR_CODES.NOT_CONNECTED, error: "Gmail is not connected yet." }),
+      notifyGmailReconnect: async () => { calls.notifyGmailReconnect += 1; },
     });
     ok("a not-connected household stops with ok:false and the right code", summary.ok === false && summary.code === SCAN_ERROR_CODES.NOT_CONNECTED);
     ok("needsReconnect is omitted (not a genuine auth failure) rather than falsely true", !summary.needsReconnect);
+    ok("the reconnect notification trigger is never called for a non-reconnect failure", calls.notifyGmailReconnect === 0);
+  }
+
+  // ============ Normal successful Gmail ingestion never triggers a reconnect notification ============
+  {
+    const calls = { notifyGmailReconnect: 0 };
+    const summary = await runHouseholdEmailIngestion(UID, baseDeps({
+      notifyGmailReconnect: async () => { calls.notifyGmailReconnect += 1; },
+    }));
+    ok("a normal successful run still reports ok:true", summary.ok === true);
+    ok("no reconnect notification is ever triggered on a successful run", calls.notifyGmailReconnect === 0);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

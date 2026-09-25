@@ -71,6 +71,7 @@ import { finalizeCandidateServerSide } from "./_scheduledIngestionAdapter.js";
 import { listItemsServerSide } from "./_itemsStore.js";
 import { buildObligationSignature, canReconcile } from "../src/organizer/recurringObligationMatch.js";
 import { buildOneTimeSignatureFromItem, decideOneTimeReconciliation } from "../src/organizer/oneTimeObligationMatch.js";
+import { notifyGmailReconnectRequired } from "./_gmailReconnectNotificationTrigger.js";
 
 // Re-exported for callers that want to distinguish WHY a run didn't
 // process any messages (e.g. a future status UI) — same codes
@@ -103,6 +104,16 @@ export const INGESTION_RUN_ERROR_CODES = SCAN_ERROR_CODES;
  * scanApprovedSenderEmails unchanged, so a test can fake the Gmail/
  * extraction layer without needing to fake this file's own
  * create/finalize collaborators too.
+ *
+ * GMAIL RECONNECT NOTIFICATION (task: notify the parent when this
+ * transition happens): exactly when scanResult.needsReconnect is true —
+ * the SAME reconnect-required transition this function already surfaces
+ * on its ok:false result, no second detector — deps.notifyGmailReconnect
+ * (api/_gmailReconnectNotificationTrigger.js's notifyGmailReconnectRequired
+ * by default) is called best-effort, wrapped in its own try/catch here
+ * too for defense in depth even though that function is itself designed
+ * to never throw. The returned ok:false result is built and returned
+ * completely unchanged by this — the notification is a pure side effect.
  */
 export async function runHouseholdEmailIngestion(uid, deps = {}) {
   const {
@@ -111,11 +122,24 @@ export async function runHouseholdEmailIngestion(uid, deps = {}) {
     createCandidate = createIngestionCandidateServerSide,
     finalizeCandidate = finalizeCandidateServerSide,
     listItems = listItemsServerSide,
+    notifyGmailReconnect = notifyGmailReconnectRequired,
     scanDeps,
   } = deps;
 
   const scanResult = await scan(uid, scanDeps);
   if (!scanResult.ok) {
+    if (scanResult.needsReconnect) {
+      try {
+        await notifyGmailReconnect(uid);
+      } catch (err) {
+        // Belt-and-suspenders — notifyGmailReconnectRequired's own
+        // implementation already catches everything internally; this
+        // guarantees a change to that function (or a test double that
+        // doesn't) can never turn a notification failure into an
+        // ingestion-run failure.
+        console.error(`gmailIngestionRunner: Gmail reconnect notification trigger threw for ${uid}`, err);
+      }
+    }
     return {
       ok: false,
       code: scanResult.code,
