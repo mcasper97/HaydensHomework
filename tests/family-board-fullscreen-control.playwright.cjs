@@ -61,23 +61,27 @@ function ok(name, cond) {
     ok('The board still renders normally when Fullscreen is unsupported', await page.getByTestId('family-week-board').isVisible());
   } else {
     // ============ Section 15: control renders, invokes the API, exit works ============
+    // ONE-LINE-HEADER PASS: the button is icon-only now (no visible text
+    // label, to save width on the single-line header) — its accessible
+    // name (aria-label) still carries the "Full Screen"/"Exit Full Screen"
+    // text, so that's what these assertions check instead of textContent.
     const btn = page.getByTestId('fullscreen-toggle');
     ok('The Full Screen control renders when the API is supported', await btn.isVisible());
-    ok('It shows the "Full Screen" label before activation', (await btn.textContent()).includes('Full Screen') && !(await btn.textContent()).includes('Exit'));
+    ok('It has the "Full Screen" accessible label before activation', (await btn.getAttribute('aria-label')) === 'Full Screen');
 
     await btn.click();
     await page.waitForTimeout(300);
     const isFs1 = await page.evaluate(() => !!document.fullscreenElement);
     ok('Clicking invokes the Fullscreen API (document.fullscreenElement becomes set)', isFs1);
     if (isFs1) {
-      ok('The label switches to "Exit Full Screen" while active', (await page.getByTestId('fullscreen-toggle').textContent()).includes('Exit Full Screen'));
+      ok('The accessible label switches to "Exit Full Screen" while active', (await page.getByTestId('fullscreen-toggle').getAttribute('aria-label')) === 'Exit Full Screen');
     }
 
     await page.getByTestId('fullscreen-toggle').click();
     await page.waitForTimeout(300);
     const isFs2 = await page.evaluate(() => !!document.fullscreenElement);
     ok('Clicking again exits fullscreen (document.fullscreenElement clears)', !isFs2);
-    ok('The label switches back to "Full Screen" after exiting', (await page.getByTestId('fullscreen-toggle').textContent()).includes('Full Screen') && !(await page.getByTestId('fullscreen-toggle').textContent()).includes('Exit'));
+    ok('The accessible label switches back to "Full Screen" after exiting', (await page.getByTestId('fullscreen-toggle').getAttribute('aria-label')) === 'Full Screen');
 
     // Board data/state must be completely unaffected by toggling fullscreen.
     ok('The board still renders normally after a fullscreen round-trip', await page.getByTestId('family-week-board').isVisible());

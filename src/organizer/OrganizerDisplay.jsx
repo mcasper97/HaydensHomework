@@ -29,6 +29,7 @@ const OrganizerDisplay = ({
   ctx,
   onToggleChore,
   householdTimezone,
+  focus = "",
 }) => {
   // No title/back-nav/points strip here — FamilyBoard.jsx's shared header
   // already renders the board title, learner chips, and back/home controls
@@ -51,6 +52,7 @@ const OrganizerDisplay = ({
           choreCompletions={choreCompletions}
           onToggleChore={onToggleChore}
           householdTimezone={householdTimezone}
+          focus={focus}
         />
       )}
     </div>

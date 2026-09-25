@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hayden's Homework</title>
+    <!-- Family Board typeface: the mockup's own rounded, kid-friendly
+         display font. `font-display` (a Tailwind class used throughout
+         this app) has never actually resolved to a real font-family — no
+         tailwind.config defines it — so every heading using it has always
+         silently fallen back to the browser's default serif, in
+         production too, not just this sandbox. Rather than rely on that
+         broken class for the one surface (Family Board) where the font
+         is now an explicit pixel-match requirement, load the real
+         typeface directly and apply it via a plain CSS rule below. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet" />
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Family Board no-scroll fix: html/body/#root need a real, unbroken
          100%-height chain for any child's `height: 100vh` + `overflow:
@@ -28,6 +40,12 @@
         height: 100vh;
         height: 100dvh;
         overflow: hidden;
+        /* Cascades to every piece of text inside Family Board (titles, day
+           headers, card titles, chips, pills) without needing to touch
+           each one's own inline style — font-family inherits by default.
+           Scoped to this one class, so Parent Board/Settings (which never
+           carry this class) are completely unaffected. */
+        font-family: "Baloo 2", ui-rounded, "Segoe UI", Verdana, sans-serif;
       }
     </style>
   </head>

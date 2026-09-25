@@ -4,6 +4,7 @@ import { WINDOW_ORDER, WINDOW_LABELS } from "./rollingWeekBoard.js";
 import { ownerMarker } from "./learnerAccent.js";
 import { SURFACE, WINDOW_ACCENTS, PREP_ACCENT, COMPLETION_ACCENT, ALL_FOCUS_ACCENT } from "./boardTheme.js";
 import { resolveContentIcon } from "./contentIcon.js";
+import { SunIllustration, CloudIllustration } from "./illustrations.jsx";
 
 /* ─────────────────────── Family Week Board (presentational) ───────────────────────
  * Renders the rolling-5-day, execution-window-bucketed structure produced by
@@ -201,8 +202,8 @@ const FullCardRow = ({ row, children, prominent, onToggleItem, onToggleChore, da
         display: "flex",
         alignItems: "center",
         gap: 10,
-        padding: "8px 12px",
-        borderRadius: 14,
+        padding: "10px 12px",
+        borderRadius: 16,
         background: SURFACE.cardToday,
         border: `1px solid ${SURFACE.border}`,
         borderLeft: `4px solid ${owner.accent.border}`,
@@ -211,18 +212,23 @@ const FullCardRow = ({ row, children, prominent, onToggleItem, onToggleChore, da
       }}
     >
       {row.completionEligible && <CompletionControl row={row} onToggle={onToggle} size="large" />}
+      <OwnerChip owner={owner} size={26} fontSize={12} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="text-xs truncate" style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2, color: SURFACE.textSecondary }}>
-          <OwnerChip owner={owner} size={20} fontSize={10} />
-          <span className="truncate">{owner.emoji ? `${owner.emoji} ${owner.label}` : owner.label}</span>
-        </div>
-        {/* Title font size is deliberately unchanged (text-base) — vertical
-            space is reclaimed via tighter padding/spacing, never smaller text. */}
+        {/* Ownership must never rely on color alone — the chip's initial
+            is a marker, not a substitute for the name. A small, secondary
+            caption line (well below the title's own weight/size) restores
+            the learner's name+emoji without reintroducing the old bulky
+            owner line the mockup itself doesn't show. */}
         <div
-          className={`text-base font-bold truncate ${row.completed ? "line-through opacity-50" : ""}`}
+          className="text-[11px] font-bold truncate"
+          style={{ color: owner.accent.text, opacity: 0.85, lineHeight: 1.3 }}
+        >
+          {owner.emoji ? `${owner.emoji} ${owner.label}` : owner.label}
+        </div>
+        <div
+          className={`text-lg font-bold truncate ${row.completed ? "line-through opacity-50" : ""}`}
           style={{ color: SURFACE.textPrimary }}
         >
-          {contentIcon ? `${contentIcon} ` : ""}
           {row.title}
         </div>
         <div className="text-xs truncate" style={{ display: "flex", alignItems: "center", gap: 8, color: SURFACE.textSecondary }}>
@@ -231,6 +237,26 @@ const FullCardRow = ({ row, children, prominent, onToggleItem, onToggleChore, da
           {needsPrep(row) && <PrepBadge />}
         </div>
       </div>
+      {/* MOCKUP LITERAL-MATCH: a large, colorful content-aware icon pinned
+          to the row's far right edge — matching the mockup's own "hero
+          icon per card" treatment — instead of a small inline glyph
+          prefixed before the title text. */}
+      {contentIcon && (
+        <span
+          aria-hidden="true"
+          style={{
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 34,
+            fontSize: 28,
+            lineHeight: 1,
+          }}
+        >
+          {contentIcon}
+        </span>
+      )}
     </div>
   );
 };
@@ -392,6 +418,13 @@ const WeekWindow = ({ windowKey, day, rows, children, focus, onToggleItem, onTog
           style={{ color: accent.text }}
         >
           {WINDOW_LABELS[windowKey]}
+        </span>
+        {/* MOCKUP LITERAL-MATCH: "Before School (1)" / "Today (3)" — the
+            window's own total item count, matching the mockup's header
+            band exactly; a presentation-only count of `rows`, never a new
+            data field. */}
+        <span aria-hidden="true" className={`font-bold ${isToday ? "text-xs" : "text-[9px]"}`} style={{ color: accent.text, opacity: 0.75 }}>
+          ({rows.length})
         </span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -559,6 +592,7 @@ const FamilyWeekBoard = ({ days, children = [], focus, onToggleItem, onToggleCho
               data-today={day.isToday ? "true" : "false"}
               data-column-density={day.isToday ? "today" : "future"}
               style={{
+                position: "relative",
                 display: "flex",
                 flexDirection: "column",
                 minWidth: 0,
@@ -572,12 +606,32 @@ const FamilyWeekBoard = ({ days, children = [], focus, onToggleItem, onToggleCho
                 minHeight: 0,
               }}
             >
+              {/* PICTURE-NOT-ICON PASS: a large, low-opacity flat-vector
+                  sun/cloud illustration (illustrations.jsx) in the day
+                  header's corner, replacing the earlier emoji glyph —
+                  matching the mockup's own illustrated scene art a little
+                  more closely than a flat Unicode character can. Purely
+                  decorative (aria-hidden, pointer-events:none) — never
+                  affects layout or content. */}
+              <span
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  top: -8,
+                  right: -6,
+                  opacity: 0.28,
+                  pointerEvents: "none",
+                  lineHeight: 1,
+                }}
+              >
+                {day.isToday ? <SunIllustration size={58} /> : <CloudIllustration size={42} />}
+              </span>
               {/* MOCKUP-FIDELITY PASS (Section 8): future-day headers were
                   bumped from text-xs/textSecondary (read as "weak tiny gray
                   text") up to text-sm/textPrimary — still visibly secondary
                   to Today's own larger text-lg treatment, but now a clear,
                   confident day identity rather than a barely-there label. */}
-              <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 6, paddingLeft: 2, paddingRight: 2 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 6, paddingLeft: 2, paddingRight: 2, position: "relative" }}>
                 <span
                   className={day.isToday ? "text-lg font-extrabold" : "text-sm font-extrabold"}
                   style={{ color: SURFACE.textPrimary }}

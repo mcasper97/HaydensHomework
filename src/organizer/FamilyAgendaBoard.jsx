@@ -4,8 +4,6 @@ import { subscribeItemCompletions, setItemCompletion } from "../data/itemComplet
 import { buildRollingWeekBoard } from "./rollingWeekBoard.js";
 import { todayStr, isOccurrenceCompleted } from "./itemBuckets.js";
 import { householdTodayStr } from "../data/householdTimezone.js";
-import { accentForChild, FAMILY_ACCENT } from "./learnerAccent.js";
-import { ALL_FOCUS_ACCENT, SURFACE } from "./boardTheme.js";
 import FamilyWeekBoard from "./FamilyWeekBoard.jsx";
 
 /* ─────────────────────── Family Agenda Board ───────────────────────
@@ -29,11 +27,17 @@ import FamilyWeekBoard from "./FamilyWeekBoard.jsx";
  * always passed down to FamilyWeekBoard, which decides prominence from
  * `focus`, never drops a row. Canonical child ids drive the per-child
  * buttons dynamically (never a hardcoded name) — see `children` below.
+ *
+ * ONE-LINE-HEADER PASS: `focus` is now a read-only PROP, owned and set by
+ * FamilyBoard.jsx (whose own header row renders the actual focus-pill
+ * buttons, so they can sit on the SAME line as the brand/chips/clock,
+ * matching the mockup literally) — this component no longer owns focus
+ * state or renders any pill UI itself; it's purely the data-fetching +
+ * board-rendering container the doc comment above already describes.
  */
-const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompletions = {}, onToggleChore, householdTimezone }) => {
+const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompletions = {}, onToggleChore, householdTimezone, focus = "" }) => {
   const [items, setItems] = useState([]);
   const [completions, setCompletions] = useState([]);
-  const [focus, setFocus] = useState(""); // "" (All) | childId | "family"
 
   useEffect(() => {
     const unsub = subscribeItems(ctx, {}, setItems);
@@ -68,98 +72,14 @@ const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompl
     setItemStatus(ctx, item.id, item.status === "completed" ? "open" : "completed");
   };
 
-  // K-5 REDESIGN (Section 10) + MOCKUP-FIDELITY PASS (Section 14): each
-  // focus pill always carries its own owner's accent (green for All, each
-  // learner's own palette slot, the Family accent for Family) so identity
-  // reads at a glance even before picking one; the ACTIVE pill gets a
-  // bolder filled treatment (solid accent background, white text) so which
-  // one is selected is still unambiguous. Height trimmed from the earlier
-  // pass's 56px to 48px — still a comfortable touch target (well above the
-  // 44px minimum every mobile platform's own guidance uses) — and a soft
-  // shadow added, both to match the mockup's more compact, equal-weight
-  // pill proportions instead of the earlier, visibly taller buttons.
-  const focusPillStyle = (accent, active) => ({
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    height: 48,
-    minWidth: 48,
-    padding: "0 18px",
-    borderRadius: 999,
-    fontWeight: 800,
-    fontSize: 14,
-    whiteSpace: "nowrap",
-    border: `2px solid ${accent.border}`,
-    background: active ? accent.border : accent.bg,
-    color: active ? "#FFFFFF" : accent.text,
-    boxShadow: active ? "0 2px 6px rgba(37, 48, 74, 0.15)" : "none",
-    transition: "background 0.15s ease, color 0.15s ease",
-  });
-
   // VIEWPORT-FIT CORRECTION: this root participates in FamilyBoard.jsx's
   // bounded-height chain (flex:1/minHeight:0) so FamilyWeekBoard's own
   // grid — the one thing that should actually grow/shrink with available
-  // space — gets exactly the remaining height once the focus-button row's
-  // own fixed height is subtracted, rather than the whole page growing to
-  // fit whatever the board naturally wants.
+  // space — gets exactly the remaining height, now that the focus-pill row
+  // has moved up into FamilyBoard.jsx's own header (ONE-LINE-HEADER PASS)
+  // rather than being rendered as a second tier here.
   return (
     <div data-testid="family-agenda" className="w-full" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-      {/* MOCKUP-FIDELITY PASS — this is the bottom tier of the composed
-          header zone FamilyBoard.jsx's own header row starts: same white
-          background/border/shadow, but rounded (and shadowed) on the
-          BOTTOM only and with no top border, so the two pieces sit flush
-          against each other with no visible seam and read as one
-          continuous card (Section 4). The 14px marginBottom below is the
-          intentional gap between that composed header card and the day
-          board grid beneath it. */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          flexWrap: "wrap",
-          flexShrink: 0,
-          background: SURFACE.headerBackground,
-          border: `1px solid ${SURFACE.border}`,
-          borderTop: "none",
-          borderRadius: "0 0 20px 20px",
-          boxShadow: SURFACE.panelShadow,
-          padding: "12px 20px",
-          marginBottom: 14,
-        }}
-      >
-        {/* testid intentionally kept as "agenda-filter-all" (not renamed to
-            "board-focus-all") — several unrelated test files across the
-            suite (board-selector-navigation, household-timezone,
-            parent-page-import-navigation, review-inbox,
-            parent-tools-persistence, child-rename-settings,
-            calendar-routing-ux, calendar-connection-panel) use this one
-            testid purely as a "Family Board finished loading" landmark,
-            not to exercise filtering — renaming it would break all of them
-            for no reason related to this redesign. */}
-        <button data-testid="agenda-filter-all" style={focusPillStyle(ALL_FOCUS_ACCENT, !focus)} onClick={() => setFocus("")}>
-          👪 All
-        </button>
-        {children.map((c) => (
-          <button
-            key={c.id}
-            data-testid={`board-focus-child-${c.id}`}
-            style={focusPillStyle(accentForChild(children, c.id), focus === c.id)}
-            onClick={() => setFocus(c.id)}
-          >
-            {c.emoji} {c.name}
-          </button>
-        ))}
-        <button
-          data-testid="board-focus-family"
-          style={focusPillStyle(FAMILY_ACCENT, focus === "family")}
-          onClick={() => setFocus("family")}
-        >
-          🏠 Family
-        </button>
-      </div>
-
       <FamilyWeekBoard days={board.days} children={children} focus={focus} onToggleItem={handleToggleItem} onToggleChore={onToggleChore} />
     </div>
   );

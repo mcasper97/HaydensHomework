@@ -7,7 +7,9 @@ import FamilyAgendaBoard from "./organizer/FamilyAgendaBoard.jsx";
 import OrganizerDisplay from "./organizer/OrganizerDisplay.jsx";
 import LearnerPointsStrip from "./organizer/LearnerPointsStrip.jsx";
 import FullScreenButton from "./organizer/FullScreenButton.jsx";
-import { SURFACE } from "./organizer/boardTheme.js";
+import { HouseIllustration, CloudIllustration, LearnerAvatar } from "./organizer/illustrations.jsx";
+import { SURFACE, ALL_FOCUS_ACCENT } from "./organizer/boardTheme.js";
+import { accentForChild, FAMILY_ACCENT } from "./organizer/learnerAccent.js";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -50,6 +52,11 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   const [childStats, setChildStats] = useState({}); // { [childId]: { homeworkPoints } } — homeworkPoints only; upcomingTests now live as canonical test/quiz items (see ParentOrganizer/OrganizerCalendar)
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null); // surfaced on-screen — this runs unattended, no devtools to check
+  // ONE-LINE-HEADER PASS: focus state moved up from FamilyAgendaBoard.jsx so
+  // its pills can render in THIS header row, on the same line as the brand/
+  // chips/clock (matching the mockup literally) — still "" (All) | childId |
+  // "family", still de-emphasis-only semantics, unchanged from before.
+  const [focus, setFocus] = useState("");
 
   const ctx = useMemo(() => ({ uid, isAdmin }), [uid, isAdmin]);
 
@@ -227,6 +234,29 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   const choreCompletions = profile?.choreCompletions || {};
   const chorePoints = profile?.chorePoints || {};
 
+  // Moved up from FamilyAgendaBoard.jsx along with the `focus` state itself
+  // (ONE-LINE-HEADER PASS) — each focus pill always carries its own owner's
+  // accent (green for All, each learner's own palette slot, the Family
+  // accent for Family); the ACTIVE pill gets a bolder filled treatment.
+  const focusPillStyle = (accent, active) => ({
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    height: 48,
+    minWidth: 48,
+    padding: "0 12px",
+    borderRadius: 999,
+    fontWeight: 800,
+    fontSize: 13,
+    whiteSpace: "nowrap",
+    border: `2px solid ${accent.border}`,
+    background: active ? accent.border : accent.bg,
+    color: active ? "#FFFFFF" : accent.text,
+    boxShadow: active ? "0 2px 6px rgba(37, 48, 74, 0.15)" : "none",
+    transition: "background 0.15s ease, color 0.15s ease",
+  });
+
   // K-5 REDESIGN — FULL-VIEWPORT SHELL (Section 2/4): the outer shell uses
   // the `.familyboard-viewport` class (index.html — a plain CSS rule, not a
   // Tailwind utility, so it survives even if the Tailwind CDN never loads)
@@ -241,68 +271,118 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   // reason as before (Section 19) — this is the load-bearing fix for the
   // page never scrolling.
   return (
-    <div className="familyboard-viewport" style={{ background: SURFACE.appBackground, display: "flex", flexDirection: "column" }}>
+    <div className="familyboard-viewport" style={{ position: "relative", background: SURFACE.appBackground, display: "flex", flexDirection: "column" }}>
+      {/* LITERAL ONE-LINE-HEADER PASS: Full Screen floats as its own small
+          fixed corner control, entirely OUTSIDE the header row, rather
+          than competing for space inside it — the approved mockup never
+          had a Full Screen control at all (it's a necessary addition for
+          the kitchen-display use case, not part of the design), so it
+          shouldn't cost the mockup's own header content any of the width
+          budget that content needs to genuinely fit on one line at every
+          target viewport size. */}
+      <div style={{ position: "fixed", bottom: 20, right: 24, zIndex: 10 }}>
+        <FullScreenButton />
+      </div>
       <div className="w-full" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: "10px 20px 14px" }}>
-        {/* MOCKUP-FIDELITY PASS — integrated header zone (Section 4): this
-            row's bottom corners are square and it carries no bottom border,
-            so it visually FUSES with FamilyAgendaBoard.jsx's own focus-pill
-            row directly beneath it (same white background/border/shadow,
-            rounded only on ITS bottom corners) — together they read as one
-            continuous composed header card, not two disconnected floating
-            rows. Brand + compact learner chips + current time + Full
-            Screen control all live in this top tier; the learner chips
-            render here (not duplicated inside OrganizerDisplay.jsx) so
-            both the normal and kiosk surfaces share exactly one points
-            display.
-            LITERAL-MATCH ROUND: a real 3-column grid (1fr auto 1fr)
-            replaces the earlier flex/justify-content:space-between row —
-            with 3 flex children of very different widths, space-between
-            only spaces the GAPS between them evenly, it does NOT center
-            the middle item over the header as a whole, which is what the
-            mockup actually shows. A grid with equal flanking columns does:
-            the learner-chip strip in the middle column is now genuinely
-            centered regardless of how wide the brand block or right-side
-            controls are. */}
+        {/* LITERAL ONE-LINE-HEADER PASS: everything — brand, learner chips,
+            focus pills, clock, back — now lives in a SINGLE flex row,
+            matching the mockup literally ("all on one line, not 2"). The
+            earlier 2-tier "fused header card" design (this row + a
+            separate focus-pill row directly under it) is gone; focus
+            state moved up from FamilyAgendaBoard.jsx (see the `focus`
+            useState above) so its pills can render here. `flexWrap: wrap`
+            is a safety net for a viewport too narrow to fit everything
+            (not the intended presentation, just graceful degradation) —
+            at the target sizes this task cares about, it fits on one line. */}
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr auto 1fr",
+            position: "relative",
+            display: "flex",
             alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
             columnGap: 12,
+            rowGap: 8,
             flexShrink: 0,
-            background: SURFACE.headerBackground,
+            marginBottom: 14,
+            // PICTURE-NOT-ICON PASS: a real background (a soft sky-blue ->
+            // white gradient, matching the mockup's own header treatment)
+            // instead of flat white, per the explicit instruction — "put a
+            // background behind the header instead of an icon."
+            background: "linear-gradient(180deg, #E4F4FF 0%, #FFFFFF 85%)",
             border: `1px solid ${SURFACE.border}`,
-            borderBottom: "none",
-            borderRadius: "20px 20px 0 0",
+            borderRadius: 20,
             boxShadow: SURFACE.panelShadow,
-            padding: "12px 24px",
+            padding: "8px 16px",
+            overflow: "hidden",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, justifySelf: "start" }}>
-            <span aria-hidden="true" style={{ fontSize: 30 }}>🏡</span>
-            {/* Title stacked over the "Family Board" subtitle (two lines),
-                matching the mockup — previously these sat side by side on
-                one baseline. */}
-            <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
-              <h1 className="text-xl font-display font-extrabold" style={{ color: SURFACE.textPrimary, margin: 0 }}>
-                Haydens - Homework
-              </h1>
-              <span className="text-sm font-semibold" style={{ color: SURFACE.textSecondary }}>Family Board</span>
+          {/* Decorative cloud shapes sitting in the header's own background
+              — low-opacity, aria-hidden, absolutely positioned so they
+              never participate in the flex layout. */}
+          <div aria-hidden="true" style={{ position: "absolute", left: -10, bottom: -14, opacity: 0.5, pointerEvents: "none" }}>
+            <CloudIllustration size={70} />
+          </div>
+          <div aria-hidden="true" style={{ position: "absolute", right: "38%", top: -10, opacity: 0.35, pointerEvents: "none" }}>
+            <CloudIllustration size={46} />
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <HouseIllustration size={32} />
+              {/* Title stacked over the "Family Board" subtitle (two
+                  lines), matching the mockup. */}
+              <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
+                <h1 className="text-xl font-extrabold" style={{ color: SURFACE.textPrimary, margin: 0 }}>
+                  Haydens - Homework
+                </h1>
+                <span className="text-sm font-semibold" style={{ color: SURFACE.textSecondary }}>Family Board</span>
+              </div>
             </div>
-          </div>
 
-          <div style={{ justifySelf: "center" }}>
             {children.length > 0 && <LearnerPointsStrip children={children} chorePoints={chorePoints} childStats={childStats} />}
+
+            {/* Focus pills — moved up from FamilyAgendaBoard.jsx so they
+                sit on this same header line. testid "agenda-filter-all"
+                intentionally kept (not renamed to "board-focus-all") —
+                several unrelated test files across the suite
+                (board-selector-navigation, household-timezone,
+                parent-page-import-navigation, review-inbox,
+                parent-tools-persistence, child-rename-settings,
+                calendar-routing-ux, calendar-connection-panel) use this
+                one testid purely as a "Family Board finished loading"
+                landmark, not to exercise filtering — it still exists
+                somewhere on the page with the same testid, just rendered
+                from here now instead of FamilyAgendaBoard.jsx. */}
+            {children.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <button data-testid="agenda-filter-all" style={focusPillStyle(ALL_FOCUS_ACCENT, !focus)} onClick={() => setFocus("")}>
+                  👪 All
+                </button>
+                {children.map((c, idx) => (
+                  <button
+                    key={c.id}
+                    data-testid={`board-focus-child-${c.id}`}
+                    style={focusPillStyle(accentForChild(children, c.id), focus === c.id)}
+                    onClick={() => setFocus(c.id)}
+                  >
+                    <LearnerAvatar accent={accentForChild(children, c.id)} size={20} index={idx} /> {c.name}
+                  </button>
+                ))}
+                <button data-testid="board-focus-family" style={focusPillStyle(FAMILY_ACCENT, focus === "family")} onClick={() => setFocus("family")}>
+                  <HouseIllustration size={18} /> Family
+                </button>
+              </div>
+            )}
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, justifySelf: "end" }}>
-            <FullScreenButton />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <FamilyBoardClock />
             {!kiosk && onBack ? (
               <button
                 onClick={onBack}
                 className="text-sm font-semibold transition"
-                style={{ color: SURFACE.textSecondary, padding: "8px 16px", borderRadius: 999, border: `1px solid ${SURFACE.border}`, background: "#FFFFFF" }}
+                style={{ color: SURFACE.textSecondary, padding: "6px 12px", borderRadius: 999, border: `1px solid ${SURFACE.border}`, background: "#FFFFFF" }}
               >
                 ← Back
               </button>
@@ -360,6 +440,7 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
             choreCompletions={choreCompletions}
             onToggleChore={toggleChoreDone}
             householdTimezone={profile?.timezone}
+            focus={focus}
           />
         )}
 
@@ -371,6 +452,7 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
             ctx={ctx}
             onToggleChore={toggleChoreDone}
             householdTimezone={profile?.timezone}
+            focus={focus}
           />
         )}
       </div>

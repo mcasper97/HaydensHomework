@@ -39,27 +39,34 @@ const FullScreenButton = () => {
     }
   };
 
+  // ONE-LINE-HEADER PASS: icon-only (no visible text label) — the mockup's
+  // own header has no Full Screen control at all (it's a necessary addition
+  // for the kitchen-display use case, not part of the approved design), so
+  // it should take as little of the single header row's width as possible.
+  // Still fully accessible: `aria-label` carries the same "Full Screen"/
+  // "Exit Full Screen" text a screen reader announces, it's just not
+  // rendered visibly anymore.
   return (
     <button
       data-testid="fullscreen-toggle"
       onClick={toggle}
       aria-label={isFullscreen ? "Exit Full Screen" : "Full Screen"}
-      className="font-semibold transition"
+      title={isFullscreen ? "Exit Full Screen" : "Full Screen"}
+      className="transition"
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 6,
+        justifyContent: "center",
+        width: 40,
         height: 40,
-        padding: "0 14px",
         borderRadius: 999,
-        fontSize: 13,
+        fontSize: 18,
         color: SURFACE.textSecondary,
         background: "#FFFFFF",
         border: `1px solid ${SURFACE.border}`,
       }}
     >
       <span aria-hidden="true">⛶</span>
-      {isFullscreen ? "Exit Full Screen" : "Full Screen"}
     </button>
   );
 };

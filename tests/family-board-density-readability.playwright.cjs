@@ -152,9 +152,11 @@ function isoDate(offsetDays) {
   const overflowText = await todayWindow.getByTestId('week-window-overflow').textContent();
   ok(`Overflow count matches exactly what didn't fit (8 - ${visibleCount})`, overflowText.includes(String(8 - visibleCount)));
 
-  // Today's title text size is preserved (still text-base, not shrunk).
-  const firstTodayTitle = visibleTodayItemRows.first().locator('.text-base');
-  ok('Today\'s title text is still rendered at the original (not-shrunk) size class', await firstTodayTitle.count() >= 1);
+  // Today's title text size is preserved — the literal-mockup-match pass
+  // actually GREW it from text-base to text-lg (matching the mockup's own
+  // bolder title treatment), never shrunk it.
+  const firstTodayTitle = visibleTodayItemRows.first().locator('.text-lg');
+  ok('Today\'s title text is still rendered at (at least) its original size class, never shrunk', await firstTodayTitle.count() >= 1);
 
   // ============ Section 4/7: future-day card readability ============
   const futureQuizRow = page.locator('[data-testid="agenda-row"][data-column="future"]').filter({ hasText: 'Social Studies' });

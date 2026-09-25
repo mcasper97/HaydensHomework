@@ -1,5 +1,6 @@
 import React from "react";
 import { accentForChild } from "./learnerAccent.js";
+import { LearnerAvatar } from "./illustrations.jsx";
 
 /* ─────────────────────── Learner Points Strip (compact) ───────────────────────
  * A one-line-tall, horizontal points summary for Family Board — a row of
@@ -35,8 +36,8 @@ import { accentForChild } from "./learnerAccent.js";
 const LearnerPointsStrip = ({ children = [], chorePoints = {}, childStats = {} }) => {
   if (children.length === 0) return null;
   return (
-    <div data-testid="learner-points-strip" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flexShrink: 0 }}>
-      {children.map((child) => {
+    <div data-testid="learner-points-strip" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", flexShrink: 0 }}>
+      {children.map((child, idx) => {
         const hw = childStats[child.id]?.homeworkPoints ?? 0;
         const chore = chorePoints[child.id] || 0;
         const accent = accentForChild(children, child.id);
@@ -47,35 +48,21 @@ const LearnerPointsStrip = ({ children = [], chorePoints = {}, childStats = {} }
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
-              height: 44,
-              padding: "0 14px 0 6px",
+              gap: 6,
+              height: 42,
+              padding: "0 10px 0 5px",
               borderRadius: 999,
               background: accent.bg,
               border: `1.5px solid ${accent.border}`,
               boxShadow: "0 1px 3px rgba(37, 48, 74, 0.08)",
             }}
           >
-            {/* MOCKUP-FIDELITY PASS (Section 13): the learner's emoji now
-                sits in its own small round white "avatar" badge, matching
-                the mockup's circular avatar-chip treatment, rather than
-                floating directly on the pill's own tinted background. */}
-            <span
-              aria-hidden="true"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 30,
-                height: 30,
-                borderRadius: "50%",
-                background: "#FFFFFF",
-                fontSize: 16,
-                lineHeight: 1,
-              }}
-            >
-              {child.emoji}
-            </span>
+            {/* PICTURE-NOT-ICON PASS: a small illustrated critter-face
+                avatar (illustrations.jsx) tinted by the learner's own
+                accent, replacing the bare emoji-in-a-white-circle badge —
+                matching the mockup's own illustrated avatar-chip
+                treatment instead of a flat icon glyph. */}
+            <LearnerAvatar accent={accent} size={28} index={idx} />
             <span className="font-display text-sm font-extrabold whitespace-nowrap" style={{ color: accent.text }}>{child.name}</span>
             <span className="text-xs font-bold whitespace-nowrap" style={{ color: accent.text }}>⭐ {totalPoints} pts</span>
           </div>

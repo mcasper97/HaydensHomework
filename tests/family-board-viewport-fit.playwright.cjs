@@ -170,7 +170,10 @@ async function runAtViewport(browser, viewport) {
   ok(`[${label}] the learner strip is still compact (measured ${stripBox ? Math.round(stripBox.height) : 'n/a'}px)`, !!stripBox && stripBox.height >= 40 && stripBox.height <= 70);
 
   const firstTodayRow = todayColumn.getByTestId('week-window-today').locator('[data-testid="agenda-row"]').first();
-  ok(`[${label}] a prominent Today card's title is still rendered at the original (not-shrunk) size class`, await firstTodayRow.locator('.text-base').count() >= 1);
+  // The literal-mockup-match pass grew Today's title from text-base to
+  // text-lg (matching the mockup's own bolder title treatment) — never
+  // shrunk.
+  ok(`[${label}] a prominent Today card's title is still rendered at (at least) its original size class, never shrunk`, await firstTodayRow.locator('.text-lg').count() >= 1);
   ok(`[${label}] a prominent Today card still has its large completion control`, await firstTodayRow.getByRole('button', { name: /Mark/ }).isVisible());
   ok(`[${label}] Today's title text is genuinely readable, not clipped to zero height`, todayBox.height > 100);
 
