@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { subscribePendingIngestionCandidates } from "./data/ingestionCandidatesRepository.js";
 import { subscribeItems } from "./data/itemsRepository.js";
 import { retryCalendarPublish } from "./data/googleCalendarAutoPublish.js";
+import { fetchGmailStatus } from "./data/gmailConnection.js";
+import { deriveAttentionSummary } from "./data/attentionSummary.js";
 import ReviewInboxPanel from "./organizer/ReviewInboxPanel.jsx";
 import CandidateReviewModal from "./organizer/CandidateReviewModal.jsx";
 import GmailCheckEmailAction from "./GmailCheckEmailAction.jsx";
@@ -24,7 +26,7 @@ import ChoreManagementPanel from "./ChoreManagementPanel.jsx";
  * inline Upload Homework/Photo picker) — no duplicated business logic,
  * only presentation/navigation changed.
  */
-const ParentBoard = ({ user, children, onOpenChildImport, onBack }) => {
+const ParentBoard = ({ user, children, onOpenChildImport, onBack, onNavigateToSettings }) => {
   // null | "add-item" | "upload" | "review" | "check-email" | "chores"
   const [parentTool, setParentTool] = useState(null);
 
@@ -54,6 +56,24 @@ const ParentBoard = ({ user, children, onOpenChildImport, onBack }) => {
   // client-side — no new repository function, no new collection.
   const [calendarIssues, setCalendarIssues] = useState([]);
   const [retryingItemId, setRetryingItemId] = useState(null);
+
+  // Gmail reconnect state (Needs Attention MVP) — the same independent
+  // lightweight fetchGmailStatus() read already used by
+  // GmailCheckEmailAction.jsx and AutomaticEmailCheckingSection.jsx (see
+  // their own comments on why each consumer reads it itself rather than
+  // threading shared state through props). Defaults to a safe "nothing to
+  // report" shape while loading/on error (e.g. guest mode, which has no
+  // real Firebase Auth session) so a failed/loading read never renders a
+  // false-positive Gmail attention row.
+  const [gmailStatus, setGmailStatus] = useState({ connected: false, needsReconnect: false });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchGmailStatus()
+      .then((s) => { if (!cancelled) setGmailStatus(s); })
+      .catch(() => { if (!cancelled) setGmailStatus({ connected: false, needsReconnect: false }); });
+    return () => { cancelled = true; };
+  }, [user?.uid, user?.isAdmin]);
 
   useEffect(() => {
     const ctx = { uid: user?.uid, isAdmin: !!user?.isAdmin };
@@ -101,6 +121,19 @@ const ParentBoard = ({ user, children, onOpenChildImport, onBack }) => {
   }, [pendingCandidates, reviewInboxCandidate]);
 
   const ctx = { uid: user?.uid, isAdmin: !!user?.isAdmin };
+
+  // Needs Attention (MVP) — pure derivation from state this board already
+  // holds (pendingCandidates/calendarIssues) plus the Gmail read above; see
+  // src/data/attentionSummary.js's own doc comment for why no new business
+  // rule is duplicated here.
+  const attention = deriveAttentionSummary({ pendingCandidates, gmailStatus, calendarIssues });
+  const handleAttentionAction = (actionKey) => {
+    if (actionKey === "open_review_inbox") {
+      setParentTool("review");
+    } else if (actionKey === "open_gmail_settings") {
+      onNavigateToSettings?.();
+    }
+  };
 
   const ActionCard = ({ testId, icon, label, badge, onClick }) => (
     <button
@@ -228,6 +261,32 @@ const ParentBoard = ({ user, children, onOpenChildImport, onBack }) => {
           >
             ← All Boards
           </button>
+        </div>
+
+        {/* Needs Attention (MVP) — a compact, derived-only summary of the
+            three existing conditions this board already tracks. Never a
+            new management screen: each row reuses an existing recovery
+            surface (see handleAttentionAction above). */}
+        <div className="rounded-2xl p-4 mb-4" style={{ background: "#2a2a2c" }} data-testid="needs-attention-section">
+          <p className="text-gray-300 text-sm font-semibold mb-2">Needs Attention</p>
+          {attention.items.length === 0 ? (
+            <p className="text-green-400 text-sm" data-testid="needs-attention-empty">✓ Nothing needs your attention</p>
+          ) : (
+            <div className="space-y-2">
+              {attention.items.map((item) => (
+                <button
+                  key={item.type}
+                  data-testid={`attention-row-${item.type}`}
+                  onClick={() => handleAttentionAction(item.actionKey)}
+                  className="w-full flex items-center justify-between gap-3 p-3 rounded-xl text-left transition hover:opacity-90"
+                  style={{ background: "#1C1C1E" }}
+                >
+                  <span className="text-white font-semibold text-sm">{item.title}</span>
+                  <span className="text-yellow-400 text-xs font-semibold">{item.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* What can I do as the parent? Tapping any of these opens a focused

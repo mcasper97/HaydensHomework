@@ -310,6 +310,7 @@ const BoardSelector = ({
         children={children}
         onOpenChildImport={onOpenChildImport}
         onBack={() => setScreen("boards")}
+        onNavigateToSettings={() => setScreen("settings")}
       />
     );
   }
