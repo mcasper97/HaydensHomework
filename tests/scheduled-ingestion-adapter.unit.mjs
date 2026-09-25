@@ -71,7 +71,16 @@ function createFakeAdminDb(initialDocs = {}) {
 }
 
 function setupMocks(t, { db } = {}) {
-  t.mock.module("../api/_auth.js", { namedExports: { requireFirebaseUser: async () => ({}), checkRateLimit: () => true } });
+  // getHouseholdOwnerEmail: the real (unmocked) notification orchestrator
+  // module is now in this file's import graph too (see
+  // api/_calendarPublishFailureNotificationTrigger.js, called from
+  // recordPublishFailure) — ES module linking is static, so every export
+  // any importer in the graph needs must exist on the mock. Returning
+  // null here is safe: the notification trigger is fully best-effort and
+  // never throws regardless (see that file's own tests), it just means no
+  // recipient is resolved in these commit/publish-decision-focused tests,
+  // which never assert anything about notification delivery.
+  t.mock.module("../api/_auth.js", { namedExports: { requireFirebaseUser: async () => ({}), checkRateLimit: () => true, getHouseholdOwnerEmail: async () => null } });
   t.mock.module("firebase-admin/firestore", {
     namedExports: {
       getFirestore: () => db,

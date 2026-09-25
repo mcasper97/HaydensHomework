@@ -104,6 +104,11 @@ function setupMocks(t, { authenticated = true, rateLimited = false } = {}) {
       listCalendars: async () => ({ ok: true, calendars: [{ id: "primary", summary: "Mike's", primary: true, accessRole: "owner" }] }),
     },
   });
+  t.mock.module("../api/_calendarPublishFailureNotificationTrigger.js", {
+    namedExports: {
+      notifyCalendarPublishFailure: async () => {},
+    },
+  });
 
   return { rateLimitCalls, authCalls };
 }

@@ -85,6 +85,7 @@ import {
 import { getGmailConnection } from "./_gmailConnectionsStore.js";
 import { getHouseholdTimezone, getGoogleCalendarRouting } from "./_householdProfileStore.js";
 import { getItem, setItemGoogleCalendarFields } from "./_itemsStore.js";
+import { notifyCalendarPublishFailure } from "./_calendarPublishFailureNotificationTrigger.js";
 import {
   deriveGoogleEventId,
   refreshCalendarAccessToken,
@@ -187,6 +188,21 @@ async function handleDisconnect(req, res, uid) {
 }
 
 /* ============================== action: publish ============================== */
+// Coverage correction: every genuine publish-attempt failure below (i.e.
+// every branch reached once itemId itself is a well-formed string) now
+// also triggers the SAME existing best-effort parent notification
+// (api/_calendarPublishFailureNotificationTrigger.js's
+// notifyCalendarPublishFailure) that api/_scheduledIngestionAdapter.js's
+// recordPublishFailure already triggers for the server-side scheduled-
+// ingestion publish path. This is this endpoint's own trust-verified uid
+// and the client-supplied itemId (already validated as a non-empty
+// string) — never any other client input. Two branches are deliberately
+// EXCLUDED: a missing/malformed itemId (no valid id to report on) and
+// "this item no longer exists" (nothing committed to notify about).
+// notifyCalendarPublishFailure never throws, so it needs no wrapping
+// try/catch here — this call is a pure best-effort side effect and never
+// changes the response returned below it (task: "Notification failure
+// must never alter Calendar failure behavior").
 async function handlePublish(req, res, uid) {
   const { itemId, optionalEndTime } = req.body || {};
   if (!itemId || typeof itemId !== "string") {
@@ -198,12 +214,15 @@ async function handlePublish(req, res, uid) {
     connection = await getGoogleCalendarConnection(uid);
   } catch (err) {
     console.error("calendar (publish) error:", err?.message);
+    await notifyCalendarPublishFailure(uid, itemId);
     return res.status(500).json({ ok: false, error: "Could not load your Google Calendar connection." });
   }
   if (!connection?.refreshToken) {
+    await notifyCalendarPublishFailure(uid, itemId);
     return res.status(400).json({ ok: false, code: "NOT_CONNECTED", error: "Connect Google Calendar in Parent Tools before publishing." });
   }
   if (connection.needsReconnect) {
+    await notifyCalendarPublishFailure(uid, itemId);
     return res.status(409).json({ ok: false, needsReconnect: true, error: "Reconnect Google Calendar in Parent Tools before publishing." });
   }
 
@@ -212,6 +231,7 @@ async function handlePublish(req, res, uid) {
     item = await getItem(uid, itemId);
   } catch (err) {
     console.error("calendar (publish) error:", err?.message);
+    await notifyCalendarPublishFailure(uid, itemId);
     return res.status(500).json({ ok: false, error: "Could not load this item." });
   }
   if (!item) {
@@ -239,11 +259,13 @@ async function handlePublish(req, res, uid) {
     householdTimezone = await getHouseholdTimezone(uid);
   } catch (err) {
     console.error("calendar (publish) error:", err?.message);
+    await notifyCalendarPublishFailure(uid, itemId);
     return res.status(500).json({ ok: false, error: "Could not load your household timezone." });
   }
 
   const mapped = buildCalendarEventFromItem({ item, householdTimezone, optionalEndTime, eventId });
   if (!mapped.ok) {
+    await notifyCalendarPublishFailure(uid, itemId);
     return res.status(400).json({ ok: false, code: mapped.code, error: mapped.message });
   }
 
@@ -255,12 +277,14 @@ async function handlePublish(req, res, uid) {
     routing = await getGoogleCalendarRouting(uid);
   } catch (err) {
     console.error("calendar (publish) error:", err?.message);
+    await notifyCalendarPublishFailure(uid, itemId);
     return res.status(500).json({ ok: false, error: "Could not load your Google Calendar routing settings." });
   }
   const { calendarId, source } = resolveGoogleCalendarId(item, routing);
 
   const refreshed = await refreshCalendarAccessToken(uid, connection);
   if (!refreshed.ok) {
+    await notifyCalendarPublishFailure(uid, itemId);
     if (refreshed.needsReconnect) {
       return res.status(409).json({ ok: false, needsReconnect: true, error: "Reconnect Google Calendar in Parent Tools before publishing." });
     }
@@ -278,6 +302,7 @@ async function handlePublish(req, res, uid) {
     // retry — a plain "primary" fallback (source: "primary", meaning
     // nothing was actually configured) is never itself treated as a
     // stale mapping.
+    await notifyCalendarPublishFailure(uid, itemId);
     if (inserted.notFound && source !== "primary") {
       return res.status(502).json({
         ok: false,
@@ -297,6 +322,11 @@ async function handlePublish(req, res, uid) {
     });
   } catch (err) {
     console.error("calendar (publish) error:", err?.message);
+    // The Google event WAS created — this failure is only in saving our
+    // own link to it — but the parent-facing symptom is identical (the
+    // Item's Calendar state is broken and needs attention), so this is
+    // still notification-worthy.
+    await notifyCalendarPublishFailure(uid, itemId);
     return res.status(502).json({ ok: false, error: "Published to Google Calendar, but couldn't save the link — please try again." });
   }
 

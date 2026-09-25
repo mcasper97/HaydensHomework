@@ -6,8 +6,8 @@
  * CALLS the real, unmodified handler (never a reimplemented/mirrored
  * copy of its orchestration logic), mirroring
  * tests/calendar-connection-endpoints.unit.mjs's own established mocking
- * strategy: each of calendar.js's SEVEN dependency modules is mocked
- * directly per test via t.mock.module — all seven, every time, not just
+ * strategy: each of calendar.js's EIGHT dependency modules is mocked
+ * directly per test via t.mock.module — all eight, every time, not just
  * the ones "publish" itself touches, because calendar.js is now one file
  * with one static import graph regardless of which action a request
  * dispatches to, and ES module linking is static (importing a name that
@@ -18,6 +18,14 @@
  * tests/calendar-event-mapping.unit.mjs, so it runs for real here too,
  * proving the endpoint is actually wired to the real mapping logic (not
  * a duplicated copy of its validation rules).
+ *
+ * Coverage correction: api/_calendarPublishFailureNotificationTrigger.js
+ * (the eighth dependency, added when "publish" was wired into the shared
+ * parent-notification pipeline) is mocked directly here too, at this
+ * boundary — never the real module, which would otherwise transitively
+ * pull in api/_notificationOrchestrator.js's own real Firestore/Resend
+ * dependency chain. Mocking right at this direct import means none of
+ * that chain is ever reached in this test file at all.
  *
  * REQUIRES Node's experimental module-mocking support. Run with:
  *   node --experimental-test-module-mocks tests/calendar-publish-endpoint.unit.mjs
@@ -58,7 +66,7 @@ function setupMocks(t, {
   insertResult = { ok: true, alreadyExisted: false, eventId: "derived-event-id" },
   linkageWriteError = null,
 } = {}) {
-  const calls = { getItem: [], setItemGoogleCalendarFields: [], insertCalendarEvent: [], refreshCalendarAccessToken: [], getGoogleCalendarRouting: [] };
+  const calls = { getItem: [], setItemGoogleCalendarFields: [], insertCalendarEvent: [], refreshCalendarAccessToken: [], getGoogleCalendarRouting: [], notifyCalendarPublishFailure: [] };
 
   t.mock.module("../api/_auth.js", {
     namedExports: {
@@ -113,6 +121,11 @@ function setupMocks(t, {
       refreshCalendarAccessToken: async (uid, conn) => { calls.refreshCalendarAccessToken.push({ uid, conn }); return refreshResult; },
       insertCalendarEvent: async (args) => { calls.insertCalendarEvent.push(args); return insertResult; },
       listCalendars: async () => ({ ok: true, calendars: [] }),
+    },
+  });
+  t.mock.module("../api/_calendarPublishFailureNotificationTrigger.js", {
+    namedExports: {
+      notifyCalendarPublishFailure: async (uid, itemId) => { calls.notifyCalendarPublishFailure.push({ uid, itemId }); },
     },
   });
 
@@ -714,4 +727,125 @@ test("No configured mapping/default still publishes to primary normally (fallbac
   assert.strictEqual(state.body.ok, true);
   assert.strictEqual(calls.insertCalendarEvent[0].calendarId, "primary");
   assert.strictEqual(calls.setItemGoogleCalendarFields[0].fields.googleCalendarId, "primary");
+});
+
+/* ============================== Coverage correction: parent notification on publish failure ==============================
+ * This SINGLE endpoint (api/calendar.js?action=publish) is the real
+ * server-side Calendar publish call BOTH client-triggered commit paths
+ * share: a parent approving/committing a reviewed IngestionCandidate
+ * (CandidateReviewModal.jsx) and a parent manually adding an Item on
+ * Parent Board (AddItemPanel.jsx) — both call
+ * src/data/googleCalendarAutoPublish.js's autoPublishItemIfEligible,
+ * which calls publishItemToGoogleCalendar, which calls exactly this
+ * handler. Proving the notification trigger fires here therefore proves
+ * it for both of those commit sources at once — no client-side wiring,
+ * no duplicated server endpoint. The third publish source (scheduled/
+ * server-side Gmail ingestion) uses a completely separate code path
+ * (api/_scheduledIngestionAdapter.js's attemptCalendarPublishServerSide)
+ * and is covered by its own tests/calendar-publish-failure-notification-trigger.unit.mjs.
+ */
+test("NOTIFICATION: a NOT_CONNECTED publish failure invokes the Calendar publish-failure notification trigger", async (t) => {
+  const calls = setupMocks(t, { connection: null });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(calls.notifyCalendarPublishFailure.length, 1);
+  assert.strictEqual(calls.notifyCalendarPublishFailure[0].uid, "parent-uid-1");
+  assert.strictEqual(calls.notifyCalendarPublishFailure[0].itemId, "item-1");
+});
+
+test("NOTIFICATION: needsReconnect invokes the notification trigger too", async (t) => {
+  const calls = setupMocks(t, { connection: { refreshToken: "cal-rt", needsReconnect: true } });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(calls.notifyCalendarPublishFailure.length, 1);
+});
+
+test("NOTIFICATION: a failed Google insert invokes the notification trigger", async (t) => {
+  const calls = setupMocks(t, { item: { ...BASE_ITEM }, insertResult: { ok: false, error: "Google Calendar could not create this event." } });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(calls.notifyCalendarPublishFailure.length, 1);
+  assert.strictEqual(calls.notifyCalendarPublishFailure[0].itemId, "item-1");
+});
+
+test("NOTIFICATION: a stale-route (CALENDAR_ROUTE_INVALID) failure invokes the notification trigger", async (t) => {
+  const calls = setupMocks(t, {
+    item: { ...BASE_ITEM, childIds: ["hayden-id"] },
+    routing: { defaultCalendarId: null, childCalendarIds: { "hayden-id": "hayden@group.calendar.google.com" } },
+    insertResult: { ok: false, notFound: true, error: "Not found" },
+  });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.code, "CALENDAR_ROUTE_INVALID");
+  assert.strictEqual(calls.notifyCalendarPublishFailure.length, 1);
+});
+
+test("NOTIFICATION: a linkage-write failure AFTER a successful Google insert also invokes the notification trigger", async (t) => {
+  const calls = setupMocks(t, { item: { ...BASE_ITEM }, linkageWriteError: new Error("Firestore write failed") });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(calls.notifyCalendarPublishFailure.length, 1);
+});
+
+test("NOTIFICATION: successful publish (manual Add Item / reviewed candidate's shared publish path) never notifies", async (t) => {
+  const calls = setupMocks(t, { item: { ...BASE_ITEM } });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.ok, true);
+  assert.strictEqual(calls.notifyCalendarPublishFailure.length, 0);
+});
+
+test("NOTIFICATION: the idempotency short-circuit (already published) never notifies", async (t) => {
+  const calls = setupMocks(t, { item: { ...BASE_ITEM, googleCalendarEventId: "already-there" } });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "item-1" });
+  await handler(req, res);
+
+  assert.strictEqual(state.body.alreadyPublished, true);
+  assert.strictEqual(calls.notifyCalendarPublishFailure.length, 0);
+});
+
+test("NOTIFICATION: a structurally invalid request (missing itemId) never notifies — no valid id to report on", async (t) => {
+  const calls = setupMocks(t);
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({});
+  await handler(req, res);
+
+  assert.strictEqual(state.statusCode, 400);
+  assert.strictEqual(calls.notifyCalendarPublishFailure.length, 0);
+});
+
+test("NOTIFICATION: item-not-found never notifies — nothing committed to report on", async (t) => {
+  const calls = setupMocks(t, { item: null });
+  const handler = (await freshImport("../api/calendar.js")).default;
+  const { req, res, state } = fakeReqRes({ itemId: "does-not-exist" });
+  await handler(req, res);
+
+  assert.strictEqual(state.statusCode, 404);
+  assert.strictEqual(calls.notifyCalendarPublishFailure.length, 0);
+});
+
+test("NOTIFICATION: same failed Item across repeated publish attempts still calls the trigger each time — dedupe itself is the existing atomic-claim path's job, not this endpoint's (see tests/calendar-publish-failure-notification-trigger.unit.mjs's real-store dedupe proof)", async (t) => {
+  const calls = setupMocks(t, { connection: null });
+  const handler = (await freshImport("../api/calendar.js")).default;
+
+  const first = fakeReqRes({ itemId: "item-1" });
+  await handler(first.req, first.res);
+  const second = fakeReqRes({ itemId: "item-1" });
+  await handler(second.req, second.res);
+
+  assert.strictEqual(calls.notifyCalendarPublishFailure.length, 2, "this endpoint always calls the trigger on failure; existing suppression happens downstream inside the trigger's own dedupe path");
+  assert.deepStrictEqual(calls.notifyCalendarPublishFailure.map((c) => c.itemId), ["item-1", "item-1"]);
 });

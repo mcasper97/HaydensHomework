@@ -7,19 +7,24 @@
  * of its orchestration logic) — the exact production conditional-revoke
  * decision under test.
  *
- * Post-consolidation note: api/calendar.js statically imports from SEVEN
+ * Post-consolidation note: api/calendar.js statically imports from EIGHT
  * dependency modules (_auth.js, _googleCalendarConnectionsStore.js,
  * _gmailConnectionsStore.js, _householdProfileStore.js, _itemsStore.js,
- * _googleCalendarClient.js, _googleOAuth.js) regardless of which `action`
- * a given request dispatches to, because it's all one file/module now.
- * setupMocks below therefore mocks ALL seven, every time, providing every
- * named export calendar.js actually imports from each — even the ones
- * irrelevant to the status/disconnect scenarios this file exercises —
- * because ES module linking is static: importing a name that doesn't
- * exist on a mocked module throws at import time regardless of whether
- * that name is ever called at runtime. calendarEventMapping.js is left
- * REAL/unmocked throughout (pure, dependency-free, already covered
- * separately — same principle as calendar-publish-endpoint.unit.mjs).
+ * _googleCalendarClient.js, _googleOAuth.js,
+ * _calendarPublishFailureNotificationTrigger.js — the last one added by
+ * the Calendar publish-failure notification coverage correction, mocked
+ * directly here too so this file never reaches the real notification
+ * pipeline's own Firestore/Resend dependency chain) regardless of which
+ * `action` a given request dispatches to, because it's all one
+ * file/module now. setupMocks below therefore mocks ALL eight, every
+ * time, providing every named export calendar.js actually imports from
+ * each — even the ones irrelevant to the status/disconnect scenarios
+ * this file exercises — because ES module linking is static: importing a
+ * name that doesn't exist on a mocked module throws at import time
+ * regardless of whether that name is ever called at runtime.
+ * calendarEventMapping.js is left REAL/unmocked throughout (pure,
+ * dependency-free, already covered separately — same principle as
+ * calendar-publish-endpoint.unit.mjs).
  *
  * Mocking strategy note (unchanged from before consolidation): each
  * dependency is mocked directly per test, rather than mocking a
@@ -128,6 +133,11 @@ function setupMocks(t, { gmailConn = null, calendarConn = null, authenticated = 
       refreshCalendarAccessToken: async () => ({ ok: true, accessToken: "unused-at" }),
       insertCalendarEvent: async () => ({ ok: true, alreadyExisted: false, eventId: "unused-event-id" }),
       listCalendars: async () => ({ ok: true, calendars: [] }),
+    },
+  });
+  t.mock.module("../api/_calendarPublishFailureNotificationTrigger.js", {
+    namedExports: {
+      notifyCalendarPublishFailure: async () => {},
     },
   });
 

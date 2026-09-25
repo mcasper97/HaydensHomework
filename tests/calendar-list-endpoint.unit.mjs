@@ -101,6 +101,11 @@ function setupMocks(t, {
       listCalendars: async (args) => { calls.listCalendars.push(args); return listResult; },
     },
   });
+  t.mock.module("../api/_calendarPublishFailureNotificationTrigger.js", {
+    namedExports: {
+      notifyCalendarPublishFailure: async () => {},
+    },
+  });
 
   return calls;
 }

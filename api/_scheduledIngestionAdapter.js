@@ -60,6 +60,7 @@ import { getHouseholdTimezone, getGoogleCalendarRouting, getGoogleCalendarAutoPu
 import { getGoogleCalendarConnection } from "./_googleCalendarConnectionsStore.js";
 import { setItemGoogleCalendarFields } from "./_itemsStore.js";
 import { deriveGoogleEventId, refreshCalendarAccessToken, insertCalendarEvent } from "./_googleCalendarClient.js";
+import { notifyCalendarPublishFailure } from "./_calendarPublishFailureNotificationTrigger.js";
 
 function defaultDb() {
   return getFirestore();
@@ -193,9 +194,30 @@ async function markPublishInFlight(uid, item) {
   }
 }
 
-async function recordPublishFailure(uid, item, message) {
+/**
+ * recordPublishFailure(uid, item, message, deps?) -> void, never throws.
+ * Exported (task: notification trigger) — this is the ONE choke point
+ * every real publish failure inside attemptCalendarPublishServerSide
+ * already funnels through, so the parent-notification trigger is added
+ * here rather than at each of the 5 call sites, and rather than a second,
+ * separate failure detector. `deps` lets tests override either
+ * collaborator (mirroring the {deps={}} pattern already established
+ * throughout this file's siblings) without touching real Firestore or
+ * the notification pipeline.
+ *
+ * FAILURE ISOLATION (task): the notification call is best-effort and
+ * fully independent of the googleCalendarSyncError write above it — a
+ * notification failure is caught and logged here, never changing what
+ * was already persisted, never affecting the Item's committed state, and
+ * never blocking a later retry (see
+ * api/_calendarPublishFailureNotificationTrigger.js's own doc comment
+ * for the full dedupe/limitation notes).
+ */
+export async function recordPublishFailure(uid, item, message, deps = {}) {
+  const { setFields = setItemGoogleCalendarFields, notifyFailure = notifyCalendarPublishFailure } = deps;
+
   try {
-    await setItemGoogleCalendarFields(uid, item.id, {
+    await setFields(uid, item.id, {
       googleCalendarEventId: item.googleCalendarEventId ?? null,
       googleCalendarId: item.googleCalendarId ?? null,
       googleCalendarSyncedAt: item.googleCalendarSyncedAt ?? null,
@@ -203,6 +225,16 @@ async function recordPublishFailure(uid, item, message) {
     });
   } catch (updateErr) {
     console.error("scheduledIngestionAdapter: failed to record googleCalendarSyncError", updateErr);
+  }
+
+  try {
+    await notifyFailure(uid, item.id);
+  } catch (err) {
+    // Belt-and-suspenders — notifyCalendarPublishFailure already catches
+    // everything internally; this guarantees a test double or future
+    // change to that function can never turn a notification failure into
+    // a Calendar-publish-handling failure.
+    console.error("scheduledIngestionAdapter: Calendar publish-failure notification trigger threw", err);
   }
 }
 
