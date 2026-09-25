@@ -50,5 +50,15 @@ service cloud.firestore {
     match /googleCalendarOAuthStates/{document=**} {
       allow read, write: if false;
     }
+
+    // Server-private: email-notification delivery/dedupe records (see
+    // api/_notificationDeliveryStore.js). Same reasoning as
+    // gmailConnections above — a top-level collection, not beneath
+    // users/{uid}/..., so no users/{uid}-style rule can ever grant the
+    // browser access to it. No client-side counterpart exists for this
+    // store by design.
+    match /notificationDeliveries/{document=**} {
+      allow read, write: if false;
+    }
   }
 }
