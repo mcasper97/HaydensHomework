@@ -1,20 +1,27 @@
 /**
- * Focused coverage for the Family Board rolling-7-day redesign itself
- * (rolling-week layout, minimal header, focus/de-emphasis behavior,
- * execution-window sections, no-scroll board layout). See
+ * Focused coverage for the Family Board rolling-day redesign (grid layout,
+ * minimal header, focus/de-emphasis, execution-window sections, no-scroll
+ * board layout) — UPDATED for the UX density correction: the board is now
+ * a rolling 5-day window (Today + next 4 calendar days) with Today
+ * rendered roughly 3x the width of each future-day column, rather than the
+ * original 7-equal-width-columns layout. See
+ * tests/rolling-week-board.unit.mjs for deterministic proof of the exact
+ * date math (including the spec's own "if today is Friday ->
+ * Fri/Sat/Sun/Mon/Tue" example, and a Monday-start window that contains no
+ * weekend day at all, both using an injected `today` so they're
+ * reproducible on any real calendar day) — this file proves the DOM/visual
+ * side against whatever today actually is. See
  * tests/family-agenda.playwright.cjs for the data-layer proofs (ownership,
  * chore projection, completion persistence, admin-free boundary) this file
  * deliberately does not re-prove in depth.
  *
  * Seeds two learners named "Hayden" and "Payton" — the task's own example
  * family — but every assertion below locates their focus controls by the
- * live child's name/emoji text, never a hardcoded id, since
- * organizer/FamilyAgendaBoard.jsx renders one focus button per entry in the
- * real `children` array (canonical child ids drive it, not literal names).
+ * live child's name/emoji text, never a hardcoded id.
  *
  * Usage:
  *   npm run dev                                          # in one terminal
- *   node tests/family-board-rolling-week.playwright.cjs   # in another
+ *   node tests/family-board-rolling-5day.playwright.cjs   # in another
  *
  * Env vars:
  *   TEST_BASE_URL            — dev server URL (default http://127.0.0.1:5173)
@@ -35,12 +42,10 @@ function isoDate(offsetDays) {
   return d.toISOString().slice(0, 10);
 }
 
-// Mirrors src/organizer/rollingWeekBoard.js's own date math exactly, so
-// this test's expectations are computed the same way the production code
-// computes them — meaningful on every day of the year, not just today.
+// Mirrors src/organizer/rollingWeekBoard.js's own date math exactly.
 function expectedRollingDates() {
   const out = [];
-  for (let i = 0; i < 7; i++) out.push(isoDate(i));
+  for (let i = 0; i < 5; i++) out.push(isoDate(i));
   return out;
 }
 
@@ -93,23 +98,40 @@ function expectedRollingDates() {
   await page.getByTestId('board-family').click();
   await page.waitForSelector('[data-testid="family-week-board"]', { timeout: 10000 });
 
-  // ============ Section 1: rolling 7-day layout ============
+  // ============ Section 1: rolling 5-day layout ============
   const columns = page.locator('[data-testid="week-day-column"]');
-  ok('Exactly seven day columns render', await columns.count() === 7);
+  ok('Exactly FIVE day columns render (not seven)', await columns.count() === 5);
 
   const expectedDates = expectedRollingDates();
   const actualDates = await columns.evaluateAll((els) => els.map((el) => el.getAttribute('data-date')));
-  ok('Columns are exactly seven consecutive calendar days in order', JSON.stringify(actualDates) === JSON.stringify(expectedDates));
+  ok('Columns are exactly five consecutive calendar days in order', JSON.stringify(actualDates) === JSON.stringify(expectedDates));
   ok('The leftmost (first) column is today', actualDates[0] === expectedDates[0] && (await columns.first().getAttribute('data-today')) === 'true');
   ok('No other column is marked as today', (await page.locator('[data-testid="week-day-column"][data-today="true"]').count()) === 1);
+  ok('Exactly four future (non-today) columns exist', (await page.locator('[data-testid="week-day-column"][data-today="false"]').count()) === 4);
 
+  // Weekends are never SKIPPED (whichever, if any, fall inside these 5
+  // consecutive days must actually be present as their own column) — a
+  // stronger, day-of-week-independent version of "Saturday/Sunday remain
+  // visible" that tests/rolling-week-board.unit.mjs also proves exactly
+  // for the spec's own Friday example via an injected `today`.
   const weekdays = expectedDates.map((d) => new Date(`${d}T00:00:00`).getDay());
-  ok('The 7-day window includes a Saturday (weekends never skipped)', weekdays.includes(6));
-  ok('The 7-day window includes a Sunday (weekends never skipped)', weekdays.includes(0));
-  const satIdx = weekdays.indexOf(6);
-  const sunIdx = weekdays.indexOf(0);
-  ok('The Saturday column is actually visible on screen', await columns.nth(satIdx).isVisible());
-  ok('The Sunday column is actually visible on screen', await columns.nth(sunIdx).isVisible());
+  for (const [i, wd] of weekdays.entries()) {
+    if (wd === 6 || wd === 0) {
+      ok(`The ${wd === 6 ? 'Saturday' : 'Sunday'} column (${expectedDates[i]}) is visible on screen, not skipped`, await columns.nth(i).isVisible());
+    }
+  }
+
+  // ============ Section 2: Today's column is dominant / wide-column treatment ============
+  const todayBox = await page.locator('[data-testid="week-day-column"][data-today="true"]').boundingBox();
+  const futureBoxes = await page.locator('[data-testid="week-day-column"][data-today="false"]').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().width));
+  ok('Today\'s column has the data-column-density="today" marker', await page.locator('[data-testid="week-day-column"][data-today="true"]').getAttribute('data-column-density') === 'today');
+  ok('Every future column has the data-column-density="future" marker', (await page.locator('[data-testid="week-day-column"][data-today="false"]').evaluateAll((els) => els.every((el) => el.getAttribute('data-column-density') === 'future'))));
+  const avgFutureWidth = futureBoxes.reduce((a, b) => a + b, 0) / futureBoxes.length;
+  ok(
+    `Today's column is roughly 3x a future column's width (today=${Math.round(todayBox.width)}px, avg future=${Math.round(avgFutureWidth)}px)`,
+    todayBox.width > avgFutureWidth * 2.3 && todayBox.width < avgFutureWidth * 3.8
+  );
+  ok('All four future columns are approximately equal width to each other', Math.max(...futureBoxes) - Math.min(...futureBoxes) < Math.max(...futureBoxes) * 0.15);
 
   // ============ Section 3: minimal header ============
   ok('Header shows the "Haydens - Homework / Family Board" title', await visible('Haydens - Homework'));
@@ -125,7 +147,7 @@ function expectedRollingDates() {
   const allBox = await allBtn.boundingBox();
   ok('Focus controls are large, obviously-touchable targets (>= 48px tall)', !!allBox && allBox.height >= 48);
 
-  // ============ Section 4: focus = de-emphasis, never hiding ============
+  // ============ Section 4/5: focus = de-emphasis, never hiding (Today's column) ============
   const haydenRow = () => page.locator('[data-testid="agenda-row"]').filter({ hasText: 'Hayden Worksheet' }).first();
   const paytonRow = () => page.locator('[data-testid="agenda-row"]').filter({ hasText: 'Payton Worksheet' }).first();
   const familyRow = () => page.locator('[data-testid="agenda-row"]').filter({ hasText: 'Family Dinner' }).first();
@@ -133,6 +155,7 @@ function expectedRollingDates() {
   ok('All selected: Hayden\'s item is at full emphasis', (await haydenRow().getAttribute('data-emphasis')) === 'prominent');
   ok('All selected: Payton\'s item is at full emphasis', (await paytonRow().getAttribute('data-emphasis')) === 'prominent');
   ok('All selected: the family item is at full emphasis', (await familyRow().getAttribute('data-emphasis')) === 'prominent');
+  ok('All three seeded rows render in Today\'s (wide) column, not a future column', (await haydenRow().getAttribute('data-column')) === 'today');
 
   await haydenBtn.click();
   await page.waitForTimeout(150);
@@ -157,20 +180,15 @@ function expectedRollingDates() {
   await page.waitForTimeout(150);
   ok('Back to All: everyone is prominent again', (await haydenRow().getAttribute('data-emphasis')) === 'prominent' && (await paytonRow().getAttribute('data-emphasis')) === 'prominent');
 
-  // ============ Section 5: execution-window sections render ============
+  // ============ Section 6: execution-window sections render ============
   const todayColumn = page.locator('[data-testid="week-day-column"][data-today="true"]');
   ok('The Today execution-window section renders (populated)', await todayColumn.getByTestId('week-window-today').isVisible());
   ok('The Today window uses the exact requested label wording', await todayColumn.getByTestId('week-window-today').getByText('Today', { exact: true }).isVisible());
-  // Before School / Study Hall / Evening only render when populated (same
-  // "only render populated sections" convention the pre-existing agenda
-  // used) — tests/family-agenda.playwright.cjs seeds a study_task and
-  // proves the Study Hall window specifically; this file focuses on the
-  // grid/focus mechanics instead of re-seeding every window here.
 
-  // ============ Section 8: completion behavior still works ============
+  // ============ Section 3/7: completion behavior still works ============
   await haydenRow().getByRole('button', { name: 'Mark complete' }).click();
   await page.waitForTimeout(300);
-  ok('Marking an item complete from the rolling-week board still persists', await page.evaluate(() => {
+  ok('Marking an item complete from the rolling-day board still persists', await page.evaluate(() => {
     const items = JSON.parse(localStorage.getItem('crestly_admin_items') || '[]');
     return items.find((it) => it.title === 'Hayden Worksheet')?.status === 'completed';
   }));
@@ -180,11 +198,15 @@ function expectedRollingDates() {
   ok('No Manage Chores control', (await page.getByTestId('action-manage-chores').count()) === 0);
   ok('No Settings control', (await page.getByTestId('board-settings').count()) === 0);
 
-  // ============ Section 7: no page-level scroll container on the board ============
+  // ============ Section 8: no page-level scroll container on the board ============
   const gridOverflow = await page.getByTestId('family-week-board').evaluate((el) => getComputedStyle(el).overflow);
-  ok('The rolling-week grid itself declares no scroll overflow (overflow: hidden, not auto/scroll)', gridOverflow === 'hidden');
+  ok('The rolling-day grid itself declares no scroll overflow (overflow: hidden, not auto/scroll)', gridOverflow === 'hidden');
   const bodyOverflowY = await page.evaluate(() => getComputedStyle(document.documentElement).overflowY);
-  ok('The page does not force a vertical scrollbar via an explicit scroll style on the root', bodyOverflowY !== 'scroll');
+  const bodyOverflowX = await page.evaluate(() => getComputedStyle(document.documentElement).overflowX);
+  ok('No vertical scroll is forced via an explicit scroll style on the root', bodyOverflowY !== 'scroll');
+  ok('No horizontal scroll is forced via an explicit scroll style on the root', bodyOverflowX !== 'scroll');
+  const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 2);
+  ok('The page does not actually overflow horizontally at this viewport size', !hasHorizontalOverflow);
 
   await browser.close();
   console.log(`\n${pass} passed, ${fail} failed`);

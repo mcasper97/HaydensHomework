@@ -1,11 +1,11 @@
 /**
  * Regression + focused coverage for Family Board's unified agenda data
  * layer (ownership, chore projection, completion behavior, admin-free
- * boundary) — now rendered as a rolling 7-day execution board (see
- * tests/family-board-rolling-week.playwright.cjs for the grid/focus-specific
- * proofs the rolling-week redesign itself introduced: exactly 7 columns,
- * today first, weekends visible, no header date/weather, focus
- * de-emphasis, execution-window sections).
+ * boundary) — now rendered as a rolling 5-day execution board (see
+ * tests/family-board-rolling-5day.playwright.cjs for the grid/focus-specific
+ * proofs the rolling-window redesign itself introduced: exactly 5 columns,
+ * today first and dominant-width, weekends visible, no header date/weather,
+ * focus de-emphasis, execution-window sections).
  *
  * Exercises the guest/local-demo storage path (localStorage-backed), same
  * as every other *.playwright.cjs file in this suite — no live Firebase
@@ -73,7 +73,7 @@ function isoDate(offsetDays) {
   await page.waitForTimeout(200);
   await page.getByText('← Back to Parent Board').click();
 
-  // A "test" item dated tomorrow (Tiger) — within the 7-day window, and a
+  // A "test" item dated tomorrow (Tiger) — within the 5-day window, and a
   // type that shows a single start/occurrence date input, so
   // `input[type="date"]` is unambiguous.
   await page.getByTestId('action-add-item').click();

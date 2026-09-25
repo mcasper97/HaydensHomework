@@ -4,26 +4,45 @@ import { WINDOW_ORDER, WINDOW_LABELS } from "./rollingWeekBoard.js";
 import { ownerMarker } from "./learnerAccent.js";
 
 /* ─────────────────────── Family Week Board (presentational) ───────────────────────
- * Renders the rolling-7-day, execution-window-bucketed structure produced by
- * rollingWeekBoard.js's buildRollingWeekBoard — exactly seven day columns,
- * today always first, weekends never skipped. Purely presentational: no
+ * Renders the rolling-5-day, execution-window-bucketed structure produced by
+ * rollingWeekBoard.js's buildRollingWeekBoard — exactly 5 day columns, today
+ * always first, weekends never skipped. Purely presentational: no
  * subscriptions, no date math, no filtering (every row it's handed is
- * always rendered — FOCUS is de-emphasis, never hiding, per the task's own
- * Section 4). No Add Item / Edit / Delete / management control of any kind
- * (Family Board's execution-only boundary, unchanged by this redesign).
+ * always rendered — FOCUS is de-emphasis, never hiding). No Add Item / Edit
+ * / Delete / management control of any kind (Family Board's execution-only
+ * boundary, unchanged by this redesign).
  *
- * Sizing is deliberately dense (small type, tight padding) rather than
- * scrollable — a wall-mounted kiosk board has a fixed screen, not infinite
- * height, so this component never introduces its own scroll container.
- * A day column's own list can still, in principle, overflow a real screen
- * on a very busy day; rather than let that silently push the layout into
- * scrolling, each window caps how many rows it shows and surfaces the rest
- * behind a "+N more" indicator — a last-resort overflow state, never the
- * normal case (see MAX_VISIBLE_ROWS_PER_WINDOW below).
+ * DENSITY CORRECTION (UX review): the original 7-equal-column layout was
+ * too dense to read at a glance. Today's column is now roughly 3x the
+ * width of each future-day column (`gridTemplateColumns: "3fr 1fr 1fr 1fr
+ * 1fr"`) and renders larger, more legible cards (TodayRow); the 4 future
+ * columns stay compact but keep title + owner directly readable without a
+ * click (FutureRow) — "abbreviated," per spec, never "tiny unreadable
+ * chips."
+ *
+ * The board's own `display: grid` + `gap` are set inline rather than via
+ * Tailwind's `grid`/`gap-*` utility classes — this app's Tailwind is
+ * CDN-loaded (index.html), and this is the one container whose entire
+ * layout depends on `display: grid` actually taking effect; keeping it
+ * inline, alongside `gridTemplateColumns` (already inline, for the 3fr/1fr
+ * ratio no Tailwind utility expresses), means the column layout never
+ * silently collapses to block stacking if the CDN stylesheet is ever slow
+ * or unavailable.
+ *
+ * Sizing is still deliberately dense rather than scrollable — a
+ * wall-mounted kiosk board has a fixed screen, not infinite height, so this
+ * component never introduces its own scroll container. A day column's own
+ * list can still, in principle, overflow a real screen on a very busy day;
+ * rather than let that silently push the layout into scrolling, each
+ * window caps how many rows it shows and surfaces the rest behind a "+N
+ * more" indicator — a last-resort overflow state, never the normal case.
+ * Today's cards are taller, so Today gets a LOWER per-window row cap than
+ * the future columns' smaller cards do (see MAX_VISIBLE_ROWS_TODAY/FUTURE).
  */
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MAX_VISIBLE_ROWS_PER_WINDOW = 4;
+const MAX_VISIBLE_ROWS_TODAY = 3;
+const MAX_VISIBLE_ROWS_FUTURE = 4;
 
 function formatTime12h(hhmm) {
   if (!hhmm) return null;
@@ -39,7 +58,7 @@ function dayHeaderLabel(dateStr) {
 }
 
 // Whether a row belongs to the currently-focused owner (or, under "All",
-// every row is equally in-focus — Section 4: nobody de-emphasized).
+// every row is equally in-focus — nobody de-emphasized).
 function isProminent(row, focus) {
   if (!focus) return true; // "" = All
   if (focus === "family") return row.childIds.length === 0;
@@ -48,13 +67,23 @@ function isProminent(row, focus) {
 
 // A test/quiz not yet completed gets a simple "Prep needed" indicator
 // (existing `type`/`completed` fields only — no new field, no generated
-// prep-task item; that generation is explicitly out of this slice's scope).
+// prep-task item; that generation is explicitly out of scope here).
 function needsPrep(row) {
   return (row.type === "test" || row.type === "quiz") && !row.completed;
 }
 
+const OwnerChip = ({ owner, size }) => (
+  <span
+    className={`${size} flex-shrink-0 rounded-full flex items-center justify-center font-bold`}
+    style={{ background: owner.accent.bg, color: owner.accent.text, border: `1px solid ${owner.accent.border}` }}
+    title={owner.label}
+  >
+    {owner.initial}
+  </span>
+);
+
 const CompletionControl = ({ row, onToggle, size }) => {
-  const dim = size === "compact" ? "w-6 h-6 text-xs" : "w-9 h-9 text-base";
+  const dim = { large: "w-10 h-10 text-lg", standard: "w-7 h-7 text-sm", compact: "w-5 h-5 text-[10px]" }[size];
   if (!row.completionEligible) {
     return (
       <div
@@ -79,32 +108,30 @@ const CompletionControl = ({ row, onToggle, size }) => {
   );
 };
 
-const WeekRow = ({ row, children, focus, onToggleItem, onToggleChore }) => {
+// TODAY'S column — the primary execution surface (Section 3): larger type,
+// larger cards, learner identity spelled out, secondary context (time,
+// type label, Prep needed) all readable without a click. Two tiers: a
+// full-size card for a prominent (in-focus) row, and a still today-sized
+// (just single-line) card for a de-emphasized one — de-emphasis is opacity
+// + size, never hiding.
+const TodayRow = ({ row, children, prominent, onToggleItem, onToggleChore }) => {
   const owner = ownerMarker(row.childIds, children);
   const meta = ITEM_TYPE_META[row.type] || {};
-  const prominent = isProminent(row, focus);
   const onToggle = () =>
     row.sourceType === "chore" ? onToggleChore(row.originalRecord.childId, row.originalRecord.chore) : onToggleItem(row.originalRecord);
 
   if (!prominent) {
-    // Compact / muted — still fully visible, still tappable, just smaller
-    // and lower-contrast than a prominent row (de-emphasis, never hiding).
     return (
       <div
         data-testid="agenda-row"
         data-emphasis="muted"
-        className="flex items-center gap-1.5 py-1 px-1.5 rounded-lg opacity-70"
+        data-column="today"
+        className="flex items-center gap-2 py-1.5 px-2 rounded-lg opacity-70"
         style={{ background: "#2a2a2c" }}
       >
         <CompletionControl row={row} onToggle={onToggle} size="compact" />
-        <span
-          className="w-4 h-4 flex-shrink-0 rounded-full flex items-center justify-center text-[9px] font-bold"
-          style={{ background: owner.accent.bg, color: owner.accent.text, border: `1px solid ${owner.accent.border}` }}
-          title={owner.label}
-        >
-          {owner.initial}
-        </span>
-        <span className={`text-[11px] text-gray-300 truncate ${row.completed ? "line-through opacity-60" : ""}`}>{row.title}</span>
+        <OwnerChip owner={owner} size="w-5 h-5 text-[10px]" />
+        <span className={`text-xs text-gray-300 truncate ${row.completed ? "line-through opacity-60" : ""}`}>{row.title}</span>
       </div>
     );
   }
@@ -113,28 +140,25 @@ const WeekRow = ({ row, children, focus, onToggleItem, onToggleChore }) => {
     <div
       data-testid="agenda-row"
       data-emphasis="prominent"
-      className="flex items-center gap-2 p-2 rounded-xl"
-      style={{ background: "#2a2a2c", borderLeft: `3px solid ${owner.accent.border}` }}
+      data-column="today"
+      className="flex items-center gap-3 p-3 rounded-2xl"
+      style={{ background: "#2a2a2c", borderLeft: `4px solid ${owner.accent.border}` }}
     >
-      <CompletionControl row={row} onToggle={onToggle} size="standard" />
+      <CompletionControl row={row} onToggle={onToggle} size="large" />
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1 text-[10px] text-gray-400 mb-0.5 truncate">
-          <span
-            className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0"
-            style={{ background: owner.accent.bg, color: owner.accent.text, border: `1px solid ${owner.accent.border}` }}
-          >
-            {owner.initial}
-          </span>
+        <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1 truncate">
+          <OwnerChip owner={owner} size="w-5 h-5 text-[10px]" />
           <span className="truncate">{owner.emoji ? `${owner.emoji} ${owner.label}` : owner.label}</span>
         </div>
-        <div className={`text-sm font-bold text-white truncate ${row.completed ? "line-through opacity-50" : ""}`}>
+        <div className={`text-base font-bold text-white truncate ${row.completed ? "line-through opacity-50" : ""}`}>
           {meta.icon ? `${meta.icon} ` : ""}
           {row.title}
         </div>
-        <div className="flex items-center gap-1 text-[10px] text-gray-500 truncate">
+        <div className="flex items-center gap-2 text-xs text-gray-400 truncate mt-0.5">
+          {meta.label && <span>{meta.label}</span>}
           {row.time && <span>{formatTime12h(row.time)}</span>}
           {needsPrep(row) && (
-            <span data-testid="agenda-row-prep-needed" className="px-1 rounded bg-amber-900 text-amber-200 font-semibold">
+            <span data-testid="agenda-row-prep-needed" className="px-1.5 py-0.5 rounded bg-amber-900 text-amber-200 font-semibold">
               Prep needed
             </span>
           )}
@@ -144,19 +168,66 @@ const WeekRow = ({ row, children, focus, onToggleItem, onToggleChore }) => {
   );
 };
 
-const WeekWindow = ({ windowKey, rows, children, focus, onToggleItem, onToggleChore }) => {
-  if (!rows || rows.length === 0) return null;
-  const visible = rows.slice(0, MAX_VISIBLE_ROWS_PER_WINDOW);
-  const overflowCount = rows.length - visible.length;
+// A FUTURE day's column — visible for awareness, denser than Today, but
+// title + owner must still be directly readable without a click (Section
+// 4): a compact one-line card with an owner-initial chip + type icon +
+// title, never reduced to an unlabeled dot/chip. Emphasis is opacity-only
+// here (prominent = full contrast, muted = still legible, just dimmer).
+const FutureRow = ({ row, children, prominent, onToggleItem, onToggleChore }) => {
+  const owner = ownerMarker(row.childIds, children);
+  const meta = ITEM_TYPE_META[row.type] || {};
+  const onToggle = () =>
+    row.sourceType === "chore" ? onToggleChore(row.originalRecord.childId, row.originalRecord.chore) : onToggleItem(row.originalRecord);
+
   return (
-    <div data-testid={`week-window-${windowKey}`} className="mb-1.5">
-      <div className="text-[9px] font-extrabold uppercase tracking-wide text-gray-500 mb-0.5">{WINDOW_LABELS[windowKey]}</div>
-      <div className="space-y-1">
+    <div
+      data-testid="agenda-row"
+      data-emphasis={prominent ? "prominent" : "muted"}
+      data-column="future"
+      className={`flex items-center gap-1.5 py-1.5 px-1.5 rounded-lg ${prominent ? "" : "opacity-65"}`}
+      style={{ background: "#2a2a2c" }}
+    >
+      <CompletionControl row={row} onToggle={onToggle} size="compact" />
+      <OwnerChip owner={owner} size="w-4 h-4 text-[9px]" />
+      {meta.icon && (
+        <span className="text-[11px] flex-shrink-0" aria-hidden="true">
+          {meta.icon}
+        </span>
+      )}
+      <span className={`text-xs text-gray-200 truncate ${row.completed ? "line-through opacity-60" : ""}`}>{row.title}</span>
+      {needsPrep(row) && (
+        <span data-testid="agenda-row-prep-needed" className="text-[9px] px-1 rounded bg-amber-900 text-amber-200 font-semibold flex-shrink-0">
+          Prep
+        </span>
+      )}
+    </div>
+  );
+};
+
+const WeekWindow = ({ windowKey, rows, children, focus, onToggleItem, onToggleChore, isToday }) => {
+  if (!rows || rows.length === 0) return null;
+  const cap = isToday ? MAX_VISIBLE_ROWS_TODAY : MAX_VISIBLE_ROWS_FUTURE;
+  const visible = rows.slice(0, cap);
+  const overflowCount = rows.length - visible.length;
+  const RowComponent = isToday ? TodayRow : FutureRow;
+  return (
+    <div data-testid={`week-window-${windowKey}`} className="mb-2">
+      <div className={`font-extrabold uppercase tracking-wide text-gray-500 mb-1 ${isToday ? "text-xs" : "text-[9px]"}`}>
+        {WINDOW_LABELS[windowKey]}
+      </div>
+      <div className={isToday ? "space-y-1.5" : "space-y-1"}>
         {visible.map((row) => (
-          <WeekRow key={row.key} row={row} children={children} focus={focus} onToggleItem={onToggleItem} onToggleChore={onToggleChore} />
+          <RowComponent
+            key={row.key}
+            row={row}
+            children={children}
+            prominent={isProminent(row, focus)}
+            onToggleItem={onToggleItem}
+            onToggleChore={onToggleChore}
+          />
         ))}
         {overflowCount > 0 && (
-          <div data-testid="week-window-overflow" className="text-[10px] text-gray-500 px-1.5">
+          <div data-testid="week-window-overflow" className={isToday ? "text-xs text-gray-500 px-2" : "text-[10px] text-gray-500 px-1"}>
             +{overflowCount} more
           </div>
         )}
@@ -167,7 +238,11 @@ const WeekWindow = ({ windowKey, rows, children, focus, onToggleItem, onToggleCh
 
 const FamilyWeekBoard = ({ days, children = [], focus, onToggleItem, onToggleChore }) => {
   return (
-    <div data-testid="family-week-board" className="grid grid-cols-7 gap-1.5 w-full" style={{ overflow: "hidden" }}>
+    <div
+      data-testid="family-week-board"
+      className="w-full"
+      style={{ display: "grid", gridTemplateColumns: "3fr 1fr 1fr 1fr 1fr", gap: "0.5rem", overflow: "hidden" }}
+    >
       {days.map((day) => {
         const anyRows = WINDOW_ORDER.some((w) => day.windows[w].length > 0);
         return (
@@ -176,12 +251,19 @@ const FamilyWeekBoard = ({ days, children = [], focus, onToggleItem, onToggleCho
             data-testid="week-day-column"
             data-date={day.dateStr}
             data-today={day.isToday ? "true" : "false"}
-            className="flex flex-col rounded-xl p-1.5 min-w-0"
-            style={{ background: day.isToday ? "#232326" : "#1f1f22", border: day.isToday ? "1px solid #4A4A55" : "1px solid transparent", overflow: "hidden" }}
+            data-column-density={day.isToday ? "today" : "future"}
+            className={`flex flex-col rounded-xl min-w-0 ${day.isToday ? "p-3" : "p-1.5"}`}
+            style={{
+              background: day.isToday ? "#232326" : "#1f1f22",
+              border: day.isToday ? "1px solid #4A4A55" : "1px solid transparent",
+              overflow: "hidden",
+            }}
           >
-            <div className="flex items-baseline gap-1 mb-1 px-0.5">
-              <span className={`text-xs font-extrabold ${day.isToday ? "text-white" : "text-gray-400"}`}>{dayHeaderLabel(day.dateStr)}</span>
-              {day.isToday && <span className="text-[9px] font-bold text-emerald-400">TODAY</span>}
+            <div className="flex items-baseline gap-1.5 mb-1.5 px-0.5">
+              <span className={day.isToday ? "text-lg font-extrabold text-white" : "text-xs font-extrabold text-gray-400"}>
+                {dayHeaderLabel(day.dateStr)}
+              </span>
+              {day.isToday && <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wide">Today</span>}
             </div>
             {anyRows ? (
               WINDOW_ORDER.map((windowKey) => (
@@ -193,10 +275,11 @@ const FamilyWeekBoard = ({ days, children = [], focus, onToggleItem, onToggleCho
                   focus={focus}
                   onToggleItem={onToggleItem}
                   onToggleChore={onToggleChore}
+                  isToday={day.isToday}
                 />
               ))
             ) : (
-              <div className="text-[10px] text-gray-600 px-0.5">Nothing scheduled</div>
+              <div className={day.isToday ? "text-sm text-gray-600 px-1" : "text-[10px] text-gray-600 px-0.5"}>Nothing scheduled</div>
             )}
           </div>
         );
