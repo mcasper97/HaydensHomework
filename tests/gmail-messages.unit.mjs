@@ -117,6 +117,14 @@ function createFakeDb() {
         else docs.push({ id, data });
         store.set(collectionKey, docs);
       },
+      // Doc-level get — needed by api/_gmailProcessingResetStore.js's
+      // getGmailProcessingResetAt (gmailProcessingResets/{uid} is a plain
+      // doc, not listed via a collection query like sourceRecords is).
+      async get() {
+        const docs = store.get(collectionKey) || [];
+        const found = docs.find((d) => d.id === id);
+        return { exists: !!found, data: () => found?.data };
+      },
     };
   }
 }

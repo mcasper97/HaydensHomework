@@ -1,44 +1,37 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { subscribeItems, setItemStatus } from "../data/itemsRepository.js";
 import { subscribeItemCompletions, setItemCompletion } from "../data/itemCompletionsRepository.js";
-import { buildFamilyAgendaRows, filterAgendaRows } from "./familyAgenda.js";
+import { buildRollingWeekBoard } from "./rollingWeekBoard.js";
 import { todayStr, isOccurrenceCompleted } from "./itemBuckets.js";
 import { householdTodayStr } from "../data/householdTimezone.js";
-import FamilyAgenda from "./FamilyAgenda.jsx";
+import FamilyWeekBoard from "./FamilyWeekBoard.jsx";
 
 /* ─────────────────────── Family Agenda Board ───────────────────────
  * The data-fetching container both FamilyBoard.jsx (kiosk=false) and
- * OrganizerDisplay.jsx (kiosk=true) now render identically — the Family
- * Board admin boundary (Section 15) means both are execution-only
- * surfaces, so there is no longer a separate "admin" variant of this view
- * to maintain (the old split was ParentOrganizer allowManage=true/false;
- * this component has no allowManage concept at all, by design).
+ * OrganizerDisplay.jsx (kiosk=true) render identically — the Family Board
+ * admin boundary means both are execution-only surfaces, so there is no
+ * separate "admin" variant of this view to maintain.
  *
- * Subscribes independently to items/itemCompletions (the exact same
- * subscribeItems/subscribeItemCompletions every sibling Organizer
- * component already calls independently — see e.g. AddItemPanel.jsx's own
- * doc comment on this established precedent) — chore templates/
- * completions are still owned and passed down by FamilyBoard.jsx (the one
- * place board-owned users/{uid} fields are read/written), never
- * re-subscribed here.
+ * Subscribes independently to items/itemCompletions (the same
+ * subscribeItems/subscribeItemCompletions every sibling Organizer component
+ * already calls independently) — chore templates/completions are still
+ * owned and passed down by FamilyBoard.jsx, never re-subscribed here.
  *
- * householdTimezone — threaded down from FamilyBoard.jsx (which now loads
- * it alongside the rest of the household profile) so the SAME
- * household-local "today" familyAgenda.js uses to decide which section a
- * recurring item's row belongs in is also what handleToggleItem below
- * writes a completion against — using two different "today"s (one
- * household-local for display, one UTC for the write) would let a
- * completion toggle write against a different calendar date than the one
- * currently on screen near a midnight boundary.
+ * householdTimezone — threaded down from FamilyBoard.jsx so the SAME
+ * household-local "today" rollingWeekBoard.js uses to build the grid is
+ * also what handleToggleItem below writes a completion against.
  *
- * Filters (Section 20) — All / one per current learner / Family — kept as
- * simple local `filter` state, mirroring ParentOrganizer.jsx's own former
- * filterChild pattern exactly, just with the added "family" value.
+ * FOCUS (rolling-week redesign) — All / one per current learner / Family.
+ * This used to be a `filter` that HID non-matching rows (filterAgendaRows);
+ * it is now de-emphasis only — every row buildRollingWeekBoard produces is
+ * always passed down to FamilyWeekBoard, which decides prominence from
+ * `focus`, never drops a row. Canonical child ids drive the per-child
+ * buttons dynamically (never a hardcoded name) — see `children` below.
  */
 const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompletions = {}, onToggleChore, householdTimezone }) => {
   const [items, setItems] = useState([]);
   const [completions, setCompletions] = useState([]);
-  const [filter, setFilter] = useState(""); // "" (All) | childId | "family"
+  const [focus, setFocus] = useState(""); // "" (All) | childId | "family"
 
   useEffect(() => {
     const unsub = subscribeItems(ctx, {}, setItems);
@@ -54,20 +47,16 @@ const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompl
 
   const today = useMemo(() => householdTodayStr(householdTimezone) || todayStr(), [householdTimezone]);
 
-  const rows = useMemo(
-    () =>
-      filterAgendaRows(
-        buildFamilyAgendaRows({ items, choreTemplates, choreCompletions, children, completions, householdTimezone }),
-        filter
-      ),
-    [items, choreTemplates, choreCompletions, children, completions, filter, householdTimezone]
+  const board = useMemo(
+    () => buildRollingWeekBoard({ items, choreTemplates, choreCompletions, children, completions, householdTimezone }),
+    [items, choreTemplates, choreCompletions, children, completions, householdTimezone]
   );
 
-  // Identical logic to ParentOrganizer.jsx's former handleComplete — a
-  // recurring Item's own `status` is never touched (stays "open" forever
-  // by design); only its per-occurrence completion record changes. Uses
-  // the SAME household-local `today` the row currently on screen was
-  // grouped/checked against (see the module doc comment above).
+  // Identical logic to the pre-redesign handler — a recurring Item's own
+  // `status` is never touched (stays "open" forever by design); only its
+  // per-occurrence completion record changes, against the SAME
+  // household-local `today` the row currently on screen was checked
+  // against (unchanged completion behavior — presentation-only redesign).
   const handleToggleItem = (item) => {
     if (item.schedule?.recurring) {
       const done = isOccurrenceCompleted(item.id, today, completions);
@@ -77,37 +66,50 @@ const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompl
     setItemStatus(ctx, item.id, item.status === "completed" ? "open" : "completed");
   };
 
-  const filterButtonClass = (active) =>
-    `px-4 py-2.5 rounded-full text-sm font-bold border-2 transition whitespace-nowrap ${
+  const focusButtonClass = (active) =>
+    `flex items-center justify-center gap-1.5 px-5 rounded-2xl text-sm font-bold border-2 transition whitespace-nowrap ${
       active ? "bg-white text-gray-900 border-white" : "text-gray-300 border-gray-600"
     }`;
+  // Section 3: large, obviously-touchable controls, ~56-64px tall.
+  const focusButtonStyle = { height: 60, minWidth: 60 };
 
   return (
-    <div className="w-full">
-      <div className="flex items-center gap-2 flex-wrap mb-5">
-        <button data-testid="agenda-filter-all" onClick={() => setFilter("")} className={filterButtonClass(!filter)}>
+    <div data-testid="family-agenda" className="w-full">
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        {/* testid intentionally kept as "agenda-filter-all" (not renamed to
+            "board-focus-all") — several unrelated test files across the
+            suite (board-selector-navigation, household-timezone,
+            parent-page-import-navigation, review-inbox,
+            parent-tools-persistence, child-rename-settings,
+            calendar-routing-ux, calendar-connection-panel) use this one
+            testid purely as a "Family Board finished loading" landmark,
+            not to exercise filtering — renaming it would break all of them
+            for no reason related to this redesign. */}
+        <button data-testid="agenda-filter-all" style={focusButtonStyle} onClick={() => setFocus("")} className={focusButtonClass(!focus)}>
           All
         </button>
         {children.map((c) => (
           <button
             key={c.id}
-            data-testid="agenda-filter-child"
-            onClick={() => setFilter(c.id)}
-            className={filterButtonClass(filter === c.id)}
+            data-testid={`board-focus-child-${c.id}`}
+            style={focusButtonStyle}
+            onClick={() => setFocus(c.id)}
+            className={focusButtonClass(focus === c.id)}
           >
             {c.emoji} {c.name}
           </button>
         ))}
         <button
-          data-testid="agenda-filter-family"
-          onClick={() => setFilter("family")}
-          className={filterButtonClass(filter === "family")}
+          data-testid="board-focus-family"
+          style={focusButtonStyle}
+          onClick={() => setFocus("family")}
+          className={focusButtonClass(focus === "family")}
         >
-          👨‍👩‍👧‍👧 Family
+          🏠 Family
         </button>
       </div>
 
-      <FamilyAgenda rows={rows} children={children} onToggleItem={handleToggleItem} onToggleChore={onToggleChore} />
+      <FamilyWeekBoard days={board.days} children={children} focus={focus} onToggleItem={handleToggleItem} onToggleChore={onToggleChore} />
     </div>
   );
 };

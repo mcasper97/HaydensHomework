@@ -8,6 +8,21 @@ import OrganizerDisplay from "./organizer/OrganizerDisplay.jsx";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+// Current time only (Section 3 — no separate date, no weather). Updates
+// every 30s, which is plenty for a clock nobody needs to the second.
+const FamilyBoardClock = () => {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <span data-testid="board-clock" className="text-gray-500 text-sm font-semibold">
+      {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+    </span>
+  );
+};
+
 /**
  * FamilyBoard — an unattended, sign-in-free "wall tablet" view.
  *
@@ -208,15 +223,18 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   const choreTemplates = profile?.choreTemplates || {};
   const choreCompletions = profile?.choreCompletions || {};
   const chorePoints = profile?.chorePoints || {};
-  const boardTitle = profile?.familyLastName ? `${profile.familyLastName} Family Board` : "Family Board";
 
   return (
     <div className="min-h-screen flex flex-col items-center p-6" style={{ background: "#1C1C1E" }}>
       <div className="w-full max-w-6xl">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-display text-white">🏠 {boardTitle}</h1>
-            {email && <p className="text-gray-400 text-sm mt-1">{email}</p>}
+        {/* Minimal header (Section 3 of the rolling-week redesign): title +
+            current time only — no separate calendar date, no weather. Large
+            per-learner focus controls live just below, in
+            organizer/FamilyAgendaBoard.jsx, which owns that state. */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-baseline gap-3">
+            <h1 className="text-2xl font-display text-white">Haydens - Homework <span className="text-gray-500 font-normal">/ Family Board</span></h1>
+            <FamilyBoardClock />
           </div>
           {!kiosk && onBack ? (
             <button

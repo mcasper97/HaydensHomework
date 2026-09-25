@@ -70,3 +70,15 @@ export async function checkGmailEmail() {
     results: Array.isArray(data.results) ? data.results : [],
   };
 }
+
+/**
+ * Parent testing control (Settings -> Email Import -> Testing Tools).
+ * Makes previously processed Gmail messages eligible to be scanned again —
+ * see api/gmail-reset-processing.js / api/_gmailProcessingResetStore.js.
+ * Never deletes SourceRecords/Items/candidates, and never itself triggers
+ * Check Email — the caller decides whether/when to check again.
+ */
+export async function resetGmailProcessingHistory() {
+  const data = await authedFetch("/api/gmail-reset-processing", { method: "POST" });
+  return { resetCount: data.resetCount || 0 };
+}

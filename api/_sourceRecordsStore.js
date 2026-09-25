@@ -15,6 +15,7 @@
  */
 import "./_auth.js"; // triggers Firebase Admin app initialization (side effect, shared singleton)
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getGmailProcessingResetAt, toMillis } from "./_gmailProcessingResetStore.js";
 
 function defaultDb() {
   return getFirestore();
@@ -57,13 +58,28 @@ export async function createSourceRecordServerSide(uid, data, { db = defaultDb()
  * Returns a Set of every gmailMessageId already recorded in this user's
  * "gmail_email" SourceRecords, for O(1) dedupe lookups against newly
  * listed Gmail messages.
+ *
+ * Gmail processing reset (testing control — api/_gmailProcessingResetStore.js):
+ * a gmail_email SourceRecord captured BEFORE this household's own reset
+ * marker is excluded from the returned set, so that message is treated as
+ * not-yet-processed again — without the SourceRecord itself, or anything
+ * downstream of it, ever being touched. No marker set (the common case) ->
+ * every gmail_email SourceRecord still counts, exactly the original,
+ * unreset behavior.
  */
 export async function listProcessedGmailMessageIds(uid, { db = defaultDb() } = {}) {
-  const snap = await db.collection("users").doc(uid).collection("sourceRecords").get();
+  const [snap, resetAtMs] = await Promise.all([
+    db.collection("users").doc(uid).collection("sourceRecords").get(),
+    getGmailProcessingResetAt(uid, { db }),
+  ]);
   const ids = new Set();
   for (const doc of snap.docs) {
     const data = doc.data();
     if (data?.sourceType === "gmail_email" && typeof data?.metadata?.gmailMessageId === "string") {
+      if (resetAtMs != null) {
+        const capturedAtMs = toMillis(data.capturedAt);
+        if (capturedAtMs != null && capturedAtMs < resetAtMs) continue; // reset out — eligible again
+      }
       ids.add(data.metadata.gmailMessageId);
     }
   }

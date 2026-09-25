@@ -13,7 +13,7 @@
  * changes, every recurrence call site inherits the fix automatically.
  */
 
-const ACTIONABLE_STATUSES = new Set(["open", "in_progress"]);
+export const ACTIONABLE_STATUSES = new Set(["open", "in_progress"]);
 
 export const todayStr = () => new Date().toISOString().slice(0, 10);
 

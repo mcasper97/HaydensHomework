@@ -1,6 +1,7 @@
 import React from "react";
 import GmailCheckEmailAction from "../GmailCheckEmailAction.jsx";
 import AutomaticEmailCheckingSection from "./AutomaticEmailCheckingSection.jsx";
+import GmailTestingToolsSection from "./GmailTestingToolsSection.jsx";
 
 /* ─────────────────────── Email Import Settings Section ───────────────────────
  * New section (Settings) separate from the Gmail connection/sender section.
@@ -22,6 +23,8 @@ const EmailImportSettingsSection = ({ ctx, childProfiles, timezone }) => (
     <GmailCheckEmailAction ctx={ctx} childProfiles={childProfiles} />
 
     <AutomaticEmailCheckingSection ctx={ctx} timezone={timezone} />
+
+    <GmailTestingToolsSection />
   </div>
 );
 
