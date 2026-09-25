@@ -191,14 +191,16 @@ const FullCardRow = ({ row, children, prominent, onToggleItem, onToggleChore, da
       data-testid="agenda-row"
       data-emphasis={prominent ? "prominent" : "muted"}
       data-column={dataColumn}
-      className="rounded-xl"
       style={{
         display: "flex",
         alignItems: "center",
         gap: 10,
-        padding: "6px 10px",
+        padding: "8px 12px",
+        borderRadius: 14,
         background: SURFACE.cardToday,
+        border: `1px solid ${SURFACE.border}`,
         borderLeft: `4px solid ${owner.accent.border}`,
+        boxShadow: SURFACE.cardShadow,
         opacity: prominent ? 1 : 0.6,
       }}
     >
@@ -243,8 +245,18 @@ const TodayRow = ({ row, children, prominent, onToggleItem, onToggleChore }) => 
         data-testid="agenda-row"
         data-emphasis="muted"
         data-column="today"
-        className="rounded-lg opacity-70"
-        style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", background: SURFACE.cardToday, borderLeft: `2px solid ${owner.accent.border}` }}
+        className="opacity-70"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "6px 8px",
+          borderRadius: 12,
+          background: SURFACE.cardToday,
+          border: `1px solid ${SURFACE.border}`,
+          borderLeft: `2px solid ${owner.accent.border}`,
+          boxShadow: SURFACE.cardShadow,
+        }}
       >
         {row.completionEligible && <CompletionControl row={row} onToggle={onToggle} size="compact" />}
         <OwnerChip owner={owner} size={20} fontSize={10} />
@@ -280,8 +292,18 @@ const FutureRow = ({ row, children, prominent, onToggleItem, onToggleChore }) =>
       data-testid="agenda-row"
       data-emphasis={prominent ? "prominent" : "muted"}
       data-column="future"
-      className={`rounded-lg ${prominent ? "" : "opacity-65"}`}
-      style={{ display: "flex", alignItems: "flex-start", gap: 6, padding: "6px", background: SURFACE.cardFuture, borderLeft: `3px solid ${owner.accent.border}` }}
+      className={prominent ? "" : "opacity-65"}
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 6,
+        padding: "7px 8px",
+        borderRadius: 12,
+        background: SURFACE.cardFuture,
+        border: `1px solid ${SURFACE.border}`,
+        borderLeft: `3px solid ${owner.accent.border}`,
+        boxShadow: SURFACE.cardShadow,
+      }}
     >
       {row.completionEligible && <CompletionControl row={row} onToggle={onToggle} size="compact" />}
       <OwnerChip owner={owner} size={16} fontSize={9} />
@@ -304,22 +326,25 @@ const FutureRow = ({ row, children, prominent, onToggleItem, onToggleChore }) =>
 // for anyone not reading it visually, and a comfortable minimum touch
 // target (44px in Today's roomier column, 32px in a future column, where
 // the full 44px isn't practical inside a 1fr-wide list).
-const OverflowButton = ({ day, windowKey, overflowCount, isToday, onOpen }) => (
+// MOCKUP-FIDELITY PASS (Section 17): a soft, readable pill tinted with the
+// SAME window accent the header band above it uses, rather than a muted
+// dashed-border placeholder — reads as a clear, friendly, tappable control
+// consistent with the rest of the polished card system.
+const OverflowButton = ({ day, windowKey, overflowCount, isToday, accent, onOpen }) => (
   <button
     data-testid="week-window-overflow"
     onClick={onOpen}
     aria-label={`Show ${overflowCount} more items for ${dayWeekdayFull(day.dateStr)} ${WINDOW_LABELS[windowKey]}`}
-    className={`rounded-lg font-semibold transition hover:brightness-125 focus:outline-none focus:ring-2 ${
-      isToday ? "text-xs" : "text-[10px]"
-    }`}
+    className={`font-bold transition hover:brightness-105 focus:outline-none focus:ring-2 ${isToday ? "text-xs" : "text-[10px]"}`}
     style={{
       width: "100%",
       textAlign: "left",
       minHeight: isToday ? 44 : 32,
-      padding: isToday ? "0 12px" : "0 6px",
-      color: SURFACE.textSecondary,
-      background: "transparent",
-      border: `1.5px dashed ${SURFACE.border}`,
+      padding: isToday ? "0 12px" : "0 8px",
+      borderRadius: 10,
+      color: accent.text,
+      background: accent.bg,
+      border: `1px solid ${accent.border}`,
     }}
   >
     +{overflowCount} more
@@ -334,9 +359,23 @@ const WeekWindow = ({ windowKey, day, rows, children, focus, onToggleItem, onTog
   const RowComponent = isToday ? TodayRow : FutureRow;
   const accent = WINDOW_ACCENTS[windowKey];
   return (
-    <div data-testid={`week-window-${windowKey}`} style={{ marginBottom: 4 }}>
+    <div data-testid={`week-window-${windowKey}`} style={{ marginBottom: 6 }}>
+      {/* MOCKUP-FIDELITY PASS (Section 9): a soft colored header BAND
+          (rounded rect, accent.bg fill) replaces the earlier thin
+          border-bottom rule — "current thin-rule treatment is not enough"
+          — full-width, with the same icon + label, so each populated
+          execution window reads as its own clearly grouped, kid-friendly
+          section instead of a plain text label with a hairline under it. */}
       <div
-        style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2, paddingBottom: 2, borderBottom: `2px solid ${accent.border}` }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 4,
+          padding: isToday ? "5px 10px" : "3px 7px",
+          borderRadius: 8,
+          background: accent.bg,
+        }}
       >
         <span aria-hidden="true" className={isToday ? "text-xs" : "text-[9px]"}>
           {accent.icon}
@@ -366,6 +405,7 @@ const WeekWindow = ({ windowKey, day, rows, children, focus, onToggleItem, onTog
             windowKey={windowKey}
             overflowCount={overflowCount}
             isToday={isToday}
+            accent={accent}
             onOpen={() => onOpenOverflow({ day, windowKey, rows })}
           />
         )}
@@ -407,7 +447,7 @@ const OverflowModal = ({ day, windowKey, rows, children, focus, onToggleItem, on
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "rgba(0,0,0,0.72)",
+        background: "rgba(31, 41, 55, 0.55)",
         zIndex: 1000,
       }}
     >
@@ -416,12 +456,14 @@ const OverflowModal = ({ day, windowKey, rows, children, focus, onToggleItem, on
         role="dialog"
         aria-modal="true"
         aria-label={`${dayHeaderFullLabel(day.dateStr)} — ${WINDOW_LABELS[windowKey]}`}
-        className="w-full rounded-2xl"
+        className="w-full"
         style={{
           display: "flex",
           flexDirection: "column",
-          background: SURFACE.panelToday,
+          borderRadius: 24,
+          background: SURFACE.cardToday,
           border: `1px solid ${SURFACE.border}`,
+          boxShadow: "0 20px 50px rgba(31, 41, 55, 0.25)",
           maxWidth: 480,
           maxHeight: "80vh",
         }}
@@ -510,28 +552,37 @@ const FamilyWeekBoard = ({ days, children = [], focus, onToggleItem, onToggleCho
               data-date={day.dateStr}
               data-today={day.isToday ? "true" : "false"}
               data-column-density={day.isToday ? "today" : "future"}
-              className="rounded-xl"
               style={{
                 display: "flex",
                 flexDirection: "column",
                 minWidth: 0,
-                padding: day.isToday ? 8 : 6,
+                borderRadius: 18,
+                padding: day.isToday ? 10 : 8,
                 background: day.isToday ? SURFACE.panelToday : SURFACE.panelFuture,
                 border: `1px solid ${SURFACE.border}`,
+                boxShadow: day.isToday ? SURFACE.panelShadowToday : SURFACE.panelShadow,
                 overflow: "hidden",
                 height: "100%",
                 minHeight: 0,
               }}
             >
-              <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 4, paddingLeft: 2, paddingRight: 2 }}>
+              {/* MOCKUP-FIDELITY PASS (Section 8): future-day headers were
+                  bumped from text-xs/textSecondary (read as "weak tiny gray
+                  text") up to text-sm/textPrimary — still visibly secondary
+                  to Today's own larger text-lg treatment, but now a clear,
+                  confident day identity rather than a barely-there label. */}
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 6, paddingLeft: 2, paddingRight: 2 }}>
                 <span
-                  className={day.isToday ? "text-lg font-extrabold" : "text-xs font-extrabold"}
-                  style={{ color: day.isToday ? SURFACE.textPrimary : SURFACE.textSecondary }}
+                  className={day.isToday ? "text-lg font-extrabold" : "text-sm font-extrabold"}
+                  style={{ color: SURFACE.textPrimary }}
                 >
                   {dayHeaderLabel(day.dateStr)}
                 </span>
                 {day.isToday && (
-                  <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: ALL_FOCUS_ACCENT.text }}>
+                  <span
+                    className="text-[10px] font-bold uppercase tracking-wide"
+                    style={{ color: ALL_FOCUS_ACCENT.text, background: ALL_FOCUS_ACCENT.bg, padding: "2px 7px", borderRadius: 999 }}
+                  >
                     Today
                   </span>
                 )}
@@ -552,9 +603,21 @@ const FamilyWeekBoard = ({ days, children = [], focus, onToggleItem, onToggleCho
                   />
                 ))
               ) : (
+                // MOCKUP-FIDELITY PASS (Section 16): an empty future day
+                // still gets an intentional, balanced feel — the message
+                // sits in its own soft white pill rather than as bare loose
+                // text on the tinted panel, so it reads as a deliberately
+                // designed "nothing due" state, not an unfinished one.
                 <div
-                  className={day.isToday ? "text-sm px-1" : "text-[10px] px-0.5"}
-                  style={{ color: SURFACE.textMuted }}
+                  className={day.isToday ? "text-sm" : "text-xs"}
+                  style={{
+                    color: SURFACE.textMuted,
+                    background: SURFACE.cardFuture,
+                    border: `1px solid ${SURFACE.border}`,
+                    borderRadius: 12,
+                    padding: day.isToday ? "10px 12px" : "8px 10px",
+                    marginTop: 2,
+                  }}
                 >
                   Nothing scheduled
                 </div>

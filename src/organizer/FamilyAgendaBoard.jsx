@@ -5,7 +5,7 @@ import { buildRollingWeekBoard } from "./rollingWeekBoard.js";
 import { todayStr, isOccurrenceCompleted } from "./itemBuckets.js";
 import { householdTodayStr } from "../data/householdTimezone.js";
 import { accentForChild, FAMILY_ACCENT } from "./learnerAccent.js";
-import { ALL_FOCUS_ACCENT } from "./boardTheme.js";
+import { ALL_FOCUS_ACCENT, SURFACE } from "./boardTheme.js";
 import FamilyWeekBoard from "./FamilyWeekBoard.jsx";
 
 /* ─────────────────────── Family Agenda Board ───────────────────────
@@ -68,20 +68,24 @@ const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompl
     setItemStatus(ctx, item.id, item.status === "completed" ? "open" : "completed");
   };
 
-  // K-5 REDESIGN (Section 10): each focus pill always carries its own
-  // owner's accent (green for All, each learner's own palette slot, the
-  // Family accent for Family) so identity reads at a glance even before
-  // picking one; the ACTIVE pill gets a bolder filled treatment (solid
-  // accent background, white text) so which one is selected is still
-  // unambiguous. Still large/obviously-touchable (Section 3/10: ~56-64px).
+  // K-5 REDESIGN (Section 10) + MOCKUP-FIDELITY PASS (Section 14): each
+  // focus pill always carries its own owner's accent (green for All, each
+  // learner's own palette slot, the Family accent for Family) so identity
+  // reads at a glance even before picking one; the ACTIVE pill gets a
+  // bolder filled treatment (solid accent background, white text) so which
+  // one is selected is still unambiguous. Height trimmed from the earlier
+  // pass's 56px to 48px — still a comfortable touch target (well above the
+  // 44px minimum every mobile platform's own guidance uses) — and a soft
+  // shadow added, both to match the mockup's more compact, equal-weight
+  // pill proportions instead of the earlier, visibly taller buttons.
   const focusPillStyle = (accent, active) => ({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    height: 56,
-    minWidth: 56,
-    padding: "0 20px",
+    height: 48,
+    minWidth: 48,
+    padding: "0 18px",
     borderRadius: 999,
     fontWeight: 800,
     fontSize: 14,
@@ -89,6 +93,7 @@ const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompl
     border: `2px solid ${accent.border}`,
     background: active ? accent.border : accent.bg,
     color: active ? "#FFFFFF" : accent.text,
+    boxShadow: active ? "0 2px 6px rgba(37, 48, 74, 0.15)" : "none",
     transition: "background 0.15s ease, color 0.15s ease",
   });
 
@@ -100,7 +105,30 @@ const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompl
   // fit whatever the board naturally wants.
   return (
     <div data-testid="family-agenda" className="w-full" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flexShrink: 0, marginBottom: 8, marginTop: 8 }}>
+      {/* MOCKUP-FIDELITY PASS — this is the bottom tier of the composed
+          header zone FamilyBoard.jsx's own header row starts: same white
+          background/border/shadow, but rounded (and shadowed) on the
+          BOTTOM only and with no top border, so the two pieces sit flush
+          against each other with no visible seam and read as one
+          continuous card (Section 4). The 14px marginBottom below is the
+          intentional gap between that composed header card and the day
+          board grid beneath it. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+          flexShrink: 0,
+          background: SURFACE.headerBackground,
+          border: `1px solid ${SURFACE.border}`,
+          borderTop: "none",
+          borderRadius: "0 0 20px 20px",
+          boxShadow: SURFACE.panelShadow,
+          padding: "12px 20px",
+          marginBottom: 14,
+        }}
+      >
         {/* testid intentionally kept as "agenda-filter-all" (not renamed to
             "board-focus-all") — several unrelated test files across the
             suite (board-selector-navigation, household-timezone,

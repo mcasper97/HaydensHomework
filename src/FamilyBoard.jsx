@@ -243,15 +243,20 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   return (
     <div className="familyboard-viewport" style={{ background: SURFACE.appBackground, display: "flex", flexDirection: "column" }}>
       <div className="w-full" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: "10px 20px 14px" }}>
-        {/* K-5 REDESIGN header band (Section "TOP HEADER"): brand +
-            compact learner chips + current time + Full Screen control, all
-            in one light card-like row. The learner chips render here (not
-            duplicated inside OrganizerDisplay.jsx any more) so both the
-            normal and kiosk surfaces share exactly one points display.
-            Large per-learner FOCUS controls live just below, in
-            organizer/FamilyAgendaBoard.jsx, which still owns that state. */}
+        {/* MOCKUP-FIDELITY PASS — integrated header zone (Section 4): this
+            row's bottom corners are square and it carries no bottom border,
+            so it visually FUSES with FamilyAgendaBoard.jsx's own focus-pill
+            row directly beneath it (which mirrors this same white
+            background/border/shadow and rounds only its own bottom
+            corners) — together they read as one continuous composed header
+            card, not two disconnected floating rows, without moving the
+            focus-pill state itself out of the component that owns it.
+            Brand + compact learner chips + current time + Full Screen
+            control all live in this top tier. The learner chips render
+            here (not duplicated inside OrganizerDisplay.jsx any more) so
+            both the normal and kiosk surfaces share exactly one points
+            display. */}
         <div
-          className="rounded-2xl"
           style={{
             display: "flex",
             alignItems: "center",
@@ -261,7 +266,10 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
             flexShrink: 0,
             background: SURFACE.headerBackground,
             border: `1px solid ${SURFACE.border}`,
-            padding: "10px 16px",
+            borderBottom: "none",
+            borderRadius: "20px 20px 0 0",
+            boxShadow: SURFACE.panelShadow,
+            padding: "12px 20px",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

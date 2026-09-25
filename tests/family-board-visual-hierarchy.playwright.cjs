@@ -131,8 +131,15 @@ function hexToRgb(hex) {
   const studyHallHeaderColor = await studyHallHeaderLabel.evaluate((el) => getComputedStyle(el).color);
   ok('"Study Hall" uses the muted-indigo window accent, distinct from "Today"\'s', studyHallHeaderColor === hexToRgb(WINDOW_ACCENTS.studyHall.text) && studyHallHeaderColor !== todayHeaderColor);
 
-  const todayHeaderBorder = await todayColumn.getByTestId('week-window-today').locator('div').first().evaluate((el) => getComputedStyle(el).borderBottomColor);
-  ok('The "Today" window header has its own thin accent border line (not a large background block)', todayHeaderBorder === hexToRgb(WINDOW_ACCENTS.today.border));
+  // MOCKUP-FIDELITY PASS superseded the earlier "thin border-bottom rule"
+  // treatment with a soft colored header BAND (Section 9 of that later
+  // task: "current thin-rule treatment is not enough... a soft colored
+  // header band, rounded corners") — this assertion was updated from
+  // checking borderBottomColor to checking the band's own background
+  // fill, which is now the actual mechanism giving each window its
+  // distinct, clearly-grouped visual identity.
+  const todayHeaderBand = await todayColumn.getByTestId('week-window-today').locator('div').first().evaluate((el) => getComputedStyle(el).backgroundColor);
+  ok('The "Today" execution-window header renders as its own soft colored band (not a bare thin rule)', todayHeaderBand === hexToRgb(WINDOW_ACCENTS.today.bg));
 
   // ============ Rolling 5-day structure + grid ratio unchanged (this task never touches either) ============
   const columns = page.locator('[data-testid="week-day-column"]');

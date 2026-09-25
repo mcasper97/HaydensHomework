@@ -44,17 +44,38 @@ const LearnerPointsStrip = ({ children = [], chorePoints = {}, childStats = {} }
         return (
           <div
             key={child.id}
-            className="rounded-full px-3"
             style={{
               display: "flex",
               alignItems: "center",
-              gap: "0.4rem",
+              gap: 8,
               height: 44,
+              padding: "0 14px 0 6px",
+              borderRadius: 999,
               background: accent.bg,
               border: `1.5px solid ${accent.border}`,
+              boxShadow: "0 1px 3px rgba(37, 48, 74, 0.08)",
             }}
           >
-            <span className="text-lg leading-none" aria-hidden="true">{child.emoji}</span>
+            {/* MOCKUP-FIDELITY PASS (Section 13): the learner's emoji now
+                sits in its own small round white "avatar" badge, matching
+                the mockup's circular avatar-chip treatment, rather than
+                floating directly on the pill's own tinted background. */}
+            <span
+              aria-hidden="true"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 30,
+                height: 30,
+                borderRadius: "50%",
+                background: "#FFFFFF",
+                fontSize: 16,
+                lineHeight: 1,
+              }}
+            >
+              {child.emoji}
+            </span>
             <span className="font-display text-sm font-extrabold whitespace-nowrap" style={{ color: accent.text }}>{child.name}</span>
             <span className="text-xs font-bold whitespace-nowrap" style={{ color: accent.text }}>⭐ {totalPoints} pts</span>
           </div>

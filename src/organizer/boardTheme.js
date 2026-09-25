@@ -22,14 +22,26 @@
 // distinct tint per day-column "mood" (Today reads faintly green/fresh,
 // future days read faintly cool/blue), and plain white cards on top so a
 // card always pops off its own column's surface.
+//
+// MOCKUP-FIDELITY PASS: panelFuture was pulled MUCH closer to white — a
+// "very subtle tinting only" per the approved mockup's own review notes,
+// not the "heavy blue block" the previous, more saturated value read as
+// once real card shadows/borders were added on top of it. Two shadow
+// tokens were added (cardShadow/panelShadow) so panels and cards read as
+// physically layered/elevated surfaces (soft drop shadow), matching the
+// mockup's polished, "premium kitchen display" feel instead of flat color
+// fills with no depth.
 export const SURFACE = {
   appBackground: "#FFF6E8", // warm cream / pale sky — never black/charcoal
-  panelFuture: "#EAF4FC", // very light blue/neutral future-day column surface
-  panelToday: "#F0FAEE", // very light green/cream — Today's "active" surface
+  panelFuture: "#F7FAFD", // near-white with a whisper of cool blue
+  panelToday: "#F1FAEE", // very light green/cream — Today's "active" surface
   cardFuture: "#FFFFFF",
   cardToday: "#FFFFFF",
-  border: "#E3E9F2", // soft neutral hairline border shared by panels/strips
+  border: "#E7ECF3", // soft neutral hairline border shared by panels/strips
   headerBackground: "#FFFFFF", // top header band surface
+  panelShadow: "0 2px 10px rgba(37, 48, 74, 0.07)", // future day-column / header elevation
+  panelShadowToday: "0 4px 16px rgba(37, 48, 74, 0.10)", // Today's own panel reads slightly more elevated/prominent
+  cardShadow: "0 1px 4px rgba(37, 48, 74, 0.08)", // individual task-card elevation
   // Text tokens — set inline (never a Tailwind text-color utility) so
   // headings/body copy stay legible even if the Tailwind CDN never loads;
   // this also means the browser's own default (black) text already reads
