@@ -1,48 +1,63 @@
 /* ============================== Family Board theme tokens ==============================
- * Small, presentation-only color constants for the Family Board visual-
- * hierarchy correction (UX review): the board had gone too visually
- * monochrome/dark, with almost no distinction between the app background,
- * a day column's own surface, and a card sitting on top of it, and no way
- * to tell one execution window's header from another's at a glance.
- *
- * Every value here is inline-style-consumed, not a Tailwind utility class —
+ * K-5 KID-FRIENDLY REDESIGN (approved mockup): the Family Board moved from a
+ * dark/charcoal "monitor" aesthetic to a bright, cheerful, kitchen-display
+ * palette a K-5 kid actually wants to look at — warm cream app background,
+ * white cards, sunny/sky/purple/twilight execution-window accents. Every
+ * value here is still inline-style-consumed, not a Tailwind utility class —
  * this app's Tailwind is CDN-loaded (index.html) and this environment's own
  * sandbox network policy blocks that CDN outright (confirmed while building
  * the rolling-day layout: cdn.tailwindcss.com fails with
  * ERR_TUNNEL_CONNECTION_FAILED here), so any layout- or color-critical
- * property has to be inline to render (and be testable) reliably —
- * consistent with FamilyWeekBoard.jsx's own `display: grid` precedent.
+ * property has to be inline to render (and be testable) reliably.
  *
- * Deliberately restrained throughout: muted/desaturated tones, never a
- * bright/neon/pastel fill, never a large saturated background block — the
- * accent is a thin border, a chip, or a small icon + tinted label text,
- * not a colored card surface.
+ * Color is still used with restraint in the sense the earlier dark-theme
+ * pass established — a header accent, an icon, a badge, a card's left-edge
+ * marker — never a giant saturated background block flooding the whole
+ * screen (Section 7: "avoid excessive pastel blocks similar to Skylight").
+ * The difference from the prior pass is brightness/warmth, not the
+ * restraint principle itself.
  */
 
-// Layered dark-neutral surfaces — darkest at the app shell, one step
-// lighter per layer, so a day column and the cards inside it read as
-// distinct surfaces rather than one flat block of near-identical gray.
+// Layered light-neutral surfaces — a warm cream app shell, a slightly
+// distinct tint per day-column "mood" (Today reads faintly green/fresh,
+// future days read faintly cool/blue), and plain white cards on top so a
+// card always pops off its own column's surface.
 export const SURFACE = {
-  appBackground: "#131315", // charcoal / near-black
-  panelFuture: "#1B1D20", // a future day's own dark-slate column surface
-  panelToday: "#212328", // Today's column — one step lighter, the "active" surface
-  cardFuture: "#26282C", // a future-day row/card surface
-  cardToday: "#2B2D32", // a Today row/card surface — slightly lighter still
-  border: "#33363B", // a neutral hairline border shared by panels/strips
+  appBackground: "#FFF6E8", // warm cream / pale sky — never black/charcoal
+  panelFuture: "#EAF4FC", // very light blue/neutral future-day column surface
+  panelToday: "#F0FAEE", // very light green/cream — Today's "active" surface
+  cardFuture: "#FFFFFF",
+  cardToday: "#FFFFFF",
+  border: "#E3E9F2", // soft neutral hairline border shared by panels/strips
+  headerBackground: "#FFFFFF", // top header band surface
+  // Text tokens — set inline (never a Tailwind text-color utility) so
+  // headings/body copy stay legible even if the Tailwind CDN never loads;
+  // this also means the browser's own default (black) text already reads
+  // fine against these light surfaces as a safety net.
+  textPrimary: "#243046", // dark navy/slate — headings, card titles
+  textSecondary: "#66738A", // muted slate-gray — secondary/meta text
+  textMuted: "#9CA7B8", // faint slate — placeholders, "Nothing scheduled"
 };
 
-// Execution-window accents — a thin border/icon/label-color cue per
-// window, never a background fill (Section 4: "prefer a thin accent line,
-// small icon, subtle header tint, distinct header text color... avoid
-// large background blocks").
+// Execution-window accents — each window gets its own kid-friendly hue: a
+// light tint for the section background/badge, a saturated border/icon
+// color, and a readable-on-cream text color. Still a thin border/icon/badge
+// cue, never a large background fill across the whole column.
 export const WINDOW_ACCENTS = {
-  beforeSchool: { border: "#C99A3D", text: "#D9AF5F", icon: "🌅" }, // muted amber
-  today: { border: "#5C7A9E", text: "#8FA8C4", icon: "🗓️" }, // slate / navy
-  studyHall: { border: "#8478C9", text: "#A79CDE", icon: "📖" }, // muted indigo
-  evening: { border: "#5A7080", text: "#8FA4B2", icon: "🌙" }, // blue-gray
+  beforeSchool: { bg: "#FFF3D3", border: "#F0AD1E", text: "#8A5B00", icon: "☀️" }, // sunny yellow/gold
+  today: { bg: "#DFF0FD", border: "#3D9BE0", text: "#155A8A", icon: "📋" }, // bright sky blue
+  studyHall: { bg: "#EFE4FB", border: "#9B5FE0", text: "#63328F", icon: "📚" }, // playful purple
+  evening: { bg: "#E2E7FB", border: "#5B6FD6", text: "#333F91", icon: "🌙" }, // deeper soft twilight blue
 };
 
-// A test/quiz's "Prep needed" indicator — restrained amber/burnt-orange,
-// distinct from beforeSchool's cooler amber so the two are never confused,
-// and never the bright/neon orange the task explicitly calls out to avoid.
-export const PREP_ACCENT = { bg: "#4A2E14", border: "#D98A3D", text: "#F0C08C" };
+// A test/quiz's "Prep needed" badge — bright, friendly orange, distinct
+// from beforeSchool's yellow-gold so the two are never confused.
+export const PREP_ACCENT = { bg: "#FFE6CC", border: "#F28C28", text: "#9A4E0A" };
+
+// A completed item's checkmark control — cheerful green, per Section 7.
+export const COMPLETION_ACCENT = { done: "#3FBE7C", idleBorder: "#C7D0DC" };
+
+// The "All" focus button's own accent — a friendly green distinct from any
+// single learner's own color, so "everyone in focus" doesn't read as
+// belonging to one child.
+export const ALL_FOCUS_ACCENT = { bg: "#E1F5E6", border: "#3FBE7C", text: "#1E7A44" };

@@ -6,6 +6,7 @@ import { householdTodayStr } from "./data/householdTimezone.js";
 import FamilyAgendaBoard from "./organizer/FamilyAgendaBoard.jsx";
 import OrganizerDisplay from "./organizer/OrganizerDisplay.jsx";
 import LearnerPointsStrip from "./organizer/LearnerPointsStrip.jsx";
+import FullScreenButton from "./organizer/FullScreenButton.jsx";
 import { SURFACE } from "./organizer/boardTheme.js";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -19,7 +20,7 @@ const FamilyBoardClock = () => {
     return () => clearInterval(id);
   }, []);
   return (
-    <span data-testid="board-clock" className="text-gray-500 text-sm font-semibold">
+    <span data-testid="board-clock" className="text-sm font-bold" style={{ color: SURFACE.textPrimary }}>
       {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
     </span>
   );
@@ -212,10 +213,10 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: SURFACE.appBackground }}>
+      <div className="familyboard-viewport" style={{ background: SURFACE.appBackground, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div className="text-center">
-          <div className="text-5xl mb-4 animate-pulse">🏔️</div>
-          <p className="text-gray-400 font-display text-xl">Loading family board…</p>
+          <div className="text-5xl mb-4 animate-pulse">🏡</div>
+          <p className="font-display text-xl" style={{ color: SURFACE.textSecondary }}>Loading family board…</p>
         </div>
       </div>
     );
@@ -226,78 +227,104 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   const choreCompletions = profile?.choreCompletions || {};
   const chorePoints = profile?.chorePoints || {};
 
-  // VIEWPORT-FIT CORRECTION (no-scroll fix): the outer shell is a real,
-  // bounded `height: 100vh` + `overflow: hidden` flex column (not the old
-  // `min-h-screen`, a MINIMUM that let content grow the page taller than
-  // the viewport with nothing to stop it) — the actual root cause of the
-  // page-level scroll this corrects. Every property in that chain
-  // (display/flexDirection/flex/minHeight/height/overflow, all the way
-  // down through FamilyAgendaBoard.jsx's and FamilyWeekBoard.jsx's own
-  // containers) is inline rather than a Tailwind utility class — same
-  // CDN-independence reasoning as this app's other inline-style precedents
-  // (see FamilyWeekBoard.jsx's own `display: grid` comment): a load-bearing
-  // height constraint that only sometimes applies is exactly how the
-  // original overflow went unnoticed. index.html's own small inline
-  // <style> reset (html/body/#root height:100%, margin:0) is the other
-  // half of this fix — without it, the browser's default 8px body margin
-  // alone breaks the 100vh chain at its very first link.
+  // K-5 REDESIGN — FULL-VIEWPORT SHELL (Section 2/4): the outer shell uses
+  // the `.familyboard-viewport` class (index.html — a plain CSS rule, not a
+  // Tailwind utility, so it survives even if the Tailwind CDN never loads)
+  // for `width:100vw` + `height:100vh`/`100dvh` + `overflow:hidden`. The old
+  // `max-w-6xl mx-auto` centered desktop wrapper is gone — Section 2
+  // explicitly forbids a narrow centered shell; the board now genuinely
+  // uses the full viewport width, with only a small edge gutter (16-24px)
+  // for breathing room, not a fixed max column. The
+  // display:flex/flexDirection/flex/minHeight chain below (down through
+  // FamilyAgendaBoard.jsx's and FamilyWeekBoard.jsx's own containers) stays
+  // inline rather than Tailwind classes for the same CDN-independence
+  // reason as before (Section 19) — this is the load-bearing fix for the
+  // page never scrolling.
   return (
-    <div
-      className="p-4"
-      style={{ background: SURFACE.appBackground, height: "100vh", overflow: "hidden", display: "flex", flexDirection: "column", alignItems: "center" }}
-    >
-      <div className="w-full max-w-6xl" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-        {/* Minimal header (Section 3 of the rolling-week redesign): title +
-            current time only — no separate calendar date, no weather. Large
-            per-learner focus controls live just below, in
-            organizer/FamilyAgendaBoard.jsx, which owns that state. */}
-        <div className="flex items-center justify-between mb-3" style={{ flexShrink: 0 }}>
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-2xl font-display text-white">Haydens - Homework <span className="text-gray-500 font-normal">/ Family Board</span></h1>
-            <FamilyBoardClock />
+    <div className="familyboard-viewport" style={{ background: SURFACE.appBackground, display: "flex", flexDirection: "column" }}>
+      <div className="w-full" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: "10px 20px 14px" }}>
+        {/* K-5 REDESIGN header band (Section "TOP HEADER"): brand +
+            compact learner chips + current time + Full Screen control, all
+            in one light card-like row. The learner chips render here (not
+            duplicated inside OrganizerDisplay.jsx any more) so both the
+            normal and kiosk surfaces share exactly one points display.
+            Large per-learner FOCUS controls live just below, in
+            organizer/FamilyAgendaBoard.jsx, which still owns that state. */}
+        <div
+          className="rounded-2xl"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            flexShrink: 0,
+            background: SURFACE.headerBackground,
+            border: `1px solid ${SURFACE.border}`,
+            padding: "10px 16px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span aria-hidden="true" style={{ fontSize: 26 }}>🏡</span>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              <h1 className="text-xl font-display font-extrabold" style={{ color: SURFACE.textPrimary, margin: 0 }}>
+                Haydens - Homework
+              </h1>
+              <span className="text-sm font-semibold" style={{ color: SURFACE.textSecondary }}>/ Family Board</span>
+            </div>
           </div>
-          {!kiosk && onBack ? (
-            <button
-              onClick={onBack}
-              className="text-gray-400 hover:text-white text-sm font-semibold px-4 py-2 rounded-full border border-gray-700 hover:border-gray-500 transition"
-            >
-              ← Back
-            </button>
-          ) : kiosk ? (
-            // Kiosk mode has no signed-in "back" state to return to. When reached via
-            // the ?board=1 URL (onExitKiosk not provided), this strips the board param
-            // and reloads, landing on the normal sign-in/chooser screen — unchanged
-            // from before Phase 1.5. When reached via the local Organizer device-mode
-            // setting instead (onExitKiosk provided), it just clears that setting so
-            // the device falls back to Parent Mode, no URL/reload involved. Kept small
-            // and low-contrast so it doesn't read as an obvious button to a kid, but
-            // it's there when you need to get back in.
-            onExitKiosk ? (
+
+          {children.length > 0 && <LearnerPointsStrip children={children} chorePoints={chorePoints} childStats={childStats} />}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <FullScreenButton />
+            <FamilyBoardClock />
+            {!kiosk && onBack ? (
               <button
-                onClick={onExitKiosk}
-                className="text-gray-600 hover:text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-full transition"
+                onClick={onBack}
+                className="text-sm font-semibold transition"
+                style={{ color: SURFACE.textSecondary, padding: "8px 16px", borderRadius: 999, border: `1px solid ${SURFACE.border}`, background: "#FFFFFF" }}
               >
-                Home
+                ← Back
               </button>
-            ) : (
-              <a
-                href={window.location.pathname}
-                className="text-gray-600 hover:text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-full transition"
-              >
-                Home
-              </a>
-            )
-          ) : null}
+            ) : kiosk ? (
+              // Kiosk mode has no signed-in "back" state to return to. When reached via
+              // the ?board=1 URL (onExitKiosk not provided), this strips the board param
+              // and reloads, landing on the normal sign-in/chooser screen — unchanged
+              // from before Phase 1.5. When reached via the local Organizer device-mode
+              // setting instead (onExitKiosk provided), it just clears that setting so
+              // the device falls back to Parent Mode, no URL/reload involved. Kept small
+              // and low-contrast so it doesn't read as an obvious button to a kid, but
+              // it's there when you need to get back in.
+              onExitKiosk ? (
+                <button
+                  onClick={onExitKiosk}
+                  className="text-xs font-semibold transition"
+                  style={{ color: SURFACE.textMuted, padding: "6px 12px", borderRadius: 999 }}
+                >
+                  Home
+                </button>
+              ) : (
+                <a
+                  href={window.location.pathname}
+                  className="text-xs font-semibold transition"
+                  style={{ color: SURFACE.textMuted, padding: "6px 12px", borderRadius: 999 }}
+                >
+                  Home
+                </a>
+              )
+            ) : null}
+          </div>
         </div>
 
         {loadError && (
-          <div className="rounded-2xl p-4 mb-6 border border-red-500 bg-red-950 text-red-200 text-sm">
+          <div className="rounded-2xl p-4 mt-3 mb-1 border text-sm" style={{ borderColor: "#F2A6A6", background: "#FDEDED", color: "#9A2E2E", flexShrink: 0 }}>
             ⚠️ {loadError}
           </div>
         )}
 
         {!loadError && children.length === 0 && (
-          <p className="text-gray-400 text-center py-8">No learners set up on this account yet.</p>
+          <p className="text-center py-8" style={{ color: SURFACE.textSecondary }}>No learners set up on this account yet.</p>
         )}
 
         {/* Family Board is now a single unified, execution-only agenda
@@ -306,38 +333,28 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
             FamilyAgendaBoard. No Add Item, no Manage Chores, no Item
             edit/delete, no separate calendar pane — those all belong to
             Parent Board / Settings now (Section 15). */}
-        {!kiosk && (
-          <>
-            {/* ----------------------------- Points strip (compact) ----------------------------- */}
-            <LearnerPointsStrip children={children} chorePoints={chorePoints} childStats={childStats} />
+        {!kiosk && children.length > 0 && (
+          <FamilyAgendaBoard
+            ctx={ctx}
+            children={children}
+            choreTemplates={choreTemplates}
+            choreCompletions={choreCompletions}
+            onToggleChore={toggleChoreDone}
+            householdTimezone={profile?.timezone}
+          />
+        )}
 
-            {/* ----------------------------- Unified agenda ----------------------------- */}
-            {children.length > 0 && (
-              <FamilyAgendaBoard
-                ctx={ctx}
-                children={children}
-                choreTemplates={choreTemplates}
-                choreCompletions={choreCompletions}
-                onToggleChore={toggleChoreDone}
-                householdTimezone={profile?.timezone}
-              />
-            )}
-          </>
+        {kiosk && (
+          <OrganizerDisplay
+            children={children}
+            choreTemplates={choreTemplates}
+            choreCompletions={choreCompletions}
+            ctx={ctx}
+            onToggleChore={toggleChoreDone}
+            householdTimezone={profile?.timezone}
+          />
         )}
       </div>
-
-      {kiosk && (
-        <OrganizerDisplay
-          children={children}
-          choreTemplates={choreTemplates}
-          choreCompletions={choreCompletions}
-          chorePoints={chorePoints}
-          childStats={childStats}
-          ctx={ctx}
-          onToggleChore={toggleChoreDone}
-          householdTimezone={profile?.timezone}
-        />
-      )}
     </div>
   );
 };

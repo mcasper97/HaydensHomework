@@ -128,8 +128,10 @@ function isoDate(offsetDays) {
   const strip = page.getByTestId('learner-points-strip');
   ok('The learner points strip renders', await strip.isVisible());
   ok('It still shows the learner\'s name/emoji identity', await strip.getByText('Riley').isVisible());
-  ok('It still shows chore points information', await strip.getByText(/🧹/).isVisible());
-  ok('It still shows homework points information', await strip.getByText(/📚/).isVisible());
+  // K-5 REDESIGN: the strip now shows one combined "⭐ N pts" total per
+  // learner (chore + homework points summed) rather than two separate
+  // 🧹/📚 markers — matching the approved mockup's own single-number chip.
+  ok('It still shows a combined points total', await strip.getByText(/⭐.*pts/).isVisible());
   ok('No old large purple learner card remains', (await page.locator('text=Chore pts').count()) === 0 && (await page.locator('text=Homework pts').count()) === 0);
   const stripBox = await strip.boundingBox();
   ok(

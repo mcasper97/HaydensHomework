@@ -15,6 +15,20 @@
          reset is guaranteed regardless of the CDN's availability. -->
     <style>
       html, body, #root { height: 100%; margin: 0; padding: 0; }
+      /* K-5 REDESIGN full-viewport shell: a plain CSS rule (not a Tailwind
+         utility) so it survives even when the Tailwind CDN above fails to
+         load. The duplicate `height` declaration is a deliberate CSS
+         fallback, not a bug — a browser that doesn't understand `100dvh`
+         simply ignores that line and keeps the `100vh` rule above it;
+         one that does understand it uses `100dvh` instead (Section 2/4:
+         "height: 100dvh where supported"). FamilyBoard.jsx applies this
+         class to its outermost shell. */
+      .familyboard-viewport {
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        overflow: hidden;
+      }
     </style>
   </head>
   <body>

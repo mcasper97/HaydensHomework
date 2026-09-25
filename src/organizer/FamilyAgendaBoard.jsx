@@ -4,6 +4,8 @@ import { subscribeItemCompletions, setItemCompletion } from "../data/itemComplet
 import { buildRollingWeekBoard } from "./rollingWeekBoard.js";
 import { todayStr, isOccurrenceCompleted } from "./itemBuckets.js";
 import { householdTodayStr } from "../data/householdTimezone.js";
+import { accentForChild, FAMILY_ACCENT } from "./learnerAccent.js";
+import { ALL_FOCUS_ACCENT } from "./boardTheme.js";
 import FamilyWeekBoard from "./FamilyWeekBoard.jsx";
 
 /* ─────────────────────── Family Agenda Board ───────────────────────
@@ -66,12 +68,29 @@ const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompl
     setItemStatus(ctx, item.id, item.status === "completed" ? "open" : "completed");
   };
 
-  const focusButtonClass = (active) =>
-    `flex items-center justify-center gap-1.5 px-5 rounded-2xl text-sm font-bold border-2 transition whitespace-nowrap ${
-      active ? "bg-white text-gray-900 border-white" : "text-gray-300 border-gray-600"
-    }`;
-  // Section 3: large, obviously-touchable controls, ~56-64px tall.
-  const focusButtonStyle = { height: 60, minWidth: 60 };
+  // K-5 REDESIGN (Section 10): each focus pill always carries its own
+  // owner's accent (green for All, each learner's own palette slot, the
+  // Family accent for Family) so identity reads at a glance even before
+  // picking one; the ACTIVE pill gets a bolder filled treatment (solid
+  // accent background, white text) so which one is selected is still
+  // unambiguous. Still large/obviously-touchable (Section 3/10: ~56-64px).
+  const focusPillStyle = (accent, active) => ({
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    height: 56,
+    minWidth: 56,
+    padding: "0 20px",
+    borderRadius: 999,
+    fontWeight: 800,
+    fontSize: 14,
+    whiteSpace: "nowrap",
+    border: `2px solid ${accent.border}`,
+    background: active ? accent.border : accent.bg,
+    color: active ? "#FFFFFF" : accent.text,
+    transition: "background 0.15s ease, color 0.15s ease",
+  });
 
   // VIEWPORT-FIT CORRECTION: this root participates in FamilyBoard.jsx's
   // bounded-height chain (flex:1/minHeight:0) so FamilyWeekBoard's own
@@ -81,7 +100,7 @@ const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompl
   // fit whatever the board naturally wants.
   return (
     <div data-testid="family-agenda" className="w-full" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-      <div className="flex items-center gap-2 flex-wrap mb-2" style={{ flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flexShrink: 0, marginBottom: 8, marginTop: 8 }}>
         {/* testid intentionally kept as "agenda-filter-all" (not renamed to
             "board-focus-all") — several unrelated test files across the
             suite (board-selector-navigation, household-timezone,
@@ -91,25 +110,23 @@ const FamilyAgendaBoard = ({ ctx, children = [], choreTemplates = {}, choreCompl
             testid purely as a "Family Board finished loading" landmark,
             not to exercise filtering — renaming it would break all of them
             for no reason related to this redesign. */}
-        <button data-testid="agenda-filter-all" style={focusButtonStyle} onClick={() => setFocus("")} className={focusButtonClass(!focus)}>
-          All
+        <button data-testid="agenda-filter-all" style={focusPillStyle(ALL_FOCUS_ACCENT, !focus)} onClick={() => setFocus("")}>
+          👪 All
         </button>
         {children.map((c) => (
           <button
             key={c.id}
             data-testid={`board-focus-child-${c.id}`}
-            style={focusButtonStyle}
+            style={focusPillStyle(accentForChild(children, c.id), focus === c.id)}
             onClick={() => setFocus(c.id)}
-            className={focusButtonClass(focus === c.id)}
           >
             {c.emoji} {c.name}
           </button>
         ))}
         <button
           data-testid="board-focus-family"
-          style={focusButtonStyle}
+          style={focusPillStyle(FAMILY_ACCENT, focus === "family")}
           onClick={() => setFocus("family")}
-          className={focusButtonClass(focus === "family")}
         >
           🏠 Family
         </button>
