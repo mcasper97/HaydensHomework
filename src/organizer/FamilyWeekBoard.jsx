@@ -35,13 +35,28 @@ import { ownerMarker } from "./learnerAccent.js";
  * list can still, in principle, overflow a real screen on a very busy day;
  * rather than let that silently push the layout into scrolling, each
  * window caps how many rows it shows and surfaces the rest behind a "+N
- * more" indicator — a last-resort overflow state, never the normal case.
- * Today's cards are taller, so Today gets a LOWER per-window row cap than
- * the future columns' smaller cards do (see MAX_VISIBLE_ROWS_TODAY/FUTURE).
+ * more" indicator — a last-resort overflow state, never the normal case
+ * (see MAX_VISIBLE_ROWS_TODAY/FUTURE).
+ *
+ * SCREENSHOT-REVIEW CORRECTION: the deployed board reached Today's "+N
+ * more" too quickly, and future-day cards were too narrow/truncated to
+ * read. Fixes, all presentation-only: (1) the learner points cards moved
+ * out of this component entirely, into the new compact
+ * LearnerPointsStrip.jsx, reclaiming vertical space for the board itself;
+ * (2) MAX_VISIBLE_ROWS_TODAY raised 3 -> 6 via tighter card
+ * padding/spacing, never smaller title text; (3) FutureRow now omits its
+ * completion control entirely when a row isn't completion-eligible, drops
+ * the decorative type icon, and wraps its title up to 2 lines instead of
+ * truncating — reclaiming width/height for the one thing a future card
+ * must communicate: who, and what.
  */
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MAX_VISIBLE_ROWS_TODAY = 3;
+// DENSITY CORRECTION (screenshot review): Today was reaching "+N more" too
+// quickly. Raised from 3 -> 6 (spec's own "approximately 5-7 actionable
+// rows" target) — achieved by tightening card padding/spacing (see
+// TodayRow's prominent card below), never by shrinking title font size.
+const MAX_VISIBLE_ROWS_TODAY = 6;
 const MAX_VISIBLE_ROWS_FUTURE = 4;
 
 function formatTime12h(hhmm) {
@@ -141,20 +156,23 @@ const TodayRow = ({ row, children, prominent, onToggleItem, onToggleChore }) => 
       data-testid="agenda-row"
       data-emphasis="prominent"
       data-column="today"
-      className="flex items-center gap-3 p-3 rounded-2xl"
+      className="flex items-center gap-2.5 py-2 px-2.5 rounded-xl"
       style={{ background: "#2a2a2c", borderLeft: `4px solid ${owner.accent.border}` }}
     >
       <CompletionControl row={row} onToggle={onToggle} size="large" />
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1 truncate">
+        <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-0.5 truncate">
           <OwnerChip owner={owner} size="w-5 h-5 text-[10px]" />
           <span className="truncate">{owner.emoji ? `${owner.emoji} ${owner.label}` : owner.label}</span>
         </div>
+        {/* Title font size is deliberately unchanged (text-base) — the
+            screenshot-review correction reclaims vertical space via
+            tighter padding/spacing above and below, never smaller text. */}
         <div className={`text-base font-bold text-white truncate ${row.completed ? "line-through opacity-50" : ""}`}>
           {meta.icon ? `${meta.icon} ` : ""}
           {row.title}
         </div>
-        <div className="flex items-center gap-2 text-xs text-gray-400 truncate mt-0.5">
+        <div className="flex items-center gap-2 text-xs text-gray-400 truncate">
           {meta.label && <span>{meta.label}</span>}
           {row.time && <span>{formatTime12h(row.time)}</span>}
           {needsPrep(row) && (
@@ -168,14 +186,24 @@ const TodayRow = ({ row, children, prominent, onToggleItem, onToggleChore }) => 
   );
 };
 
-// A FUTURE day's column — visible for awareness, denser than Today, but
-// title + owner must still be directly readable without a click (Section
-// 4): a compact one-line card with an owner-initial chip + type icon +
-// title, never reduced to an unlabeled dot/chip. Emphasis is opacity-only
-// here (prominent = full contrast, muted = still legible, just dimmer).
+// A FUTURE day's column — an awareness surface, not a primary execution
+// surface (Section 4). Prioritizes readable text over controls/icons:
+// - the completion control is OMITTED ENTIRELY when the row isn't
+//   completion-eligible (e.g. a future chore/recurring-item occurrence —
+//   see rollingWeekBoard.js's own completionEligible rules, unchanged
+//   here), freeing its width for the title (Section 5) — a genuinely
+//   eligible future item (most one-time Items) still gets a small,
+//   tappable control.
+// - the decorative type icon is dropped (Section 7's own priority order:
+//   decorative icons are lowest priority, dropped before the title is
+//   ever shrunk or truncated).
+// - the title wraps up to 2 lines instead of being truncated with an
+//   ellipsis (Section 7 — "avoid ellipsis on the primary title whenever
+//   reasonably possible").
+// Emphasis is opacity-only here (prominent = full contrast, muted = still
+// legible, just dimmer) — de-emphasis, never hiding (Section 9).
 const FutureRow = ({ row, children, prominent, onToggleItem, onToggleChore }) => {
   const owner = ownerMarker(row.childIds, children);
-  const meta = ITEM_TYPE_META[row.type] || {};
   const onToggle = () =>
     row.sourceType === "chore" ? onToggleChore(row.originalRecord.childId, row.originalRecord.chore) : onToggleItem(row.originalRecord);
 
@@ -184,22 +212,27 @@ const FutureRow = ({ row, children, prominent, onToggleItem, onToggleChore }) =>
       data-testid="agenda-row"
       data-emphasis={prominent ? "prominent" : "muted"}
       data-column="future"
-      className={`flex items-center gap-1.5 py-1.5 px-1.5 rounded-lg ${prominent ? "" : "opacity-65"}`}
+      className={`flex items-start gap-1.5 py-1.5 px-1.5 rounded-lg ${prominent ? "" : "opacity-65"}`}
       style={{ background: "#2a2a2c" }}
     >
-      <CompletionControl row={row} onToggle={onToggle} size="compact" />
+      {row.completionEligible && <CompletionControl row={row} onToggle={onToggle} size="compact" />}
       <OwnerChip owner={owner} size="w-4 h-4 text-[9px]" />
-      {meta.icon && (
-        <span className="text-[11px] flex-shrink-0" aria-hidden="true">
-          {meta.icon}
-        </span>
-      )}
-      <span className={`text-xs text-gray-200 truncate ${row.completed ? "line-through opacity-60" : ""}`}>{row.title}</span>
-      {needsPrep(row) && (
-        <span data-testid="agenda-row-prep-needed" className="text-[9px] px-1 rounded bg-amber-900 text-amber-200 font-semibold flex-shrink-0">
-          Prep
-        </span>
-      )}
+      <div className="flex-1 min-w-0">
+        <div
+          className={`text-xs text-gray-100 font-semibold leading-snug ${row.completed ? "line-through opacity-60" : ""}`}
+          style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
+        >
+          {row.title}
+        </div>
+        {needsPrep(row) && (
+          <span
+            data-testid="agenda-row-prep-needed"
+            className="inline-block mt-0.5 text-[9px] px-1 py-0.5 rounded bg-amber-900 text-amber-200 font-semibold"
+          >
+            Prep needed
+          </span>
+        )}
+      </div>
     </div>
   );
 };
@@ -211,11 +244,11 @@ const WeekWindow = ({ windowKey, rows, children, focus, onToggleItem, onToggleCh
   const overflowCount = rows.length - visible.length;
   const RowComponent = isToday ? TodayRow : FutureRow;
   return (
-    <div data-testid={`week-window-${windowKey}`} className="mb-2">
-      <div className={`font-extrabold uppercase tracking-wide text-gray-500 mb-1 ${isToday ? "text-xs" : "text-[9px]"}`}>
+    <div data-testid={`week-window-${windowKey}`} className="mb-1.5">
+      <div className={`font-extrabold uppercase tracking-wide text-gray-500 mb-0.5 ${isToday ? "text-xs" : "text-[9px]"}`}>
         {WINDOW_LABELS[windowKey]}
       </div>
-      <div className={isToday ? "space-y-1.5" : "space-y-1"}>
+      <div className="space-y-1">
         {visible.map((row) => (
           <RowComponent
             key={row.key}

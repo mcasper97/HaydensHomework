@@ -1,5 +1,6 @@
 import React from "react";
 import FamilyAgendaBoard from "./FamilyAgendaBoard.jsx";
+import LearnerPointsStrip from "./LearnerPointsStrip.jsx";
 
 /**
  * Organizer Mode — the display-first wall/kiosk experience. Presentational
@@ -32,32 +33,7 @@ const OrganizerDisplay = ({
   // branches; this component owns only the display content below it.
   return (
     <div className="w-full max-w-6xl mx-auto">
-      {children.length > 0 && (
-        <div className="flex gap-3 mb-6 flex-wrap">
-          {children.map((child) => {
-            const hw = childStats[child.id]?.homeworkPoints ?? 0;
-            const chore = chorePoints[child.id] || 0;
-            return (
-              <div key={child.id} className="flex-1 rounded-3xl p-4" style={{ minWidth: 160, background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-2xl">{child.emoji}</span>
-                  <div className="text-white font-display text-lg">{child.name}</div>
-                </div>
-                <div className="flex gap-4">
-                  <div>
-                    <div className="text-purple-300 text-xs uppercase font-bold">Chore pts</div>
-                    <div className="text-white font-display text-xl">🧹 {chore}</div>
-                  </div>
-                  <div>
-                    <div className="text-purple-300 text-xs uppercase font-bold">Homework pts</div>
-                    <div className="text-white font-display text-xl">📚 {hw}</div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <LearnerPointsStrip children={children} chorePoints={chorePoints} childStats={childStats} />
 
       {children.length > 0 && (
         <FamilyAgendaBoard

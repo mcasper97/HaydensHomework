@@ -162,18 +162,28 @@ function isoDate(offsetDays) {
   const todayChoreRow = todayColumn.locator('[data-testid="agenda-row"]').filter({ hasText: 'Feed the cat' });
   ok('TODAY chore occurrence remains completion-eligible', await todayChoreRow.getByRole('button', { name: 'Mark complete' }).isVisible().catch(() => false));
 
+  // Future-day cards omit the completion control entirely for a
+  // non-eligible occurrence (screenshot-review correction — see
+  // FamilyWeekBoard.jsx's FutureRow) rather than rendering a disabled/
+  // view-only placeholder — the row itself (title + owner) must still be
+  // visible and readable, just with no control of any kind.
   const otherColumns = page.locator('[data-testid="week-day-column"][data-today="false"]');
   const otherColumnCount = await otherColumns.count();
-  let foundFutureViewOnlyChore = false;
+  let foundFutureNonToggleableChore = false;
   for (let i = 0; i < otherColumnCount; i++) {
     const col = otherColumns.nth(i);
     const choreRowInCol = col.locator('[data-testid="agenda-row"]').filter({ hasText: 'Feed the cat' });
     if (await choreRowInCol.isVisible().catch(() => false)) {
-      foundFutureViewOnlyChore = await choreRowInCol.getByTestId('agenda-row-view-only').isVisible().catch(() => false);
+      const hasMarkButton = await choreRowInCol.getByRole('button', { name: /Mark/ }).count();
+      const hasViewOnlyDot = await choreRowInCol.getByTestId('agenda-row-view-only').count();
+      foundFutureNonToggleableChore = hasMarkButton === 0 && hasViewOnlyDot === 0 && (await choreRowInCol.isVisible());
       break;
     }
   }
-  ok('A future day\'s projected chore occurrence (if shown) is view-only, never a live checkbox', foundFutureViewOnlyChore);
+  ok(
+    'A future day\'s projected chore occurrence (if shown) has no completion control of any kind, never a live checkbox — but the row itself stays visible/readable',
+    foundFutureNonToggleableChore
+  );
 
   ok('Chore projection creates no canonical Item records', await page.evaluate(() => {
     const items = JSON.parse(localStorage.getItem('crestly_admin_items') || '[]');

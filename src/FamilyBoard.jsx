@@ -5,6 +5,7 @@ import { migrateLegacyFamilyEvents } from "./data/itemsRepository.js";
 import { householdTodayStr } from "./data/householdTimezone.js";
 import FamilyAgendaBoard from "./organizer/FamilyAgendaBoard.jsx";
 import OrganizerDisplay from "./organizer/OrganizerDisplay.jsx";
+import LearnerPointsStrip from "./organizer/LearnerPointsStrip.jsx";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -288,33 +289,8 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
             Parent Board / Settings now (Section 15). */}
         {!kiosk && (
           <>
-            {/* ----------------------------- Points strip ----------------------------- */}
-            {children.length > 0 && (
-              <div className="flex gap-3 mb-6 flex-wrap">
-                {children.map((child) => {
-                  const hw = childStats[child.id]?.homeworkPoints ?? 0;
-                  const chore = chorePoints[child.id] || 0;
-                  return (
-                    <div key={child.id} className="flex-1 rounded-3xl p-4" style={{ minWidth: 160, background: "linear-gradient(135deg, #5B2D8E, #3d1d61)" }}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-2xl">{child.emoji}</span>
-                        <div className="text-white font-display text-lg">{child.name}</div>
-                      </div>
-                      <div className="flex gap-4">
-                        <div>
-                          <div className="text-purple-300 text-xs uppercase font-bold">Chore pts</div>
-                          <div className="text-white font-display text-xl">🧹 {chore}</div>
-                        </div>
-                        <div>
-                          <div className="text-purple-300 text-xs uppercase font-bold">Homework pts</div>
-                          <div className="text-white font-display text-xl">📚 {hw}</div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            {/* ----------------------------- Points strip (compact) ----------------------------- */}
+            <LearnerPointsStrip children={children} chorePoints={chorePoints} childStats={childStats} />
 
             {/* ----------------------------- Unified agenda ----------------------------- */}
             {children.length > 0 && (
