@@ -1,50 +1,106 @@
 import React from "react";
 
 /* ============================== Illustrations ==============================
- * The house icon and the first two learner avatars below are REAL pixels
- * cropped directly out of the approved mockup image itself (public/
- * family-board/house-icon.png, avatar-coral.png, avatar-aqua.png) — not a
- * hand-drawn approximation. The house had its pale sky-blue background
- * chroma-keyed to transparent; each avatar was cropped and given a circular
- * alpha mask so it drops onto any background as a clean circle. Sized via
- * plain <img width/height>, which — like every other load-bearing layout
- * property in this app — works with or without the Tailwind CDN.
+ * ILLUSTRATION-SYSTEM PASS: every piece below (house, small tree, tree
+ * cluster, sun) is a REAL crop out of the approved mockup's own Today-hero
+ * landscape scene (the same image the house/avatars were cropped from
+ * earlier), each with its own real alpha transparency — not a screenshot
+ * of the whole scene, not a single flattened background image, and not a
+ * blurred/masked rectangle. Cropping used a multi-sample chroma-key against
+ * that scene's own sky/hill colors (not a naive single-color key, since the
+ * scene's background shifts from mint-green sky to a pale-blue distant
+ * hill), so each asset's edge is genuinely transparent, not faded/blurred to
+ * hide a crop boundary. These pieces are meant to be COMPOSED together
+ * (house + tree + hill silhouette + sun/cloud) by whatever renders them,
+ * rather than used as one pre-baked scene image — that's what lets Today's
+ * hero and each future-day header show a different, deterministic
+ * arrangement of the same consistent art style instead of one static PNG
+ * repeated everywhere.
  *
- * A learner beyond the mockup's own two (Payton/Hayden) has no matching
- * source art to crop, so LearnerAvatar falls back to a hand-drawn SVG
- * critter face tinted by that learner's own accent color for any palette
- * index past 1 — still a picture, just not a literal crop of the mockup.
+ * The learner avatars below are the same kind of real crop (the mockup's
+ * cat/bear artwork for the household's first two learners); a learner
+ * beyond that has no matching source art, so LearnerAvatar falls back to a
+ * hand-drawn SVG critter face tinted by that learner's own accent color —
+ * still a picture, just not a literal crop of the mockup.
  */
 
-const HOUSE_ICON_SRC = "/family-board/house-icon.png";
+const HOUSE_SRC = "/family-board/landscape/house.png"; // 75x57 — house + its own small foundation bush
+const TREE_SMALL_SRC = "/family-board/landscape/tree-small.png"; // 38x56 — single small tree
+const TREE_LARGE_SRC = "/family-board/landscape/tree-large.png"; // 84x98 — large tree + a second smaller tree beside it
+const SUN_SRC = "/family-board/landscape/sun.png"; // 112x90 — the mockup's own sun-with-rays
 const LEARNER_AVATAR_IMAGES = ["/family-board/avatar-coral.png", "/family-board/avatar-aqua.png"];
 
-// The brand mark — the mockup's own cottage artwork. The source PNG itself
-// is a plain rectangular crop (no alpha channel) — untouched, per this
-// pass's own "do not reprocess the house asset" instruction. `soft` (used
-// only for the large header brand icon, where the crop's own rectangular
-// edge is otherwise visible against the board's shared sky gradient) fades
-// that edge to transparent at RENDER time via a CSS mask, so the art blends
-// into the surrounding surface instead of reading as a pasted tile — no new
-// image file, just a display-time treatment on top of the same asset.
-export const HouseIllustration = ({ size = 40, soft = false }) => (
+// The brand mark / landscape-scene house — a crisp, real crop with genuine
+// alpha transparency (no mask, no blur, no visible rectangle) sized by its
+// own native 75:57 aspect ratio.
+export const HouseIllustration = ({ size = 40 }) => (
   <img
-    src={HOUSE_ICON_SRC}
+    src={HOUSE_SRC}
     width={size}
-    height={Math.round((size * 75) / 78)}
+    height={Math.round((size * 57) / 75)}
     alt=""
+    aria-hidden="true"
+    style={{ display: "block", objectFit: "contain" }}
+  />
+);
+
+// A single small tree — native 38:56 aspect ratio.
+export const TreeSmallIllustration = ({ size = 40 }) => (
+  <img
+    src={TREE_SMALL_SRC}
+    width={size}
+    height={Math.round((size * 56) / 38)}
+    alt=""
+    aria-hidden="true"
+    style={{ display: "block", objectFit: "contain" }}
+  />
+);
+
+// A large tree paired with a smaller companion tree — native 84:98 aspect
+// ratio. Used where a header has room for a fuller cluster (Today's hero);
+// TreeSmallIllustration is the single-tree alternative for tighter
+// future-day headers.
+export const TreeLargeIllustration = ({ size = 60 }) => (
+  <img
+    src={TREE_LARGE_SRC}
+    width={size}
+    height={Math.round((size * 98) / 84)}
+    alt=""
+    aria-hidden="true"
+    style={{ display: "block", objectFit: "contain" }}
+  />
+);
+
+// A soft rolling-hill/grass silhouette — a flat, two-tone SVG shape (not a
+// raster crop: the mockup's own hill band has no clean edges to crop at
+// arbitrary widths, and every header needs a different width), in the same
+// green family as the mockup's own grass. Deliberately just a silhouette —
+// house/tree/sun art supplies all the detail, this is the "ground" they
+// stand on.
+export const HillIllustration = ({ width = 200, height = 40, flat = false, fadeRight = false }) => (
+  <svg
+    width={width}
+    height={height}
+    viewBox="0 0 200 40"
+    preserveAspectRatio="none"
     aria-hidden="true"
     style={{
       display: "block",
-      objectFit: "contain",
-      ...(soft
-        ? {
-            WebkitMaskImage: "radial-gradient(ellipse 60% 60% at 48% 48%, #000 40%, transparent 92%)",
-            maskImage: "radial-gradient(ellipse 60% 60% at 48% 48%, #000 40%, transparent 92%)",
-          }
+      // Tapers the hill's own right edge to transparent instead of ending
+      // as a hard vertical "shelf" — used where the hill bleeds into open
+      // space rather than being clipped by a header's own edge anyway.
+      ...(fadeRight
+        ? { WebkitMaskImage: "linear-gradient(to right, #000 82%, transparent 100%)", maskImage: "linear-gradient(to right, #000 82%, transparent 100%)" }
         : null),
     }}
-  />
+  >
+    {flat ? (
+      <rect x="0" y="14" width="200" height="26" fill="#8FDB7A" />
+    ) : (
+      <path d="M0 26 Q30 8 60 20 T130 14 T200 22 V40 H0 Z" fill="#8FDB7A" />
+    )}
+    <path d="M0 34 Q40 24 90 30 T200 28 V40 H0 Z" fill="#6FCB63" />
+  </svg>
 );
 
 // A learner's avatar — the mockup's own cat/bear artwork for the first two
@@ -85,26 +141,23 @@ export const LearnerAvatar = ({ accent, size = 36, index = -1 }) => {
   );
 };
 
-// A soft, flat-vector sun — replaces the ☀️ emoji used as Today's decorative
-// corner glyph.
+// The mockup's own sun-with-rays artwork — a real crop (same style as
+// house/tree above), replacing the earlier hand-drawn SVG sun so Today's
+// hero sun matches the same illustration system as the rest of its scene.
 export const SunIllustration = ({ size = 54 }) => (
-  <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
-    <g stroke="#F5B93E" strokeWidth="2.5" strokeLinecap="round">
-      <line x1="20" y1="2" x2="20" y2="7" />
-      <line x1="20" y1="33" x2="20" y2="38" />
-      <line x1="2" y1="20" x2="7" y2="20" />
-      <line x1="33" y1="20" x2="38" y2="20" />
-      <line x1="7.5" y1="7.5" x2="11" y2="11" />
-      <line x1="29" y1="29" x2="32.5" y2="32.5" />
-      <line x1="32.5" y1="7.5" x2="29" y2="11" />
-      <line x1="11" y1="29" x2="7.5" y2="32.5" />
-    </g>
-    <circle cx="20" cy="20" r="10" fill="#FFCE54" stroke="#F5B93E" strokeWidth="1.5" />
-  </svg>
+  <img
+    src={SUN_SRC}
+    width={size}
+    height={Math.round((size * 90) / 112)}
+    alt=""
+    aria-hidden="true"
+    style={{ display: "block", objectFit: "contain" }}
+  />
 );
 
-// A soft, flat-vector cloud cluster — replaces the ☁️ emoji used as a
-// future day's decorative corner glyph.
+// A soft, flat-vector cloud cluster — hand-drawn (no clean single cloud to
+// crop out of the source scene at this simple a shape), but already in a
+// plain, flat, two-tone style consistent with the hill silhouette above.
 export const CloudIllustration = ({ size = 40 }) => (
   <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
     <g fill="#FFFFFF" stroke="#CBE0F0" strokeWidth="1">

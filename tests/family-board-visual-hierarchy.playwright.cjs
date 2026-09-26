@@ -124,6 +124,23 @@ function hexToRgb(hex) {
     (headerRowStyle.boxShadow === 'none') && (headerRowStyle.borderWidth === '0px') && (headerRowStyle.backgroundImage === 'none')
   );
 
+  // ============ ILLUSTRATION-SYSTEM PASS: decorative art never intercepts clicks ============
+  const brandArtPointerEvents = await page.getByTestId('brand-landscape-art').evaluate((el) => getComputedStyle(el).pointerEvents);
+  ok(`The brand-landscape illustration layer has pointer-events: none (measured "${brandArtPointerEvents}")`, brandArtPointerEvents === 'none');
+  const todayHeroArtPointerEvents = await page.getByTestId('today-hero-art').evaluate((el) => getComputedStyle(el).pointerEvents);
+  ok(`Today's hero illustration layer has pointer-events: none (measured "${todayHeroArtPointerEvents}")`, todayHeroArtPointerEvents === 'none');
+
+  // ============ ILLUSTRATION-SYSTEM PASS: Today's hero is a true illustrated hero, height-bounded ============
+  const todayHero = page.getByTestId('today-hero');
+  ok('Today renders its own illustrated hero header', await todayHero.isVisible());
+  ok('The hero shows the large "Today" heading', await todayHero.getByText('Today', { exact: true }).isVisible());
+  const todayHeroBox = await todayHero.boundingBox();
+  ok(
+    `Today's hero is visibly taller than a standard future-day header (~70-120px, measured ${todayHeroBox ? Math.round(todayHeroBox.height) : 'n/a'}px)`,
+    !!todayHeroBox && todayHeroBox.height >= 70 && todayHeroBox.height <= 120
+  );
+  ok('No fabricated "School Day"/"No School" status is rendered (no authoritative school-calendar data exists)', (await page.getByText(/school day/i).count()) === 0 && (await page.getByText(/no school/i).count()) === 0);
+
   // ============ Learner ownership accent treatment ============
   const haydenRow = page.locator('[data-testid="agenda-row"]').filter({ hasText: 'Hayden Reading Log' }).first();
   const paytonRow = page.locator('[data-testid="agenda-row"]').filter({ hasText: 'Payton Math Sheet' }).first();

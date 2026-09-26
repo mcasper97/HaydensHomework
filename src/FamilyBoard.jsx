@@ -6,7 +6,7 @@ import { householdTodayStr } from "./data/householdTimezone.js";
 import FamilyAgendaBoard from "./organizer/FamilyAgendaBoard.jsx";
 import OrganizerDisplay from "./organizer/OrganizerDisplay.jsx";
 import FullScreenButton from "./organizer/FullScreenButton.jsx";
-import { HouseIllustration, CloudIllustration, LearnerAvatar } from "./organizer/illustrations.jsx";
+import { HouseIllustration, CloudIllustration, LearnerAvatar, TreeSmallIllustration, HillIllustration } from "./organizer/illustrations.jsx";
 import { SURFACE, ALL_FOCUS_ACCENT } from "./organizer/boardTheme.js";
 import { accentForChild, FAMILY_ACCENT } from "./organizer/learnerAccent.js";
 
@@ -340,38 +340,56 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
             padding: "6px 4px",
           }}
         >
-          {/* Decorative cloud shapes — part of the shared board sky, not a
-              boxed header's own background — low-opacity, aria-hidden,
-              absolutely positioned so they never participate in the flex
-              layout. Spread a bit wider than before (one now drifts toward
-              the middle of the row) so the "shared sky" reads across the
-              whole top zone, not just behind the brand block. */}
-          <div aria-hidden="true" style={{ position: "absolute", left: 70, bottom: -34, opacity: 0.3, pointerEvents: "none" }}>
-            <CloudIllustration size={56} />
-          </div>
-          <div aria-hidden="true" style={{ position: "absolute", left: "30%", top: -16, opacity: 0.3, pointerEvents: "none" }}>
-            <CloudIllustration size={44} />
-          </div>
-          <div aria-hidden="true" style={{ position: "absolute", right: "20%", bottom: -20, opacity: 0.3, pointerEvents: "none" }}>
-            <CloudIllustration size={40} />
+          {/* One remaining loose cloud, well clear of the brand landscape
+              group below (which has its own cloud) — keeps a touch of
+              "shared sky" over the learner-pill area without cluttering
+              the coherent landscape cluster with a second, disconnected
+              cloud right next to it. */}
+          <div aria-hidden="true" style={{ position: "absolute", right: "22%", bottom: -18, opacity: 0.28, pointerEvents: "none" }}>
+            <CloudIllustration size={38} />
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 28, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              {/* HEADER MEASURED-FIDELITY PASS: house grown from 32px to
-                  the mockup's own measured ~96px brand-icon size. No white
-                  backing box — it's a transparent-background PNG sitting
-                  directly on the shared page gradient (Section 8: "no
-                  visible white square around the house"). */}
-              <HouseIllustration size={96} soft />
+              {/* ILLUSTRATION-SYSTEM PASS: no longer a single soft-masked
+                  house icon — a small COHERENT landscape group (hill +
+                  house + a small tree + a cloud), all real crops from the
+                  same mockup scene, composed together the way the mockup
+                  itself composes them. The hill silhouette is deliberately
+                  wider than this box and allowed to extend to the right
+                  (`overflow: visible`, absolutely positioned at
+                  `zIndex: 0`) so the art visually continues UNDER the
+                  brand text rather than stopping as a square crop —
+                  the text sits in its own `zIndex: 2` layer on top, fully
+                  readable, with the art peeking out behind/beside it
+                  (Section 4: "sit behind/beside the text as part of the
+                  overall board world"). Entirely decorative: aria-hidden,
+                  pointer-events: none, never affects the real flex layout
+                  (fixed-size box other content still flows around). */}
+              <div data-testid="brand-landscape-art" aria-hidden="true" style={{ position: "relative", width: 74, height: 72, flexShrink: 0, pointerEvents: "none", overflow: "visible" }}>
+                <div style={{ position: "absolute", left: 0, bottom: 0, zIndex: 0 }}>
+                  <HillIllustration width={230} height={34} fadeRight />
+                </div>
+                <div style={{ position: "absolute", left: 4, bottom: 10, zIndex: 1 }}>
+                  <HouseIllustration size={62} />
+                </div>
+                <div style={{ position: "absolute", left: 78, bottom: 2, zIndex: 1 }}>
+                  <TreeSmallIllustration size={36} />
+                </div>
+                <div style={{ position: "absolute", left: 138, top: -8, zIndex: 1, opacity: 0.7 }}>
+                  <CloudIllustration size={30} />
+                </div>
+              </div>
               {/* Title stacked over the "Family Board" subtitle (two
                   lines), matching the mockup. HEADER MEASURED-FIDELITY
                   PASS: title/subtitle font sizes grew from 20px/14px
                   (Tailwind text-xl/text-sm) to the mockup's own measured
                   ~44px/~26px — inline px rather than Tailwind size classes
                   so the exact measured value is explicit, not rounded to
-                  the nearest utility step. */}
-              <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
+                  the nearest utility step. Its own `zIndex: 2` keeps it
+                  fully readable above the landscape group's tree/cloud,
+                  which extend into this same horizontal space by design. */}
+              <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
                 <h1 className="font-extrabold" style={{ fontSize: 44, color: SURFACE.textPrimary, margin: 0 }}>
                   Haydens - Homework
                 </h1>

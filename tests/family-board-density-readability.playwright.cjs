@@ -172,6 +172,11 @@ function isoDate(offsetDays) {
   ok('The FULL future title is present in the DOM (not hard-truncated/ellipsized away)', futureQuizText.includes(longTitle));
   ok('The future row still shows the owner marker', await futureQuizRow.getByText('R', { exact: true }).isVisible());
   ok('The future row shows a "Prep needed" indicator for an unprepped test', await futureQuizRow.getByTestId('agenda-row-prep-needed').isVisible());
+  // ILLUSTRATION-SYSTEM PASS: the new future-day HEADER artwork (hill/tree/
+  // cloud) must not alter the existing future-CARD icon rule — future task
+  // cards stay icon-free regardless of what decorative art now sits in the
+  // day header above them.
+  ok('The illustration-system pass did not give future task cards a content icon (future cards stay icon-free)', (await futureQuizRow.locator('img').count()) === 0);
 
   // ============ Section 5: future cards omit the completion control when not eligible ============
   const futureColumns = page.locator('[data-testid="week-day-column"][data-today="false"]');

@@ -2,9 +2,9 @@ import React, { useEffect, useState } from "react";
 import { ITEM_TYPE_META } from "../data/itemTypes.js";
 import { WINDOW_ORDER, WINDOW_LABELS } from "./rollingWeekBoard.js";
 import { ownerMarker } from "./learnerAccent.js";
-import { SURFACE, WINDOW_ACCENTS, PREP_ACCENT, COMPLETION_ACCENT, ALL_FOCUS_ACCENT } from "./boardTheme.js";
+import { SURFACE, WINDOW_ACCENTS, PREP_ACCENT, COMPLETION_ACCENT } from "./boardTheme.js";
 import { resolveContentIcon } from "./contentIcon.js";
-import { SunIllustration, CloudIllustration } from "./illustrations.jsx";
+import { SunIllustration, CloudIllustration, HouseIllustration, TreeSmallIllustration, TreeLargeIllustration, HillIllustration } from "./illustrations.jsx";
 
 /* ─────────────────────── Family Week Board (presentational) ───────────────────────
  * Renders the rolling-5-day, execution-window-bucketed structure produced by
@@ -85,6 +85,24 @@ function formatTime12h(hhmm) {
 function dayHeaderLabel(dateStr) {
   const d = new Date(`${dateStr}T00:00:00`);
   return `${WEEKDAY_LABELS[d.getDay()]} ${d.getDate()}`;
+}
+
+// ILLUSTRATION-SYSTEM PASS: Today's own hero header needs a "current date
+// beneath" line (Section 5) — a new, fuller label distinct from the
+// existing dayHeaderLabel/dayHeaderFullLabel above, which future-day
+// headers keep using unchanged.
+function dayHeaderDateLabel(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  return `${WEEKDAY_LABELS[d.getDay()]}, ${MONTH_LABELS[d.getMonth()]} ${d.getDate()}`;
+}
+
+// ILLUSTRATION-SYSTEM PASS (Section 6): which of 3 small-landscape variants
+// a future day's header shows — keyed off the calendar date itself (not
+// the day's position in the rolling window), so a given date always gets
+// the same variant no matter where it lands in the 5-day window as the
+// window rolls forward day to day. Deterministic, never random.
+function futureVariant(day) {
+  return new Date(`${day.dateStr}T00:00:00`).getDate() % 3;
 }
 
 // A fuller label for the overflow modal/aria-label — "Friday Sep 25".
@@ -634,47 +652,83 @@ const FamilyWeekBoard = ({ days, children = [], focus, onToggleItem, onToggleCho
                 minHeight: 0,
               }}
             >
-              {/* PICTURE-NOT-ICON PASS: a large, low-opacity flat-vector
-                  sun/cloud illustration (illustrations.jsx) in the day
-                  header's corner, replacing the earlier emoji glyph —
-                  matching the mockup's own illustrated scene art a little
-                  more closely than a flat Unicode character can. Purely
-                  decorative (aria-hidden, pointer-events:none) — never
-                  affects layout or content. */}
-              <span
-                aria-hidden="true"
-                style={{
-                  position: "absolute",
-                  top: -8,
-                  right: -6,
-                  opacity: 0.28,
-                  pointerEvents: "none",
-                  lineHeight: 1,
-                }}
-              >
-                {day.isToday ? <SunIllustration size={58} /> : <CloudIllustration size={42} />}
-              </span>
-              {/* MOCKUP-FIDELITY PASS (Section 8): future-day headers were
-                  bumped from text-xs/textSecondary (read as "weak tiny gray
-                  text") up to text-sm/textPrimary — still visibly secondary
-                  to Today's own larger text-lg treatment, but now a clear,
-                  confident day identity rather than a barely-there label. */}
-              <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 6, paddingLeft: 2, paddingRight: 2, position: "relative" }}>
-                <span
-                  className={day.isToday ? "text-lg font-extrabold" : "text-sm font-extrabold"}
-                  style={{ color: SURFACE.textPrimary }}
-                >
-                  {dayHeaderLabel(day.dateStr)}
-                </span>
-                {day.isToday && (
-                  <span
-                    className="text-[10px] font-bold uppercase tracking-wide"
-                    style={{ color: ALL_FOCUS_ACCENT.text, background: ALL_FOCUS_ACCENT.bg, padding: "2px 7px", borderRadius: 999 }}
+              {/* ILLUSTRATION-SYSTEM PASS (Section 5/6): Today gets a true
+                  illustrated hero header — real sun crop on the left, large
+                  "Today" heading with the current date beneath it (both
+                  real content, on their own zIndex:1 layer), and a
+                  landscape cluster (hill + house + tree cluster + cloud, all
+                  the same real-crop/flat-SVG asset set as the header's brand
+                  landscape) absolutely positioned lower-right at zIndex:0,
+                  behind that text. No "School Day"/"No School" badge — this
+                  app has no authoritative school-calendar data to back that
+                  claim, so it's omitted rather than fabricated (Section 5).
+                  Explicitly taller (92px) than a future-day header (40px),
+                  per "visibly taller and richer than a standard future-day
+                  header." Its own `overflow: hidden` keeps the landscape
+                  cluster clipped to this hero band — it never bleeds down
+                  into the WeekWindow rows below. */}
+              {day.isToday ? (
+                <div data-testid="today-hero" style={{ position: "relative", height: 92, marginBottom: 8, overflow: "hidden", flexShrink: 0 }}>
+                  <div
+                    data-testid="today-hero-art"
+                    aria-hidden="true"
+                    style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none" }}
                   >
-                    Today
-                  </span>
-                )}
-              </div>
+                    <div style={{ position: "absolute", right: -6, bottom: -8 }}>
+                      <HillIllustration width={230} height={34} fadeRight />
+                    </div>
+                    <div style={{ position: "absolute", right: 18, top: -6, opacity: 0.75 }}>
+                      <CloudIllustration size={32} />
+                    </div>
+                    <div style={{ position: "absolute", right: 150, bottom: 4 }}>
+                      <HouseIllustration size={46} />
+                    </div>
+                    <div style={{ position: "absolute", right: 20, bottom: -2 }}>
+                      <TreeLargeIllustration size={58} />
+                    </div>
+                  </div>
+                  <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 12, height: "100%" }}>
+                    <SunIllustration size={60} />
+                    <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
+                      <span style={{ fontSize: 30, fontWeight: 800, color: SURFACE.textPrimary }}>Today</span>
+                      <span style={{ fontSize: 15, fontWeight: 600, color: SURFACE.textSecondary }}>{dayHeaderDateLabel(day.dateStr)}</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                // ILLUSTRATION-SYSTEM PASS (Section 6): a smaller, calmer
+                // landscape backdrop replaces the earlier single low-opacity
+                // cloud glyph — a deterministic variant (by this day's own
+                // position in the rolling window, never random) so the 4
+                // future headers aren't identical copies of one image.
+                // Weekday label text/format is UNCHANGED (dayHeaderLabel,
+                // same as before) — this pass touches only the artwork.
+                <div style={{ position: "relative", height: 40, marginBottom: 6, overflow: "hidden", flexShrink: 0 }}>
+                  <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none" }}>
+                    <div style={{ position: "absolute", left: 0, right: 0, bottom: -8 }}>
+                      <HillIllustration width={"100%"} height={20} />
+                    </div>
+                    <div style={{ position: "absolute", right: 4, top: -6, opacity: 0.65 }}>
+                      <CloudIllustration size={26} />
+                    </div>
+                    {futureVariant(day) === 0 && (
+                      <div style={{ position: "absolute", right: 40, bottom: -4 }}>
+                        <TreeSmallIllustration size={26} />
+                      </div>
+                    )}
+                    {futureVariant(day) === 2 && (
+                      <div style={{ position: "absolute", right: 16, bottom: -6 }}>
+                        <TreeLargeIllustration size={32} />
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "baseline", gap: 6, paddingLeft: 2, paddingRight: 2 }}>
+                    <span className="text-sm font-extrabold" style={{ color: SURFACE.textPrimary }}>
+                      {dayHeaderLabel(day.dateStr)}
+                    </span>
+                  </div>
+                </div>
+              )}
               {anyRows ? (
                 WINDOW_ORDER.map((windowKey) => (
                   <WeekWindow
