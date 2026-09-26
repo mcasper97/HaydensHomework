@@ -182,14 +182,39 @@ const CompletionControl = ({ row, onToggle, size }) => {
 // so a modal opened for a busy future day's window is at least as legible
 // as Today itself. `muted` only dims it (opacity) — the full detail stays,
 // consistent with focus being de-emphasis, never a reduced information set.
+// Renders either half of contentIcon.js's { kind: "image"|"emoji" } result —
+// a literal mockup-cropped PNG for the six titles the approved mockup itself
+// shows, a plain glyph for everything else it doesn't have art for.
+const ContentIcon = ({ icon, size }) => {
+  if (!icon) return null;
+  if (icon.kind === "image") {
+    return <img src={icon.src} alt={icon.alt || ""} aria-hidden="true" style={{ display: "block", height: size, width: "auto" }} />;
+  }
+  return (
+    <span aria-hidden="true" style={{ fontSize: size, lineHeight: 1 }}>
+      {icon.value}
+    </span>
+  );
+};
+
 const FullCardRow = ({ row, children, prominent, onToggleItem, onToggleChore, dataColumn }) => {
   const owner = ownerMarker(row.childIds, children);
   const meta = ITEM_TYPE_META[row.type] || {};
   // Content-aware icon (contentIcon.js): a title-specific keyword match
-  // when one exists ("Pajama/Stuffy Day" -> 🧸), falling back to this same
-  // row's generic ITEM_TYPE_META icon otherwise — meta.label (the
-  // "Assignment"/"Quiz"/etc secondary text) is unaffected either way.
+  // when one exists ("Pajama/Stuffy Day" -> the mockup's own teddy+pajama
+  // crop), falling back to this same row's generic ITEM_TYPE_META icon
+  // otherwise — meta.label (the "Assignment"/"Quiz"/etc secondary text) is
+  // unaffected either way.
   const contentIcon = resolveContentIcon(row);
+  // MOCKUP-LITERAL PASS: the small glyph right after the owner chip is the
+  // row's own TYPE icon (❓ quiz, 🔔 reminder, ...) — already-existing
+  // canonical data (itemTypes.js), not a new mapping — restoring the
+  // mockup's "every row carries a small type marker before its title" look
+  // without inventing a per-title small-icon rule the mockup doesn't
+  // consistently follow (a couple of its rows swap in a content-specific
+  // small glyph instead; replicating that would mean guessing which titles
+  // get the swap, so this uses the one rule that's actually derivable).
+  const typeGlyph = meta.icon;
   const onToggle = () =>
     row.sourceType === "chore" ? onToggleChore(row.originalRecord.childId, row.originalRecord.chore) : onToggleItem(row.originalRecord);
 
@@ -213,6 +238,11 @@ const FullCardRow = ({ row, children, prominent, onToggleItem, onToggleChore, da
     >
       {row.completionEligible && <CompletionControl row={row} onToggle={onToggle} size="large" />}
       <OwnerChip owner={owner} size={26} fontSize={12} />
+      {typeGlyph && (
+        <span aria-hidden="true" style={{ flexShrink: 0, fontSize: 20, lineHeight: 1 }}>
+          {typeGlyph}
+        </span>
+      )}
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* Ownership must never rely on color alone — the chip's initial
             is a marker, not a substitute for the name. A small, secondary
@@ -239,8 +269,7 @@ const FullCardRow = ({ row, children, prominent, onToggleItem, onToggleChore, da
       </div>
       {/* MOCKUP LITERAL-MATCH: a large, colorful content-aware icon pinned
           to the row's far right edge — matching the mockup's own "hero
-          icon per card" treatment — instead of a small inline glyph
-          prefixed before the title text. */}
+          icon per card" treatment. */}
       {contentIcon && (
         <span
           aria-hidden="true"
@@ -249,12 +278,11 @@ const FullCardRow = ({ row, children, prominent, onToggleItem, onToggleChore, da
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            width: 34,
-            fontSize: 28,
+            width: 40,
             lineHeight: 1,
           }}
         >
-          {contentIcon}
+          <ContentIcon icon={contentIcon} size={36} />
         </span>
       )}
     </div>
