@@ -21,9 +21,13 @@ import { LearnerAvatar } from "./illustrations.jsx";
  * colored chip treatment. Ownership is still never color-only: the emoji
  * and name are always present as text too.
  *
- * Height target: ~45-60px (a single row of ~44-48px-tall pills) — see tests
- * asserting this directly against the rendered pill height.
+ * HEADER MEASURED-FIDELITY PASS: height target grew from ~45-60px to
+ * ~80-100px (pinned to the approved mockup's own measured chip height, a
+ * large ~72px avatar plus stacked name/points text) — a deliberate,
+ * measured change, not scope creep; the three tests that asserted the old
+ * compact bound were updated alongside this file to the new one.
  *
+
  * `display: flex` (+ gap/wrap on the strip, + alignment on each pill) is
  * set inline rather than via Tailwind's `flex`/`gap-*` utility classes —
  * same reasoning as FamilyWeekBoard.jsx's own `display: grid` precedent:
@@ -36,7 +40,7 @@ import { LearnerAvatar } from "./illustrations.jsx";
 const LearnerPointsStrip = ({ children = [], chorePoints = {}, childStats = {} }) => {
   if (children.length === 0) return null;
   return (
-    <div data-testid="learner-points-strip" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", flexShrink: 0 }}>
+    <div data-testid="learner-points-strip" style={{ display: "flex", gap: 22, flexWrap: "wrap", flexShrink: 0 }}>
       {children.map((child, idx) => {
         const hw = childStats[child.id]?.homeworkPoints ?? 0;
         const chore = chorePoints[child.id] || 0;
@@ -48,23 +52,26 @@ const LearnerPointsStrip = ({ children = [], chorePoints = {}, childStats = {} }
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
-              height: 42,
-              padding: "0 10px 0 5px",
+              gap: 10,
+              height: 88,
+              padding: "0 22px 0 8px",
               borderRadius: 999,
               background: accent.bg,
               border: `1.5px solid ${accent.border}`,
               boxShadow: "0 1px 3px rgba(37, 48, 74, 0.08)",
             }}
           >
-            {/* PICTURE-NOT-ICON PASS: a small illustrated critter-face
-                avatar (illustrations.jsx) tinted by the learner's own
-                accent, replacing the bare emoji-in-a-white-circle badge —
-                matching the mockup's own illustrated avatar-chip
-                treatment instead of a flat icon glyph. */}
-            <LearnerAvatar accent={accent} size={28} index={idx} />
-            <span className="font-display text-sm font-extrabold whitespace-nowrap" style={{ color: accent.text }}>{child.name}</span>
-            <span className="text-xs font-bold whitespace-nowrap" style={{ color: accent.text }}>⭐ {totalPoints} pts</span>
+            {/* PICTURE-NOT-ICON PASS: a real illustrated avatar (the
+                mockup's own cat/bear crop, illustrations.jsx) tinted by the
+                learner's own accent, replacing the bare emoji-in-a-white-
+                circle badge. HEADER MEASURED-FIDELITY PASS: sized 72px —
+                the mockup's own measured avatar diameter — not a smaller
+                approximation. */}
+            <LearnerAvatar accent={accent} size={72} index={idx} />
+            <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
+              <span className="font-display font-extrabold whitespace-nowrap" style={{ fontSize: 24, color: accent.text }}>{child.name}</span>
+              <span className="font-bold whitespace-nowrap" style={{ fontSize: 16, color: accent.text }}>⭐ {totalPoints} pts</span>
+            </div>
           </div>
         );
       })}

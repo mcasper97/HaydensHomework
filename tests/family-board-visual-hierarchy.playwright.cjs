@@ -98,7 +98,9 @@ function hexToRgb(hex) {
   ok('LearnerPointsStrip still renders', await strip.isVisible());
   ok('LearnerPointsStrip is still the compact single-row layout (no old large purple panel text)', (await page.locator('text=Chore pts').count()) === 0 && (await page.locator('text=Homework pts').count()) === 0);
   const stripBox = await strip.boundingBox();
-  ok(`LearnerPointsStrip is still compact (~45-60px, measured ${stripBox ? Math.round(stripBox.height) : 'n/a'}px)`, !!stripBox && stripBox.height >= 40 && stripBox.height <= 70);
+  // HEADER MEASURED-FIDELITY PASS: grown from ~45-60px to ~80-100px,
+  // pinned to the approved mockup's own measured chip height.
+  ok(`LearnerPointsStrip matches the mockup's measured chip height (~80-100px, measured ${stripBox ? Math.round(stripBox.height) : 'n/a'}px)`, !!stripBox && stripBox.height >= 80 && stripBox.height <= 100);
   ok('LearnerPointsStrip still shows both learners\' names', await strip.getByText('Hayden').isVisible() && await strip.getByText('Payton').isVisible());
 
   // ============ Learner ownership accent treatment ============

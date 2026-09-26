@@ -167,7 +167,9 @@ async function runAtViewport(browser, viewport) {
   );
 
   const stripBox = await page.getByTestId('learner-points-strip').boundingBox();
-  ok(`[${label}] the learner strip is still compact (measured ${stripBox ? Math.round(stripBox.height) : 'n/a'}px)`, !!stripBox && stripBox.height >= 40 && stripBox.height <= 70);
+  // HEADER MEASURED-FIDELITY PASS: grown from ~45-60px to ~80-100px,
+  // pinned to the approved mockup's own measured chip height.
+  ok(`[${label}] the learner strip matches the mockup's measured chip height (measured ${stripBox ? Math.round(stripBox.height) : 'n/a'}px)`, !!stripBox && stripBox.height >= 80 && stripBox.height <= 100);
 
   const firstTodayRow = todayColumn.getByTestId('week-window-today').locator('[data-testid="agenda-row"]').first();
   // The literal-mockup-match pass grew Today's title from text-base to

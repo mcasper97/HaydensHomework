@@ -135,8 +135,11 @@ function isoDate(offsetDays) {
   ok('No old large purple learner card remains', (await page.locator('text=Chore pts').count()) === 0 && (await page.locator('text=Homework pts').count()) === 0);
   const stripBox = await strip.boundingBox();
   ok(
-    `The strip is compact — approximately 45-60px tall (measured ${stripBox ? Math.round(stripBox.height) : 'n/a'}px)`,
-    !!stripBox && stripBox.height >= 40 && stripBox.height <= 70
+    // HEADER MEASURED-FIDELITY PASS: grown from ~45-60px to ~80-100px,
+    // pinned to the approved mockup's own measured chip height — a
+    // deliberate, measured change (see LearnerPointsStrip.jsx).
+    `The strip matches the mockup's measured chip height — approximately 80-100px tall (measured ${stripBox ? Math.round(stripBox.height) : 'n/a'}px)`,
+    !!stripBox && stripBox.height >= 80 && stripBox.height <= 100
   );
 
   // ============ Section 3: Today's raised visible-item capacity ============

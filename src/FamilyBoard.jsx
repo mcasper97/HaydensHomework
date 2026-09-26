@@ -21,8 +21,13 @@ const FamilyBoardClock = () => {
     const id = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(id);
   }, []);
+  // HEADER MEASURED-FIDELITY PASS: font size grown from text-sm (14px) to
+  // the mockup's own measured ~28px time text. Still no separate date line
+  // (Section 3's original "no separate date, no weather" decision — this
+  // header pass doesn't reopen that; its own spec's RIGHT-side composition
+  // and measurement list both name only "current time", not a date line).
   return (
-    <span data-testid="board-clock" className="text-sm font-bold" style={{ color: SURFACE.textPrimary }}>
+    <span data-testid="board-clock" className="font-bold" style={{ fontSize: 28, color: SURFACE.textPrimary }}>
       {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
     </span>
   );
@@ -238,17 +243,19 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   // (ONE-LINE-HEADER PASS) — each focus pill always carries its own owner's
   // accent (green for All, each learner's own palette slot, the Family
   // accent for Family); the ACTIVE pill gets a bolder filled treatment.
+  // HEADER MEASURED-FIDELITY PASS: height/font grew from 48px/13px to the
+  // mockup's own measured focus-button dimensions (~64px tall, ~16px text).
   const focusPillStyle = (accent, active) => ({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 5,
-    height: 48,
-    minWidth: 48,
-    padding: "0 12px",
+    gap: 8,
+    height: 64,
+    minWidth: 64,
+    padding: "0 20px",
     borderRadius: 999,
     fontWeight: 800,
-    fontSize: 13,
+    fontSize: 17,
     whiteSpace: "nowrap",
     border: `2px solid ${accent.border}`,
     background: active ? accent.border : accent.bg,
@@ -301,19 +308,21 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
             alignItems: "center",
             justifyContent: "space-between",
             flexWrap: "wrap",
-            columnGap: 12,
+            columnGap: 20,
             rowGap: 8,
             flexShrink: 0,
             marginBottom: 14,
             // PICTURE-NOT-ICON PASS: a real background (a soft sky-blue ->
             // white gradient, matching the mockup's own header treatment)
-            // instead of flat white, per the explicit instruction — "put a
-            // background behind the header instead of an icon."
-            background: "linear-gradient(180deg, #E4F4FF 0%, #FFFFFF 85%)",
+            // instead of flat white. HEADER MEASURED-FIDELITY PASS: the
+            // mockup's own header background is a much subtler, nearly-flat
+            // pale blue (sampled ~#E6F3FA at the top, ~#F1F9FC lower down)
+            // rather than a steep blue-to-white ramp — tightened to match.
+            background: "linear-gradient(180deg, #E6F3FA 0%, #F7FBFD 100%)",
             border: `1px solid ${SURFACE.border}`,
             borderRadius: 20,
             boxShadow: SURFACE.panelShadow,
-            padding: "8px 16px",
+            padding: "14px 18px",
             overflow: "hidden",
           }}
         >
@@ -327,16 +336,23 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
             <CloudIllustration size={46} />
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <HouseIllustration size={32} />
+          <div style={{ display: "flex", alignItems: "center", gap: 36, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              {/* HEADER MEASURED-FIDELITY PASS: house grown from 32px to
+                  the mockup's own measured ~96px brand-icon size. */}
+              <HouseIllustration size={96} />
               {/* Title stacked over the "Family Board" subtitle (two
-                  lines), matching the mockup. */}
+                  lines), matching the mockup. HEADER MEASURED-FIDELITY
+                  PASS: title/subtitle font sizes grew from 20px/14px
+                  (Tailwind text-xl/text-sm) to the mockup's own measured
+                  ~44px/~26px — inline px rather than Tailwind size classes
+                  so the exact measured value is explicit, not rounded to
+                  the nearest utility step. */}
               <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
-                <h1 className="text-xl font-extrabold" style={{ color: SURFACE.textPrimary, margin: 0 }}>
+                <h1 className="font-extrabold" style={{ fontSize: 44, color: SURFACE.textPrimary, margin: 0 }}>
                   Haydens - Homework
                 </h1>
-                <span className="text-sm font-semibold" style={{ color: SURFACE.textSecondary }}>Family Board</span>
+                <span className="font-semibold" style={{ fontSize: 26, color: SURFACE.textSecondary }}>Family Board</span>
               </div>
             </div>
 
@@ -355,7 +371,7 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
                 somewhere on the page with the same testid, just rendered
                 from here now instead of FamilyAgendaBoard.jsx. */}
             {children.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
                 <button data-testid="agenda-filter-all" style={focusPillStyle(ALL_FOCUS_ACCENT, !focus)} onClick={() => setFocus("")}>
                   👪 All
                 </button>
@@ -366,23 +382,30 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
                     style={focusPillStyle(accentForChild(children, c.id), focus === c.id)}
                     onClick={() => setFocus(c.id)}
                   >
-                    <LearnerAvatar accent={accentForChild(children, c.id)} size={20} index={idx} /> {c.name}
+                    <LearnerAvatar accent={accentForChild(children, c.id)} size={30} index={idx} /> {c.name}
                   </button>
                 ))}
                 <button data-testid="board-focus-family" style={focusPillStyle(FAMILY_ACCENT, focus === "family")} onClick={() => setFocus("family")}>
-                  <HouseIllustration size={18} /> Family
+                  <HouseIllustration size={24} /> Family
                 </button>
               </div>
             )}
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* HEADER MEASURED-FIDELITY PASS: time grown from text-sm (14px)
+              to the mockup's own measured ~28px main time / ~17px date
+              line. Back stays deliberately small/muted (never grown) —
+              it's a necessary navigation affordance the mockup itself
+              doesn't have, so it should read as visually subordinate to
+              every mockup-specified element, per Section 2's own "visually
+              subordinate" instruction. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <FamilyBoardClock />
             {!kiosk && onBack ? (
               <button
                 onClick={onBack}
-                className="text-sm font-semibold transition"
-                style={{ color: SURFACE.textSecondary, padding: "6px 12px", borderRadius: 999, border: `1px solid ${SURFACE.border}`, background: "#FFFFFF" }}
+                className="text-xs font-semibold transition"
+                style={{ color: SURFACE.textSecondary, padding: "5px 10px", borderRadius: 999, border: `1px solid ${SURFACE.border}`, background: "#FFFFFF" }}
               >
                 ← Back
               </button>
