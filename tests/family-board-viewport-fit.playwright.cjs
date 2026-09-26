@@ -166,10 +166,14 @@ async function runAtViewport(browser, viewport) {
     todayBox.width > avgFutureWidth * 2.3 && todayBox.width < avgFutureWidth * 3.8
   );
 
-  const stripBox = await page.getByTestId('learner-points-strip').boundingBox();
+  // DEDUPLICATION PASS: the old separate learner-points-strip is gone —
+  // points now live inside each learner's own focus pill.
+  ok(`[${label}] the old separate learner-points-strip no longer renders`, (await page.getByTestId('learner-points-strip').count()) === 0);
+  const haydenPillBox = await page.locator('[data-testid^="board-focus-child-"]').filter({ hasText: 'Hayden' }).boundingBox();
   // HEADER MEASURED-FIDELITY PASS: grown from ~45-60px to ~80-100px,
-  // pinned to the approved mockup's own measured chip height.
-  ok(`[${label}] the learner strip matches the mockup's measured chip height (measured ${stripBox ? Math.round(stripBox.height) : 'n/a'}px)`, !!stripBox && stripBox.height >= 80 && stripBox.height <= 100);
+  // pinned to the approved mockup's own measured chip height — carried
+  // over onto the merged learner focus pill.
+  ok(`[${label}] Hayden's merged focus pill matches the mockup's measured chip height (measured ${haydenPillBox ? Math.round(haydenPillBox.height) : 'n/a'}px)`, !!haydenPillBox && haydenPillBox.height >= 80 && haydenPillBox.height <= 100);
 
   const firstTodayRow = todayColumn.getByTestId('week-window-today').locator('[data-testid="agenda-row"]').first();
   // The literal-mockup-match pass grew Today's title from text-base to

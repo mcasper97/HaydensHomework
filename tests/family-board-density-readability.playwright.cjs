@@ -124,22 +124,26 @@ function isoDate(offsetDays) {
   await page.getByTestId('board-family').click();
   await page.waitForSelector('[data-testid="family-week-board"]', { timeout: 10000 });
 
-  // ============ Section 1: compact learner points strip ============
-  const strip = page.getByTestId('learner-points-strip');
-  ok('The learner points strip renders', await strip.isVisible());
-  ok('It still shows the learner\'s name/emoji identity', await strip.getByText('Riley').isVisible());
-  // K-5 REDESIGN: the strip now shows one combined "⭐ N pts" total per
-  // learner (chore + homework points summed) rather than two separate
-  // 🧹/📚 markers — matching the approved mockup's own single-number chip.
-  ok('It still shows a combined points total', await strip.getByText(/⭐.*pts/).isVisible());
+  // ============ Section 1: learner points merged into the focus pill (no separate strip) ============
+  // DEDUPLICATION PASS: the old separate learner-points-strip is gone —
+  // Riley's points now live inside her own focus pill (the SAME control
+  // that also filters the board to her items), so there is exactly one
+  // learner identity control, not two.
+  ok('The old separate learner-points-strip no longer renders', (await page.getByTestId('learner-points-strip').count()) === 0);
+  const rileyPill = page.locator('[data-testid^="board-focus-child-"]').filter({ hasText: 'Riley' });
+  ok('Riley\'s focus pill renders and shows her name/emoji identity', await rileyPill.getByText('Riley').isVisible());
+  // K-5 REDESIGN: the pill shows one combined "⭐ N pts" total per learner
+  // (chore + homework points summed) rather than two separate 🧹/📚
+  // markers — matching the approved mockup's own single-number chip.
+  ok('Riley\'s focus pill shows a combined points total', await rileyPill.getByText(/⭐.*pts/).isVisible());
   ok('No old large purple learner card remains', (await page.locator('text=Chore pts').count()) === 0 && (await page.locator('text=Homework pts').count()) === 0);
-  const stripBox = await strip.boundingBox();
+  const pillBox = await rileyPill.boundingBox();
   ok(
-    // HEADER MEASURED-FIDELITY PASS: grown from ~45-60px to ~80-100px,
-    // pinned to the approved mockup's own measured chip height — a
-    // deliberate, measured change (see LearnerPointsStrip.jsx).
-    `The strip matches the mockup's measured chip height — approximately 80-100px tall (measured ${stripBox ? Math.round(stripBox.height) : 'n/a'}px)`,
-    !!stripBox && stripBox.height >= 80 && stripBox.height <= 100
+    // HEADER MEASURED-FIDELITY PASS: pinned to the mockup's own measured
+    // chip height (~80-100px) — carried over from the old strip onto the
+    // merged pill, since the pill now does that job instead.
+    `Riley's focus pill matches the mockup's measured chip height — approximately 80-100px tall (measured ${pillBox ? Math.round(pillBox.height) : 'n/a'}px)`,
+    !!pillBox && pillBox.height >= 80 && pillBox.height <= 100
   );
 
   // ============ Section 3: Today's raised visible-item capacity ============

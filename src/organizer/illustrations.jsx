@@ -19,9 +19,32 @@ import React from "react";
 const HOUSE_ICON_SRC = "/family-board/house-icon.png";
 const LEARNER_AVATAR_IMAGES = ["/family-board/avatar-coral.png", "/family-board/avatar-aqua.png"];
 
-// The brand mark — the mockup's own cottage artwork, background removed.
-export const HouseIllustration = ({ size = 40 }) => (
-  <img src={HOUSE_ICON_SRC} width={size} height={Math.round((size * 75) / 78)} alt="" aria-hidden="true" style={{ display: "block", objectFit: "contain" }} />
+// The brand mark — the mockup's own cottage artwork. The source PNG itself
+// is a plain rectangular crop (no alpha channel) — untouched, per this
+// pass's own "do not reprocess the house asset" instruction. `soft` (used
+// only for the large header brand icon, where the crop's own rectangular
+// edge is otherwise visible against the board's shared sky gradient) fades
+// that edge to transparent at RENDER time via a CSS mask, so the art blends
+// into the surrounding surface instead of reading as a pasted tile — no new
+// image file, just a display-time treatment on top of the same asset.
+export const HouseIllustration = ({ size = 40, soft = false }) => (
+  <img
+    src={HOUSE_ICON_SRC}
+    width={size}
+    height={Math.round((size * 75) / 78)}
+    alt=""
+    aria-hidden="true"
+    style={{
+      display: "block",
+      objectFit: "contain",
+      ...(soft
+        ? {
+            WebkitMaskImage: "radial-gradient(ellipse 60% 60% at 48% 48%, #000 40%, transparent 92%)",
+            maskImage: "radial-gradient(ellipse 60% 60% at 48% 48%, #000 40%, transparent 92%)",
+          }
+        : null),
+    }}
+  />
 );
 
 // A learner's avatar — the mockup's own cat/bear artwork for the first two

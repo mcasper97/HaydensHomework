@@ -5,7 +5,6 @@ import { migrateLegacyFamilyEvents } from "./data/itemsRepository.js";
 import { householdTodayStr } from "./data/householdTimezone.js";
 import FamilyAgendaBoard from "./organizer/FamilyAgendaBoard.jsx";
 import OrganizerDisplay from "./organizer/OrganizerDisplay.jsx";
-import LearnerPointsStrip from "./organizer/LearnerPointsStrip.jsx";
 import FullScreenButton from "./organizer/FullScreenButton.jsx";
 import { HouseIllustration, CloudIllustration, LearnerAvatar } from "./organizer/illustrations.jsx";
 import { SURFACE, ALL_FOCUS_ACCENT } from "./organizer/boardTheme.js";
@@ -244,18 +243,42 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
   // accent (green for All, each learner's own palette slot, the Family
   // accent for Family); the ACTIVE pill gets a bolder filled treatment.
   // HEADER MEASURED-FIDELITY PASS: height/font grew from 48px/13px to the
-  // mockup's own measured focus-button dimensions (~64px tall, ~16px text).
+  // mockup's own measured focus-button dimensions. DEDUPLICATION PASS: All/
+  // Family stay at 80px tall (icon+text only) so they align in the same row
+  // as the learner pills below, which are also 80px but wider (avatar +
+  // stacked name/points).
   const focusPillStyle = (accent, active) => ({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    height: 64,
+    height: 80,
     minWidth: 64,
-    padding: "0 20px",
+    padding: "0 22px",
     borderRadius: 999,
     fontWeight: 800,
-    fontSize: 17,
+    fontSize: 18,
+    whiteSpace: "nowrap",
+    border: `2px solid ${accent.border}`,
+    background: active ? accent.border : accent.bg,
+    color: active ? "#FFFFFF" : accent.text,
+    boxShadow: active ? "0 2px 6px rgba(37, 48, 74, 0.15)" : "none",
+    transition: "background 0.15s ease, color 0.15s ease",
+  });
+
+  // DEDUPLICATION PASS (Section 4): a learner's focus pill now ALSO carries
+  // their points — this is the single identity control per learner, not a
+  // second points-only chip sitting elsewhere. Same 80px height as
+  // focusPillStyle (so the whole pill row aligns), wider padding-right for
+  // the avatar + stacked name/points content, and the same active/inactive
+  // fill logic as every other focus pill.
+  const learnerFocusPillStyle = (accent, active) => ({
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    height: 80,
+    padding: "0 20px 0 8px",
+    borderRadius: 999,
     whiteSpace: "nowrap",
     border: `2px solid ${accent.border}`,
     background: active ? accent.border : accent.bg,
@@ -291,17 +314,19 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
         <FullScreenButton />
       </div>
       <div className="w-full" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, padding: "10px 20px 14px" }}>
-        {/* LITERAL ONE-LINE-HEADER PASS: everything — brand, learner chips,
-            focus pills, clock, back — now lives in a SINGLE flex row,
-            matching the mockup literally ("all on one line, not 2"). The
-            earlier 2-tier "fused header card" design (this row + a
-            separate focus-pill row directly under it) is gone; focus
-            state moved up from FamilyAgendaBoard.jsx (see the `focus`
-            useState above) so its pills can render here. `flexWrap: wrap`
-            is a safety net for a viewport too narrow to fit everything
-            (not the intended presentation, just graceful degradation) —
-            at the target sizes this task cares about, it fits on one line. */}
+        {/* UNIFIED-SURFACE PASS: this row no longer carries its own boxed
+            card treatment (background/border/borderRadius/boxShadow) — it
+            sits directly on the SAME shared sky-blue -> cream gradient the
+            whole page background now paints (SURFACE.appBackground, set on
+            the outer .familyboard-viewport div), so there's no visible seam
+            between "header card" and "page/board surface" (Section 2/3:
+            "one unified board composition", "no obvious separate header
+            card"). Still a single flex row — brand, learner pills, focus
+            pills, clock, back — matching the mockup's single-row feel.
+            `flexWrap: wrap` is a safety net for a too-narrow viewport, not
+            the intended presentation. */}
         <div
+          data-testid="board-header-row"
           style={{
             position: "relative",
             display: "flex",
@@ -311,36 +336,34 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
             columnGap: 20,
             rowGap: 8,
             flexShrink: 0,
-            marginBottom: 14,
-            // PICTURE-NOT-ICON PASS: a real background (a soft sky-blue ->
-            // white gradient, matching the mockup's own header treatment)
-            // instead of flat white. HEADER MEASURED-FIDELITY PASS: the
-            // mockup's own header background is a much subtler, nearly-flat
-            // pale blue (sampled ~#E6F3FA at the top, ~#F1F9FC lower down)
-            // rather than a steep blue-to-white ramp — tightened to match.
-            background: "linear-gradient(180deg, #E6F3FA 0%, #F7FBFD 100%)",
-            border: `1px solid ${SURFACE.border}`,
-            borderRadius: 20,
-            boxShadow: SURFACE.panelShadow,
-            padding: "14px 18px",
-            overflow: "hidden",
+            marginBottom: 10,
+            padding: "6px 4px",
           }}
         >
-          {/* Decorative cloud shapes sitting in the header's own background
-              — low-opacity, aria-hidden, absolutely positioned so they
-              never participate in the flex layout. */}
-          <div aria-hidden="true" style={{ position: "absolute", left: -10, bottom: -14, opacity: 0.5, pointerEvents: "none" }}>
-            <CloudIllustration size={70} />
+          {/* Decorative cloud shapes — part of the shared board sky, not a
+              boxed header's own background — low-opacity, aria-hidden,
+              absolutely positioned so they never participate in the flex
+              layout. Spread a bit wider than before (one now drifts toward
+              the middle of the row) so the "shared sky" reads across the
+              whole top zone, not just behind the brand block. */}
+          <div aria-hidden="true" style={{ position: "absolute", left: 70, bottom: -34, opacity: 0.3, pointerEvents: "none" }}>
+            <CloudIllustration size={56} />
           </div>
-          <div aria-hidden="true" style={{ position: "absolute", right: "38%", top: -10, opacity: 0.35, pointerEvents: "none" }}>
-            <CloudIllustration size={46} />
+          <div aria-hidden="true" style={{ position: "absolute", left: "30%", top: -16, opacity: 0.3, pointerEvents: "none" }}>
+            <CloudIllustration size={44} />
+          </div>
+          <div aria-hidden="true" style={{ position: "absolute", right: "20%", bottom: -20, opacity: 0.3, pointerEvents: "none" }}>
+            <CloudIllustration size={40} />
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 36, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 28, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               {/* HEADER MEASURED-FIDELITY PASS: house grown from 32px to
-                  the mockup's own measured ~96px brand-icon size. */}
-              <HouseIllustration size={96} />
+                  the mockup's own measured ~96px brand-icon size. No white
+                  backing box — it's a transparent-background PNG sitting
+                  directly on the shared page gradient (Section 8: "no
+                  visible white square around the house"). */}
+              <HouseIllustration size={96} soft />
               {/* Title stacked over the "Family Board" subtitle (two
                   lines), matching the mockup. HEADER MEASURED-FIDELITY
                   PASS: title/subtitle font sizes grew from 20px/14px
@@ -356,35 +379,44 @@ const FamilyBoard = ({ uid, email, isAdmin, kiosk = false, onBack, onExitKiosk }
               </div>
             </div>
 
-            {children.length > 0 && <LearnerPointsStrip children={children} chorePoints={chorePoints} childStats={childStats} />}
-
-            {/* Focus pills — moved up from FamilyAgendaBoard.jsx so they
-                sit on this same header line. testid "agenda-filter-all"
-                intentionally kept (not renamed to "board-focus-all") —
-                several unrelated test files across the suite
-                (board-selector-navigation, household-timezone,
+            {/* DEDUPLICATION PASS (Section 4): the old separate
+                LearnerPointsStrip (a second, points-only avatar chip per
+                learner) is gone — each learner's points now live INSIDE
+                their own focus pill below, so there is exactly one
+                identity control per learner, not two. testid
+                "agenda-filter-all" intentionally kept (not renamed to
+                "board-focus-all") — several unrelated test files across the
+                suite (board-selector-navigation, household-timezone,
                 parent-page-import-navigation, review-inbox,
                 parent-tools-persistence, child-rename-settings,
-                calendar-routing-ux, calendar-connection-panel) use this
-                one testid purely as a "Family Board finished loading"
-                landmark, not to exercise filtering — it still exists
-                somewhere on the page with the same testid, just rendered
-                from here now instead of FamilyAgendaBoard.jsx. */}
+                calendar-routing-ux, calendar-connection-panel) use this one
+                testid purely as a "Family Board finished loading" landmark,
+                not to exercise filtering. */}
             {children.length > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
                 <button data-testid="agenda-filter-all" style={focusPillStyle(ALL_FOCUS_ACCENT, !focus)} onClick={() => setFocus("")}>
                   👪 All
                 </button>
-                {children.map((c, idx) => (
-                  <button
-                    key={c.id}
-                    data-testid={`board-focus-child-${c.id}`}
-                    style={focusPillStyle(accentForChild(children, c.id), focus === c.id)}
-                    onClick={() => setFocus(c.id)}
-                  >
-                    <LearnerAvatar accent={accentForChild(children, c.id)} size={30} index={idx} /> {c.name}
-                  </button>
-                ))}
+                {children.map((c, idx) => {
+                  const hw = childStats[c.id]?.homeworkPoints ?? 0;
+                  const chore = chorePoints[c.id] || 0;
+                  const totalPoints = hw + chore;
+                  const accent = accentForChild(children, c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      data-testid={`board-focus-child-${c.id}`}
+                      style={learnerFocusPillStyle(accent, focus === c.id)}
+                      onClick={() => setFocus(c.id)}
+                    >
+                      <LearnerAvatar accent={accent} size={60} index={idx} />
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.15 }}>
+                        <span style={{ fontSize: 20, fontWeight: 800 }}>{c.name}</span>
+                        <span style={{ fontSize: 14, fontWeight: 700, opacity: 0.9 }}>⭐ {totalPoints} pts</span>
+                      </div>
+                    </button>
+                  );
+                })}
                 <button data-testid="board-focus-family" style={focusPillStyle(FAMILY_ACCENT, focus === "family")} onClick={() => setFocus("family")}>
                   <HouseIllustration size={24} /> Family
                 </button>

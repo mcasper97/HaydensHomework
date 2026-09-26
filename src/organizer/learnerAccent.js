@@ -28,19 +28,23 @@
 // from a pale wash to a genuinely saturated tint — the earlier values read
 // as washed-out next to the approved mockup's own punchier pink/aqua
 // chips. `border`/`text` were already vivid enough and are unchanged.
+// UNIFIED-SURFACE PASS: bumped a further notch more saturated — the prior
+// pass's values still read a little pale/washed once sitting on the new,
+// stronger sky-blue shared board background; `text` is unchanged (already
+// vivid/high-contrast enough against either bg).
 export const LEARNER_PALETTE = [
-  { name: "coral", bg: "#FFB8CB", border: "#FF6F91", text: "#8A1236" },
-  { name: "aqua", bg: "#9FE3F2", border: "#2FB6D9", text: "#0A5566" },
-  { name: "sunshine", bg: "#FFE38A", border: "#EAB308", text: "#6B4A00" },
-  { name: "grape", bg: "#D6B3F5", border: "#9B5FE0", text: "#431F72" },
-  { name: "mint", bg: "#A6EDC7", border: "#22B57A", text: "#0F5730" },
-  { name: "tangerine", bg: "#FFC299", border: "#F2822E", text: "#7A3A0A" },
+  { name: "coral", bg: "#FF9DB8", border: "#FF4570", text: "#8A1236" },
+  { name: "aqua", bg: "#6FD8EC", border: "#0EA5C7", text: "#0A5566" },
+  { name: "sunshine", bg: "#FFD65C", border: "#E0A100", text: "#6B4A00" },
+  { name: "grape", bg: "#C599F0", border: "#8532DB", text: "#431F72" },
+  { name: "mint", bg: "#7EE3AC", border: "#149A63", text: "#0F5730" },
+  { name: "tangerine", bg: "#FFA968", border: "#E86A0E", text: "#7A3A0A" },
 ];
 
 // Friendly blue/slate — deliberately neutral-but-still-bright so a
 // family-wide item never reads as "belonging" to any one learner's accent
 // color while still fitting the K-5 palette's overall energy.
-export const FAMILY_ACCENT = { name: "family", bg: "#C3CCF7", border: "#6E85D6", text: "#28336E" };
+export const FAMILY_ACCENT = { name: "family", bg: "#A6B3F5", border: "#4C63C7", text: "#28336E" };
 
 export function accentForChild(children, childId) {
   const idx = (children || []).findIndex((c) => c.id === childId);

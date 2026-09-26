@@ -31,8 +31,16 @@
 // physically layered/elevated surfaces (soft drop shadow), matching the
 // mockup's polished, "premium kitchen display" feel instead of flat color
 // fills with no depth.
+// UNIFIED-SURFACE PASS: `appBackground` changed from a flat cream fill to a
+// single continuous sky-blue -> cream gradient — it now paints the ENTIRE
+// page (header zone and column zone alike), not just the header band on its
+// own, so there's one shared illustrated-sky backdrop the whole board sits
+// on instead of a visible seam between "header card" and "page background".
+// Panel/card surfaces are unchanged (still need to read as distinct,
+// elevated surfaces on top of that shared backdrop) — this is a page-root
+// background change only.
 export const SURFACE = {
-  appBackground: "#FFF6E8", // warm cream / pale sky — never black/charcoal
+  appBackground: "linear-gradient(180deg, #D6EEFC 0%, #EAF6FD 32%, #FFF6E8 78%)",
   panelFuture: "#F7FAFD", // near-white with a whisper of cool blue
   panelToday: "#F1FAEE", // very light green/cream — Today's "active" surface
   cardFuture: "#FFFFFF",
@@ -60,21 +68,27 @@ export const SURFACE = {
 // from a pale wash to a genuinely visible, saturated tint that reads as
 // "sunny yellow" / "sky blue" / "playful purple" / "twilight blue" at a
 // glance, not a barely-there pastel.
+// UNIFIED-SURFACE + SATURATION PASS: pushed another notch stronger — bright
+// sunny yellow / bright sky blue / playful purple / friendly twilight blue,
+// per Section 7's explicit "stronger, more saturated K-5 colors" (still
+// restrained to a badge/band/border/icon per row, never a giant fill
+// swallowing the whole page — see the file-level comment above).
 export const WINDOW_ACCENTS = {
-  beforeSchool: { bg: "#FFE49A", border: "#E8A400", text: "#7A4D00", icon: "☀️" }, // sunny yellow/gold
-  today: { bg: "#B9E0FB", border: "#1E88D6", text: "#0D4E76", icon: "📋" }, // bright sky blue
-  studyHall: { bg: "#DEC4F7", border: "#8A3FE0", text: "#54267F", icon: "📚" }, // playful purple
-  evening: { bg: "#C3CCF7", border: "#4457CC", text: "#2A3676", icon: "🌙" }, // deeper soft twilight blue
+  beforeSchool: { bg: "#FFD666", border: "#D99200", text: "#7A4D00", icon: "☀️" }, // sunny yellow/gold
+  today: { bg: "#7FC4F5", border: "#0D74C4", text: "#0D4E76", icon: "📋" }, // bright sky blue
+  studyHall: { bg: "#CC9EF2", border: "#7A22E0", text: "#54267F", icon: "📚" }, // playful purple
+  evening: { bg: "#9DA8F0", border: "#3345C2", text: "#2A3676", icon: "🌙" }, // deeper soft twilight blue
 };
 
 // A test/quiz's "Prep needed" badge — bright, friendly orange, distinct
 // from beforeSchool's yellow-gold so the two are never confused.
-export const PREP_ACCENT = { bg: "#FFD9AD", border: "#E87A0E", text: "#8A430A" };
+export const PREP_ACCENT = { bg: "#FFC077", border: "#E06400", text: "#8A430A" };
 
 // A completed item's checkmark control — cheerful green, per Section 7.
-export const COMPLETION_ACCENT = { done: "#2FAE6C", idleBorder: "#C7D0DC" };
+export const COMPLETION_ACCENT = { done: "#1E9E57", idleBorder: "#C7D0DC" };
 
-// The "All" focus button's own accent — a friendly green distinct from any
-// single learner's own color, so "everyone in focus" doesn't read as
-// belonging to one child.
-export const ALL_FOCUS_ACCENT = { bg: "#BFEDCB", border: "#2FAE6C", text: "#186B3E" };
+// The "All" focus button's own accent — a friendly, VIVID green distinct
+// from any single learner's own color, so "everyone in focus" doesn't read
+// as belonging to one child — this is the primary/strongest accent in the
+// focus-pill row, per Section 7 ("All / primary = vivid green").
+export const ALL_FOCUS_ACCENT = { bg: "#8FE0A3", border: "#1E9E4A", text: "#0F5C2A" };

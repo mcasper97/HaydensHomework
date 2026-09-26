@@ -93,15 +93,36 @@ function hexToRgb(hex) {
   await page.getByTestId('board-family').click();
   await page.waitForSelector('[data-testid="family-week-board"]', { timeout: 10000 });
 
-  // ============ LearnerPointsStrip: structure preserved, colors refined only ============
-  const strip = page.getByTestId('learner-points-strip');
-  ok('LearnerPointsStrip still renders', await strip.isVisible());
-  ok('LearnerPointsStrip is still the compact single-row layout (no old large purple panel text)', (await page.locator('text=Chore pts').count()) === 0 && (await page.locator('text=Homework pts').count()) === 0);
-  const stripBox = await strip.boundingBox();
+  // ============ DEDUPLICATION PASS: learner points merged into the focus pill ============
+  // The old separate LearnerPointsStrip is gone — Hayden/Payton's points now
+  // live inside their own focus pill (the same control that also filters
+  // the board), so there's exactly one identity control per learner.
+  ok('The old separate learner-points-strip no longer renders', (await page.getByTestId('learner-points-strip').count()) === 0);
+  const haydenPill = page.locator('[data-testid^="board-focus-child-"]').filter({ hasText: 'Hayden' });
+  const paytonPill = page.locator('[data-testid^="board-focus-child-"]').filter({ hasText: 'Payton' });
+  ok('Hayden\'s and Payton\'s focus pills both render, showing their names', await haydenPill.isVisible() && await paytonPill.isVisible());
+  ok('Each learner focus pill shows its own combined points total', await haydenPill.getByText(/⭐.*pts/).isVisible() && await paytonPill.getByText(/⭐.*pts/).isVisible());
+  ok('No old large purple learner card remains', (await page.locator('text=Chore pts').count()) === 0 && (await page.locator('text=Homework pts').count()) === 0);
+  const haydenPillBox = await haydenPill.boundingBox();
   // HEADER MEASURED-FIDELITY PASS: grown from ~45-60px to ~80-100px,
-  // pinned to the approved mockup's own measured chip height.
-  ok(`LearnerPointsStrip matches the mockup's measured chip height (~80-100px, measured ${stripBox ? Math.round(stripBox.height) : 'n/a'}px)`, !!stripBox && stripBox.height >= 80 && stripBox.height <= 100);
-  ok('LearnerPointsStrip still shows both learners\' names', await strip.getByText('Hayden').isVisible() && await strip.getByText('Payton').isVisible());
+  // pinned to the approved mockup's own measured chip height — carried
+  // over onto the merged pill.
+  ok(`Hayden's focus pill matches the mockup's measured chip height (~80-100px, measured ${haydenPillBox ? Math.round(haydenPillBox.height) : 'n/a'}px)`, !!haydenPillBox && haydenPillBox.height >= 80 && haydenPillBox.height <= 100);
+
+  // ============ UNIFIED-SURFACE PASS: no separate boxed header card ============
+  // The header row used to carry its own background/border/box-shadow/
+  // border-radius "card" treatment, distinct from the shared page
+  // background — that's gone now, so the whole board reads as one
+  // composition rather than "header card sitting on top of board".
+  const headerRow = page.getByTestId('board-header-row');
+  const headerRowStyle = await headerRow.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { boxShadow: s.boxShadow, borderWidth: s.borderTopWidth, backgroundImage: s.backgroundImage };
+  });
+  ok(
+    `The header row no longer has its own boxed card treatment (no box-shadow, no border, no distinct background — measured boxShadow="${headerRowStyle.boxShadow}", borderWidth="${headerRowStyle.borderWidth}", backgroundImage="${headerRowStyle.backgroundImage}")`,
+    (headerRowStyle.boxShadow === 'none') && (headerRowStyle.borderWidth === '0px') && (headerRowStyle.backgroundImage === 'none')
+  );
 
   // ============ Learner ownership accent treatment ============
   const haydenRow = page.locator('[data-testid="agenda-row"]').filter({ hasText: 'Hayden Reading Log' }).first();
